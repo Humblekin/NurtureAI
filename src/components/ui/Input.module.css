@@ -1,0 +1,154 @@
+.inputWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.label {
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  color: var(--text-primary);
+}
+
+.required {
+  color: var(--color-danger-500);
+  margin-left: 2px;
+}
+
+.inputContainer {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  background: var(--surface-base);
+  border: 1.5px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  transition: all var(--transition-fast);
+  outline: none;
+  min-height: 44px;
+}
+
+.input::placeholder {
+  color: var(--text-disabled);
+}
+
+.input:hover:not(:focus):not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.input:focus {
+  border-color: var(--border-focus);
+  box-shadow: var(--shadow-focus);
+}
+
+.input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: var(--surface-sunken);
+}
+
+/* With icons */
+.hasLeftIcon {
+  padding-left: var(--space-10);
+}
+
+.hasRightIcon {
+  padding-right: var(--space-10);
+}
+
+.leftIcon,
+.rightIcon {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.leftIcon {
+  left: var(--space-3);
+}
+
+.rightIcon {
+  right: var(--space-3);
+}
+
+.clickableIcon {
+  pointer-events: auto;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+  transition: color var(--transition-fast);
+}
+
+.clickableIcon:hover {
+  color: var(--text-primary);
+}
+
+/* Textarea */
+.textarea {
+  resize: vertical;
+  min-height: 80px;
+  line-height: var(--leading-normal);
+}
+
+@media (max-width: 768px) {
+  .textarea {
+    min-height: 70px;
+    font-size: var(--text-sm);
+  }
+}
+
+/* Error state */
+.error .input {
+  border-color: var(--color-danger-500);
+}
+
+.error .input:focus {
+  box-shadow: var(--shadow-focus-danger);
+}
+
+.errorMessage {
+  font-size: var(--text-xs);
+  color: var(--color-danger-500);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Helper text */
+.helperText {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+/* Sizes */
+.sm .input {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  border-radius: var(--radius-md);
+}
+
+.lg .input {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-md);
+}
+
+/* Select */
+.select {
+  appearance: none;
+  padding-right: var(--space-10);
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23868e96' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}

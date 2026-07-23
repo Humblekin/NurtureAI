@@ -1,0 +1,77 @@
+.layout {
+  min-height: 100vh;
+  display: flex;
+  background-color: var(--surface-sunken);
+}
+
+.leftSide {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: var(--space-4);
+  position: relative;
+  z-index: 1;
+}
+
+.rightSide {
+  flex: 1;
+  display: none;
+  background: var(--gradient-hero);
+  position: relative;
+  overflow: hidden;
+  color: white;
+}
+
+@media (min-width: 1024px) {
+  .rightSide {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: var(--space-16);
+  }
+}
+
+.authCard {
+  width: 100%;
+  max-width: 440px;
+  background: var(--surface-base);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  padding: var(--space-8);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: var(--font-bold);
+  font-size: var(--text-2xl);
+  color: var(--color-primary-600);
+  margin-bottom: var(--space-8);
+  justify-content: center;
+}
+
+.tagline {
+  font-size: var(--text-3xl);
+  font-weight: var(--font-bold);
+  line-height: var(--leading-tight);
+  margin-bottom: var(--space-4);
+  max-width: 480px;
+}
+
+.description {
+  font-size: var(--text-lg);
+  opacity: 0.9;
+  max-width: 480px;
+  line-height: var(--leading-relaxed);
+}
+
+.pattern {
+  position: absolute;
+  inset: 0;
+  opacity: 0.1;
+  background-image: radial-gradient(circle at 2px 2px, white 1px, transparent 0);
+  background-size: 32px 32px;
+}

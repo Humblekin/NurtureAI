@@ -1,0 +1,106 @@
+.card {
+  background: var(--surface-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  transition: all var(--transition-base);
+}
+
+.card.hoverable:hover {
+  box-shadow: var(--shadow-lg);
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+}
+
+.card.clickable {
+  cursor: pointer;
+}
+
+/* Variants */
+.card.elevated {
+  box-shadow: var(--shadow-md);
+  border-color: transparent;
+}
+
+.card.outlined {
+  box-shadow: none;
+}
+
+.card.ghost {
+  border: none;
+  background: transparent;
+}
+
+.card.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+[data-theme="dark"] .card.glass {
+  background: rgba(24, 27, 35, 0.7);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+/* Gradient accent top border */
+.card.accent {
+  border-top: 3px solid transparent;
+  border-image: linear-gradient(135deg, var(--color-primary-500), var(--color-accent-500)) 1;
+}
+
+/* Padding */
+.card .cardBody {
+  padding: var(--space-5);
+}
+
+.compact .cardBody {
+  padding: var(--space-3);
+}
+
+.spacious .cardBody {
+  padding: var(--space-8);
+}
+
+.cardHeader {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.cardTitle {
+  font-size: var(--text-md);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+}
+
+.cardDescription {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin-top: var(--space-1);
+}
+
+.cardFooter {
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border-default);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  background: var(--surface-sunken);
+}
+
+@media (max-width: 768px) {
+  .card .cardBody {
+    padding: var(--space-4);
+  }
+  .cardHeader {
+    padding: var(--space-3) var(--space-4);
+  }
+  .cardFooter {
+    padding: var(--space-3) var(--space-4);
+  }
+}

@@ -1,0 +1,18 @@
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background-color: var(--color-warning-500);
+  color: white;
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  text-align: center;
+  width: 100%;
+  z-index: var(--z-sticky);
+}
+
+.syncing {
+  background-color: var(--color-info-500);
+}

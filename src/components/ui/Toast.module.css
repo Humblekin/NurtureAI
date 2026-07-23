@@ -1,0 +1,94 @@
+.toastContainer {
+  position: fixed;
+  top: var(--space-4);
+  right: var(--space-4);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 400px;
+  width: calc(100vw - var(--space-8));
+  pointer-events: none;
+}
+
+@media (max-width: 768px) {
+  .toastContainer {
+    top: auto;
+    bottom: calc(var(--bottom-nav-height) + var(--space-4));
+    right: var(--space-4);
+    left: var(--space-4);
+    width: auto;
+  }
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-base);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  border-left: 4px solid var(--border-default);
+  pointer-events: auto;
+  position: relative;
+  overflow: hidden;
+}
+
+[data-theme="dark"] .toast {
+  border: 1px solid var(--border-default);
+  border-left-width: 4px;
+}
+
+/* Variants */
+.info { border-left-color: var(--color-info-500); }
+.success { border-left-color: var(--color-success-500); }
+.warning { border-left-color: var(--color-warning-500); }
+.error { border-left-color: var(--color-danger-500); }
+
+.icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.info .icon { color: var(--color-info-500); }
+.success .icon { color: var(--color-success-500); }
+.warning .icon { color: var(--color-warning-500); }
+.error .icon { color: var(--color-danger-500); }
+
+.content {
+  flex-grow: 1;
+}
+
+.title {
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.message {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.closeButton {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: color var(--transition-fast);
+  margin-left: var(--space-2);
+}
+
+.closeButton:hover {
+  color: var(--text-primary);
+}
+
+/* Progress bar for timed toasts */
+.progressBar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background-color: currentColor;
+  opacity: 0.2;
+}
