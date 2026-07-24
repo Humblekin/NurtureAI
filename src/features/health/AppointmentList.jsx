@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Clock, User, Search, Filter, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Calendar, Clock, User, Search, AlertTriangle } from 'lucide-react';
 import useVisitStore from '../../stores/visitStore';
 import useAuthStore from '../../stores/authStore';
 import { Card, CardBody } from '../../components/ui/Card';

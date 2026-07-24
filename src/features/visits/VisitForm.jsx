@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Calendar, ArrowLeft, FileText } from 'lucide-react';
+import { Calendar, ArrowLeft } from 'lucide-react';
 import useVisitStore from '../../stores/visitStore';
 import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, Thermometer, HeartPulse, Scale, ActivityIcon } from 'lucide-react';
+import { Activity, Thermometer, HeartPulse, Scale } from 'lucide-react';
 import usePregnancyStore from '../../stores/pregnancyStore';
 import useAppStore from '../../stores/appStore';
 import Input from '../../components/ui/Input';
@@ -79,7 +79,7 @@ export const AntenatalVisitForm = ({ pregnancyId, onSuccess, onCancel }) => {
           placeholder="120/80"
           value={formData.blood_pressure}
           onChange={handleChange}
-          leftIcon={<ActivityIcon size={18} />}
+          leftIcon={<Activity size={18} />}
         />
         <Input
           label="Fundal Height (cm)"

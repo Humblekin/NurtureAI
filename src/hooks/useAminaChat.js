@@ -105,7 +105,6 @@ export function useSpeechRecognition(language = 'en') {
       if (event.error === 'not-allowed') {
         shouldListenRef.current = false;
         setMicPermission('denied');
-        setError('Microphone permission is blocked. To use voice chat:\n\n• Chrome: Click the lock icon in the address bar → Microphone → Allow\n• Safari: Settings → Websites → Microphone → Allow\n• Firefox: Click the mic icon in the address bar → Allow\n• Edge: Click the lock icon in the address bar → Microphone → Allow\n\nOr switch to Chat mode to type instead.');
       } else if (event.error === 'network') {
         setError('Network error during speech recognition.');
       } else if (event.error === 'aborted') {
@@ -129,7 +128,7 @@ export function useSpeechRecognition(language = 'en') {
     // Proactively check mic permission before starting
     const permState = await checkMicPermission();
     if (permState === 'denied') {
-      setError('Microphone permission is blocked. To use voice chat:\n\n• Chrome: Click the lock icon in the address bar → Microphone → Allow\n• Safari: Settings → Websites → Microphone → Allow\n• Firefox: Click the mic icon in the address bar → Allow\n\nOr switch to Chat mode to type instead.');
+      setMicPermission('denied');
       return;
     }
 

@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Send, Mic, MicOff, Volume2, VolumeX, Trash2, User, Globe, MessageSquare, Phone, PhoneOff, Pause, Play } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useVoiceConversation, VOICE_STATES, useSpeechRecognition, useSpeechSynthesis } from '../../hooks/useAminaChat';
-import { isAiConfigured } from '../../lib/groq';
+import { isAiConfigured, chatCompletion } from '../../lib/groq';
+import useAuthStore from '../../stores/authStore';
 import Button from '../../components/ui/Button';
 import AminaAvatar from './avatar/AminaAvatar';
 import styles from './AminaChat.module.css';
@@ -199,7 +200,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
       </div>
 
       {/* Error */}
-      {error && (
+      {error && micPermission !== 'denied' && (
         <div className={styles.errorBanner}>
           <p>{error}</p>
           <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'center' }}>
