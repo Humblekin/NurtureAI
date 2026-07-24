@@ -32,12 +32,14 @@ export function useSpeechRecognition(language = 'en') {
   const onFinalRef = useRef(null);
   const onInterimRef = useRef(null);
 
-  // Check mic permission status proactively
+  // Check mic permission status on mount — informational only, doesn't block usage
   const checkMicPermission = useCallback(async () => {
     try {
       if (navigator.permissions && navigator.permissions.query) {
         const status = await navigator.permissions.query({ name: 'microphone' });
-        setMicPermission(status.state);
+        if (status.state === 'granted') {
+          setMicPermission('granted');
+        }
         status.onchange = () => setMicPermission(status.state);
         return status.state;
       }
@@ -125,13 +127,6 @@ export function useSpeechRecognition(language = 'en') {
   const startListening = useCallback(async () => {
     if (!recognitionRef.current) return;
 
-    // Proactively check mic permission before starting
-    const permState = await checkMicPermission();
-    if (permState === 'denied') {
-      setMicPermission('denied');
-      return;
-    }
-
     shouldListenRef.current = true;
     setError(null);
     setTranscript('');
@@ -139,9 +134,9 @@ export function useSpeechRecognition(language = 'en') {
       recognitionRef.current.start();
       setIsListening(true);
     } catch {
-      // May already be started
+      // May already be started — ignore
     }
-  }, [checkMicPermission]);
+  }, []);
 
   const stopListening = useCallback(() => {
     shouldListenRef.current = false;
@@ -426,10 +421,10 @@ export function useVoiceConversation() {
 
   // Sync listening state
   useEffect(() => {
-    if (voiceState === VOICE_STATES.LISTENING && !isListening) {
+    if (voiceState === VOICE_STATES.LISTENING && !isListening && micPermission !== 'denied') {
       startListening();
     }
-  }, [voiceState, isListening, startListening]);
+  }, [voiceState, isListening, startListening, micPermission]);
 
   // STT errors (not-allowed, network) → transition to error state
   useEffect(() => {
@@ -464,6 +459,7 @@ export function useVoiceConversation() {
     stopSpeaking();
     setMessages([]);
     setTranscript('');
+    setMicPermission('unknown');
     processingRef.current = false;
     lastSpokenIdxRef.current = -1;
     greetingSpokenRef.current = false;
