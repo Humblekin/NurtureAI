@@ -1,68 +1,278 @@
 /* ============================================
-   AminaChat — Split Layout with 3D Avatar
+   AminaChat — Voice-First + Chat Mode
    ============================================ */
-
-.chatPage {
-  display: flex;
-  height: calc(100vh - var(--header-height) - var(--bottom-nav-height));
-  gap: 0;
-  overflow: hidden;
-}
 
 /* ============================================
-   3D Avatar Section
+   VOICE MODE — Immersive Full-Screen
    ============================================ */
-.avatarSection {
-  flex: 0 0 40%;
+.voicePage {
+  position: relative;
+  width: 100%;
+  height: calc(100vh - var(--header-height) - var(--bottom-nav-height));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-base);
+}
+
+.voiceBackground {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 50% 30%, rgba(32, 201, 151, 0.12) 0%, transparent 60%),
+    radial-gradient(ellipse at 20% 80%, rgba(132, 94, 247, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 70%, rgba(252, 196, 25, 0.05) 0%, transparent 50%);
+  pointer-events: none;
+  animation: bgPulse 8s ease-in-out infinite alternate;
+}
+
+@keyframes bgPulse {
+  0% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+/* Top bar */
+.voiceTopBar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  z-index: 10;
+}
+
+.voiceTopActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.iconBtn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+[data-theme="dark"] .iconBtn {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.iconBtn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--text-primary);
+}
+
+.modeToggleBtn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-default);
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  font-family: var(--font-family-primary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  min-height: 36px;
+}
+
+[data-theme="dark"] .modeToggleBtn {
+  background: rgba(0, 0, 0, 0.2);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.modeToggleBtn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--color-primary-500);
+  border-color: var(--color-primary-500);
+}
+
+/* Avatar area */
+.voiceAvatarArea {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(180deg, var(--surface-base) 0%, var(--surface-raised) 100%);
-  border-right: 1px solid var(--border-default);
   position: relative;
-  overflow: hidden;
   min-height: 0;
 }
 
-.avatarScene {
+.voiceAvatar {
   width: 100%;
-  height: 100%;
-  position: relative;
+  max-width: 400px;
+  height: 60%;
+  min-height: 280px;
 }
 
-.avatarInfo {
+/* Voice info */
+.voiceInfo {
   position: absolute;
-  bottom: var(--space-6);
+  bottom: 0;
   left: 50%;
   transform: translateX(-50%);
   text-align: center;
-  z-index: 10;
+  z-index: 5;
 }
 
-.aminaName {
-  font-size: var(--text-xl);
+.voiceName {
+  font-size: var(--text-2xl);
   font-weight: var(--font-bold);
   color: var(--text-primary);
   margin: 0 0 var(--space-1) 0;
 }
 
-.aminaStatus {
+.voiceStatus {
   font-size: var(--text-sm);
   color: var(--text-secondary);
   margin: 0;
 }
 
+/* Live transcript */
+.liveTranscript {
+  position: absolute;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 80%;
+  text-align: center;
+  padding: var(--space-3) var(--space-5);
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(12px);
+  border-radius: var(--radius-xl);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 10;
+}
+
+[data-theme="dark"] .liveTranscript {
+  background: rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+.liveTranscript p {
+  margin: 0;
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  font-style: italic;
+}
+
+/* Last response overlay */
+.lastResponse {
+  position: absolute;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 85%;
+  text-align: center;
+  padding: var(--space-4) var(--space-6);
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(16px);
+  border-radius: var(--radius-xl);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  z-index: 10;
+}
+
+[data-theme="dark"] .lastResponse {
+  background: rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+.lastResponse p {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  line-height: var(--leading-normal);
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+/* Floating voice controls */
+.voiceControls {
+  position: absolute;
+  bottom: var(--space-8);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  z-index: 20;
+}
+
+.controlBtn {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-full);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  box-shadow: var(--shadow-lg);
+}
+
+.micBtn {
+  width: 72px;
+  height: 72px;
+  background: var(--color-primary-500);
+  color: white;
+}
+
+.micBtn:hover:not(:disabled) {
+  background: var(--color-primary-600);
+  transform: scale(1.05);
+}
+
+.micBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.micBtnActive {
+  background: var(--color-danger-500);
+  animation: micPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes micPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.5), var(--shadow-lg); }
+  50% { box-shadow: 0 0 0 16px rgba(255, 107, 107, 0), var(--shadow-lg); }
+}
+
+.endCallBtn {
+  background: var(--color-danger-500);
+  color: white;
+}
+
+.endCallBtn:hover {
+  background: var(--color-danger-600);
+  transform: scale(1.05);
+}
+
 /* ============================================
-   Chat Section
+   CHAT MODE — Text Conversation
    ============================================ */
-.chatSection {
-  flex: 1;
+.chatPage {
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  height: calc(100vh - var(--header-height) - var(--bottom-nav-height));
+  overflow: hidden;
   background: var(--surface-base);
-  min-height: 0;
 }
 
 /* Header */
@@ -126,6 +336,7 @@
   transition: all var(--transition-fast);
   min-height: 32px;
   min-width: 36px;
+  font-family: var(--font-family-primary);
 }
 
 .langBtn:hover {
@@ -381,37 +592,67 @@
 }
 
 /* ============================================
-   Mobile Layout (Stacked)
+   Mobile — Voice Mode
    ============================================ */
 @media (max-width: 768px) {
-  .chatPage {
-    flex-direction: column;
-    height: calc(100vh - var(--header-height) - var(--bottom-nav-height));
+  .voiceTopBar {
+    padding: var(--space-2) var(--space-3);
   }
 
-  .avatarSection {
-    flex: 0 0 35%;
-    border-right: none;
-    border-bottom: 1px solid var(--border-default);
-    min-height: 140px;
-    max-height: 200px;
+  .voiceAvatar {
+    max-width: 280px;
+    min-height: 200px;
   }
 
-  .avatarInfo {
-    bottom: var(--space-3);
+  .voiceName {
+    font-size: var(--text-xl);
   }
 
-  .aminaName {
-    font-size: var(--text-base);
-  }
-
-  .aminaStatus {
+  .voiceStatus {
     font-size: var(--text-xs);
   }
 
+  .lastResponse {
+    bottom: 90px;
+    max-width: 90%;
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .lastResponse p {
+    font-size: var(--text-xs);
+    max-height: 80px;
+  }
+
+  .liveTranscript {
+    bottom: 90px;
+    max-width: 90%;
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .liveTranscript p {
+    font-size: var(--text-sm);
+  }
+
+  .controlBtn {
+    width: 56px;
+    height: 56px;
+  }
+
+  .micBtn {
+    width: 64px;
+    height: 64px;
+  }
+}
+
+/* ============================================
+   Mobile — Chat Mode
+   ============================================ */
+@media (max-width: 768px) {
   .header {
     padding: var(--space-2) var(--space-3);
     min-height: 48px;
+    flex-wrap: wrap;
+    gap: var(--space-2);
   }
 
   .headerTitle {
@@ -420,6 +661,10 @@
 
   .headerSubtitle {
     display: none;
+  }
+
+  .headerActions {
+    gap: var(--space-1);
   }
 
   .messagesArea {
@@ -452,12 +697,6 @@
 }
 
 @media (max-width: 480px) {
-  .avatarSection {
-    flex: 0 0 30%;
-    min-height: 120px;
-    max-height: 160px;
-  }
-
   .languageSelector {
     gap: 0;
     padding: 1px;
@@ -467,5 +706,9 @@
     padding: var(--space-1);
     min-width: 32px;
     font-size: 10px;
+  }
+
+  .headerActions {
+    flex-wrap: wrap;
   }
 }

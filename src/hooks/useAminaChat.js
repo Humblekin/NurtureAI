@@ -10,6 +10,7 @@ export function useSpeechRecognition(language = 'en') {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [isSupported, setIsSupported] = useState(false);
+  const [error, setError] = useState(null);
   const recognitionRef = useRef(null);
 
   useEffect(() => {
@@ -19,7 +20,6 @@ export function useSpeechRecognition(language = 'en') {
       const recognition = new SpeechRecognition();
       recognition.continuous = false;
       recognition.interimResults = true;
-      // Set language based on selection
       recognition.lang = language === 'dag' ? 'ha-Latn-NG' : 'en-US';
 
       recognition.onresult = (event) => {
@@ -33,19 +33,39 @@ export function useSpeechRecognition(language = 'en') {
       };
 
       recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
+        console.warn('Speech recognition error:', event.error);
         setIsListening(false);
+        if (event.error === 'not-allowed') {
+          setError('Microphone access was denied. Please allow microphone permission in your browser settings and try again.');
+        } else if (event.error === 'no-speech') {
+          setError('No speech detected. Please try speaking again.');
+        } else if (event.error === 'network') {
+          setError('Network error during speech recognition. Please check your connection.');
+        } else if (event.error !== 'aborted') {
+          setError('Speech recognition encountered an error. Please try again.');
+        }
       };
 
       recognitionRef.current = recognition;
     }
   }, [language]);
 
-  const startListening = useCallback(() => {
+  const startListening = useCallback(async () => {
     if (recognitionRef.current && !isListening) {
       setTranscript('');
-      recognitionRef.current.start();
-      setIsListening(true);
+      setError(null);
+      try {
+        recognitionRef.current.start();
+        setIsListening(true);
+      } catch (err) {
+        console.warn('Failed to start speech recognition:', err);
+        setIsListening(false);
+        if (err.name === 'NotAllowedError' || err.message?.includes('permission')) {
+          setError('Microphone access was denied. Please allow microphone permission in your browser settings.');
+        } else {
+          setError('Could not start speech recognition. Please try again.');
+        }
+      }
     }
   }, [isListening]);
 
@@ -56,7 +76,7 @@ export function useSpeechRecognition(language = 'en') {
     }
   }, [isListening]);
 
-  return { isListening, transcript, isSupported, startListening, stopListening, setTranscript };
+  return { isListening, transcript, isSupported, error, startListening, stopListening, setTranscript };
 }
 
 /**
@@ -218,8 +238,8 @@ export function useAminaChat() {
   const [language, setLanguage] = useState('en'); // 'en' or 'dag'
 
   const welcomeMessages = {
-    en: "Hello! I'm Amina, your healthcare companion. I'm here to help you with pregnancy questions, child health, nutrition, and more. How can I help you today?",
-    dag: "Mani, n nyɛ Amina. Adaa laafee yuligu lana. Bihi laafee yulibu, bihi laafeehi yulibu, ni abindira laafee yulibu yɛla n kpehi ni. Yelima wula ka nyɛŋ soŋa zaŋkpa n ni kali a binyeriŋa?",
+    en: "Hello! I'm Amina, your AI healthcare companion. I'm here to support you with pregnancy, child health, nutrition, breastfeeding, vaccination, and maternal healthcare. How can I help you today?",
+    dag: "Mani n nyɛ Amina. Adaa laafee yuligu lana. Bihi alaafee yulibu lana, bihi laafeehi yulibu lana, abindira alaafee yulibu lana. Yelima wula ka nyen soŋa zaŋkpa n ni kali a binyerishaŋa?",
   };
 
   const [messages, setMessages] = useState([

@@ -36,7 +36,7 @@ const Scene = ({ state, emotion, vrmUrl }) => {
 
       {/* Ground shadow */}
       <ContactShadows
-        position={[0, -1.4, 0]}
+        position={[0, -1.2, 0]}
         opacity={0.4}
         scale={3}
         blur={2.5}
@@ -47,10 +47,11 @@ const Scene = ({ state, emotion, vrmUrl }) => {
       <OrbitControls
         enableZoom={false}
         enablePan={false}
-        minPolarAngle={Math.PI / 4}
-        maxPolarAngle={Math.PI / 2}
+        minPolarAngle={Math.PI / 6}
+        maxPolarAngle={Math.PI / 2.1}
         minAzimuthAngle={-Math.PI / 6}
         maxAzimuthAngle={Math.PI / 6}
+        target={[0, 0.2, 0]}
       />
     </>
   );
@@ -74,7 +75,7 @@ export const AminaAvatar = ({
     <div className={`${styles.avatarContainer} ${className}`}>
       {isReady && (
         <Canvas
-          camera={{ position: [0, 0.5, 2.5], fov: 35 }}
+          camera={{ position: [0, 0.2, 3.2], fov: 35 }}
           dpr={[1, 2]}
           gl={{ 
             antialias: true, 
