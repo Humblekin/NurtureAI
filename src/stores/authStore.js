@@ -29,6 +29,8 @@ export const ROLE_LABELS = {
   [ROLES.ADMIN]: 'Administrator',
 };
 
+let authListenerUnsubscribed = false;
+
 const useAuthStore = create(
   persist(
     (set, get) => ({
@@ -36,7 +38,7 @@ const useAuthStore = create(
       user: null,
       profile: null,
       session: null,
-      isLoading: false,
+      isLoading: true,
       isAuthenticated: false,
       error: null,
 
@@ -48,7 +50,7 @@ const useAuthStore = create(
       setError: (error) => set({ error }),
 
       /**
-       * Initialize auth — check for existing session
+       * Initialize auth — check for existing session and subscribe to changes
        */
       initialize: async () => {
         set({ isLoading: true, error: null });
@@ -59,7 +61,7 @@ const useAuthStore = create(
           if (cachedProfile) {
             set({
               isAuthenticated: true,
-      isLoading: true,
+              isLoading: false,
             });
           } else {
             set({ isLoading: false });
@@ -101,6 +103,26 @@ const useAuthStore = create(
           }
         } finally {
           set({ isLoading: false });
+        }
+
+        // Subscribe to auth state changes (token refresh, sign out, etc.)
+        if (!authListenerUnsubscribed) {
+          supabase.auth.onAuthStateChange(async (event, session) => {
+            if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+              if (session) {
+                set({ user: session.user, session, isAuthenticated: true });
+              }
+            } else if (event === 'SIGNED_OUT') {
+              set({
+                user: null,
+                profile: null,
+                session: null,
+                isAuthenticated: false,
+              });
+              localStorage.removeItem('nurtureai-auth');
+            }
+          });
+          authListenerUnsubscribed = true;
         }
       },
 
