@@ -60,7 +60,7 @@ export const Register = () => {
     
     if (success) {
       addToast({ type: 'success', message: 'Account created successfully!' });
-      navigate('/dashboard');
+      navigate('/');
     } else {
       addToast({ type: 'error', title: 'Registration Failed', message: error });
     }

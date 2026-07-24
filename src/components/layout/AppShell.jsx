@@ -45,7 +45,6 @@ export const AppShell = () => {
     return <Spinner fullScreen color="var(--color-primary-500)" />;
   }
 
-  // Don't wrap auth pages in the main shell layout
   if (location.pathname.startsWith('/auth')) {
     return (
       <>
@@ -60,13 +59,11 @@ export const AppShell = () => {
       <OfflineBanner />
       <Header />
       <div className={styles.mainContent}>
-        {/* Sidebar is hidden on mobile via CSS */}
         <Sidebar />
         <main className={styles.contentArea} id="main-content">
           <Outlet />
         </main>
       </div>
-      {/* BottomNav is hidden on desktop via CSS */}
       <BottomNav />
       <Toast />
     </div>

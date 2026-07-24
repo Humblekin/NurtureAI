@@ -7,6 +7,7 @@ import {
 import useMotherStore from '../../stores/motherStore';
 import usePregnancyStore from '../../stores/pregnancyStore';
 import useChildStore from '../../stores/childStore';
+import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
@@ -19,6 +20,7 @@ import AntenatalVisitForm from '../pregnancies/AntenatalVisitForm';
 
 export const MotherProfile = () => {
   const { id } = useParams();
+  const { profile } = useAuthStore();
   const { fetchMotherByProfileId, currentMother, softDelete: deleteMother, isLoading: isMotherLoading } = useMotherStore();
   const { fetchPregnanciesByMotherId, pregnancyHistory, activePregnancy, antenatalVisits, softDelete: deletePregnancy, deleteAntenatalVisit, isLoading: isPregnancyLoading } = usePregnancyStore();
   const { fetchChildrenByMotherId, children, isLoading: isChildrenLoading } = useChildStore();
@@ -52,7 +54,7 @@ export const MotherProfile = () => {
     return (
       <div className="page-content text-center">
         <h2 className="heading-3">Mother not found</h2>
-        <Link to="/mothers">
+        <Link to={`/${profile?.role === 'mother' ? 'mother' : profile?.role}/mothers`}>
           <Button variant="secondary" style={{ marginTop: 'var(--space-4)' }}>Back to list</Button>
         </Link>
       </div>
@@ -62,7 +64,7 @@ export const MotherProfile = () => {
   return (
     <div className="page-content fade-in">
       <div style={{ marginBottom: 'var(--space-6)' }}>
-        <Link to="/mothers" className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
+        <Link to={`/${profile?.role === 'mother' ? 'mother' : profile?.role}/mothers`} className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
           <ArrowLeft size={16} /> Back to list
         </Link>
         <div className="flex-between align-start">

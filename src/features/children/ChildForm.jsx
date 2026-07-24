@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
 import { User, Calendar, Scale, ArrowLeft } from 'lucide-react';
 import useChildStore from '../../stores/childStore';
+import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Input from '../../components/ui/Input';
@@ -11,8 +12,10 @@ export const ChildForm = () => {
   const navigate = useNavigate();
   const { id } = useParams();
   const isEdit = !!id;
+  const { profile } = useAuthStore();
   const { registerChild, updateChild, isLoading, children } = useChildStore();
   const addToast = useAppStore((state) => state.addToast);
+  const rolePrefix = profile?.role || 'chw';
   
   const [formData, setFormData] = useState({
     mother_id: '',
@@ -60,7 +63,7 @@ export const ChildForm = () => {
     
     if (success) {
       addToast({ type: 'success', message: isEdit ? 'Child record updated.' : 'Child registered successfully.' });
-      navigate(isEdit ? `/children/${id}` : '/children');
+      navigate(isEdit ? `/${rolePrefix}/children/${id}` : `/${rolePrefix}/children`);
     } else {
       addToast({ type: 'error', title: isEdit ? 'Update failed' : 'Registration failed', message: error });
     }
@@ -69,7 +72,7 @@ export const ChildForm = () => {
   return (
     <div className="page-content fade-in">
       <div style={{ marginBottom: 'var(--space-6)' }}>
-        <Link to={isEdit ? `/children/${id}` : '/children'} className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
+        <Link to={isEdit ? `/${rolePrefix}/children/${id}` : `/${rolePrefix}/children`} className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
           <ArrowLeft size={16} /> Back
         </Link>
         <h1 className="heading-2">{isEdit ? 'Edit Child Record' : 'Register Child'}</h1>
@@ -161,7 +164,7 @@ export const ChildForm = () => {
           <Button 
             type="button" 
             variant="secondary" 
-            onClick={() => navigate(isEdit ? `/children/${id}` : '/children')}
+            onClick={() => navigate(isEdit ? `/${rolePrefix}/children/${id}` : `/${rolePrefix}/children`)}
           >
             Cancel
           </Button>

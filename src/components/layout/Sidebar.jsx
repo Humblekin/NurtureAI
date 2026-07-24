@@ -1,66 +1,84 @@
 import { NavLink } from 'react-router-dom';
 import { 
-  Home, Users, Baby, Calendar, Activity,
+  Home, Users, Baby, Calendar, Activity, Heart,
   FileText, Settings, HeartPulse, Stethoscope, MessageCircle, 
-  ChevronLeft, ChevronRight, Archive
+  ChevronLeft, ChevronRight, Archive, Building2, ClipboardList,
+  User
 } from 'lucide-react';
 import useAuthStore, { ROLES } from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
 import styles from './Sidebar.module.css';
 
-// Navigation configuration based on roles
 const getNavConfig = (role) => {
-  const baseNav = [
-    { name: 'Amina AI', path: '/amina', icon: MessageCircle },
-  ];
-
   switch (role) {
     case ROLES.MOTHER:
       return [
-        { name: 'Dashboard', path: '/dashboard', icon: Home },
-        { name: 'My Health', path: '/health', icon: HeartPulse },
-        { name: 'My Children', path: '/children', icon: Baby },
-        ...baseNav
+        { name: 'Home', path: '/mother/dashboard', icon: Home },
+        { name: 'My Pregnancy', path: '/mother/pregnancy', icon: Heart },
+        { name: 'My Children', path: '/mother/children', icon: Baby },
+        { name: 'Appointments', path: '/mother/appointments', icon: Calendar },
+        { name: 'Chat with Amina', path: '/shared/amina', icon: MessageCircle },
+        { name: 'My Profile', path: '/shared/settings', icon: User },
       ];
+
     case ROLES.CHW:
       return [
-        { name: 'Dashboard', path: '/dashboard', icon: Home },
-        { name: 'Patients', path: '/mothers', icon: Users },
-        { name: 'Visits', path: '/visits', icon: Calendar },
-        { name: 'Referrals', path: '/referrals', icon: Activity },
-        ...baseNav
+        { name: 'Dashboard', path: '/chw/dashboard', icon: Home },
+        { name: 'Mothers', path: '/chw/mothers', icon: Users },
+        { name: 'Children', path: '/chw/children', icon: Baby },
+        { name: 'Home Visits', path: '/chw/visits', icon: Calendar },
+        { name: 'Referrals', path: '/chw/referrals', icon: Activity },
+        { name: 'Chat with Amina', path: '/shared/amina', icon: MessageCircle },
+        { name: 'Profile', path: '/shared/settings', icon: Settings },
       ];
+
     case ROLES.NURSE:
+      return [
+        { name: 'Dashboard', path: '/nurse/dashboard', icon: Home },
+        { name: 'Patients', path: '/nurse/mothers', icon: Users },
+        { name: 'ANC Visits', path: '/nurse/anc', icon: HeartPulse },
+        { name: 'Appointments', path: '/nurse/appointments', icon: Calendar },
+        { name: 'Referrals', path: '/nurse/referrals', icon: Stethoscope },
+        { name: 'Reports', path: '/nurse/reports', icon: FileText },
+        { name: 'Chat with Amina', path: '/shared/amina', icon: MessageCircle },
+        { name: 'Profile', path: '/shared/settings', icon: Settings },
+      ];
+
     case ROLES.DOCTOR:
       return [
-        { name: 'Dashboard', path: '/dashboard', icon: Home },
-        { name: 'Patients', path: '/mothers', icon: Users },
-        { name: 'Appointments', path: '/appointments', icon: Calendar },
-        { name: 'Referrals', path: '/referrals', icon: Stethoscope },
-        { name: 'Reports', path: '/reports', icon: FileText },
-        ...baseNav
+        { name: 'Dashboard', path: '/doctor/dashboard', icon: Home },
+        { name: 'Patients', path: '/doctor/mothers', icon: Users },
+        { name: 'Referrals', path: '/doctor/referrals', icon: ClipboardList },
+        { name: 'Reports', path: '/doctor/reports', icon: FileText },
+        { name: 'Chat with Amina', path: '/shared/amina', icon: MessageCircle },
+        { name: 'Profile', path: '/shared/settings', icon: Settings },
       ];
+
     case ROLES.DISTRICT_OFFICER:
       return [
-        { name: 'Dashboard', path: '/dashboard', icon: Home },
-        { name: 'Patients', path: '/mothers', icon: Users },
-        { name: 'Reports', path: '/reports', icon: FileText },
-        { name: 'Facilities', path: '/admin/facilities', icon: Activity },
-        ...baseNav
+        { name: 'Dashboard', path: '/district/dashboard', icon: Home },
+        { name: 'Facilities', path: '/district/facilities', icon: Building2 },
+        { name: 'Reports', path: '/district/reports', icon: FileText },
+        { name: 'Users', path: '/district/users', icon: Users },
+        { name: 'Chat with Amina', path: '/shared/amina', icon: MessageCircle },
+        { name: 'Profile', path: '/shared/settings', icon: Settings },
       ];
+
     case ROLES.ADMIN:
       return [
-        { name: 'Dashboard', path: '/dashboard', icon: Home },
+        { name: 'Dashboard', path: '/admin/dashboard', icon: Home },
         { name: 'Users', path: '/admin/users', icon: Users },
-        { name: 'Facilities', path: '/admin/facilities', icon: Activity },
+        { name: 'Mothers', path: '/admin/mothers', icon: Users },
+        { name: 'Children', path: '/admin/children', icon: Baby },
+        { name: 'Facilities', path: '/admin/facilities', icon: Building2 },
+        { name: 'Referrals', path: '/admin/referrals', icon: Activity },
+        { name: 'Reports', path: '/admin/reports', icon: FileText },
         { name: 'Archive', path: '/admin/archive', icon: Archive },
-        { name: 'Reports', path: '/reports', icon: FileText },
-        { name: 'Settings', path: '/settings', icon: Settings },
+        { name: 'Settings', path: '/shared/settings', icon: Settings },
       ];
+
     default:
-      return [
-        { name: 'Dashboard', path: '/dashboard', icon: Home },
-      ];
+      return [{ name: 'Dashboard', path: '/dashboard', icon: Home }];
   }
 };
 
@@ -85,7 +103,7 @@ export const Sidebar = () => {
       />
       <aside className={sidebarClasses}>
         <div className={styles.navSection}>
-          <div className={styles.sectionTitle}>Main Menu</div>
+          <div className={styles.sectionTitle}>Menu</div>
           {navItems.map((item) => {
             const Icon = item.icon;
             return (

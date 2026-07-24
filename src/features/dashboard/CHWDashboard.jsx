@@ -83,8 +83,7 @@ export const CHWDashboard = () => {
           <CardBody style={{ padding: 0 }}>
             {highRiskMothers.length > 0 ? (
               highRiskMothers.slice(0, 5).map((mother) => (
-                <Link 
-                  to={`/mothers/${mother.profile_id || mother.id}`} 
+                <Link to={`/chw/mothers/${mother.profile_id || mother.id}`} 
                   key={mother.id}
                   style={{ textDecoration: 'none', color: 'inherit' }}
                 >
@@ -108,17 +107,17 @@ export const CHWDashboard = () => {
         <Card>
           <CardHeader title="Quick Actions" />
           <CardBody className="flex-col gap-3">
-            <Link to="/mothers/new" style={{ textDecoration: 'none' }}>
+            <Link to="/chw/mothers/new" style={{ textDecoration: 'none' }}>
               <Button variant="outline" leftIcon={<Users size={18} />} fullWidth style={{ justifyContent: 'flex-start' }}>
                 Register New Mother
               </Button>
             </Link>
-            <Link to="/children/new" style={{ textDecoration: 'none' }}>
+            <Link to="/chw/children/new" style={{ textDecoration: 'none' }}>
               <Button variant="outline" leftIcon={<Baby size={18} />} fullWidth style={{ justifyContent: 'flex-start' }}>
                 Register New Child
               </Button>
             </Link>
-            <Link to="/visits/new" style={{ textDecoration: 'none' }}>
+            <Link to="/chw/visits/new" style={{ textDecoration: 'none' }}>
               <Button variant="outline" leftIcon={<Activity size={18} />} fullWidth style={{ justifyContent: 'flex-start' }}>
                 Log Health Visit
               </Button>

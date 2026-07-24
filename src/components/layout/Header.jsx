@@ -1,8 +1,26 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { Menu, Heart, Bell, Moon, Sun, LogOut } from 'lucide-react';
-import useAuthStore, { ROLE_LABELS } from '../../stores/authStore';
+import useAuthStore, { ROLES, ROLE_LABELS } from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
 import styles from './Header.module.css';
+
+const PORTAL_NAMES = {
+  [ROLES.MOTHER]: 'Mother Portal',
+  [ROLES.CHW]: 'CHW Portal',
+  [ROLES.NURSE]: 'Nurse Portal',
+  [ROLES.DOCTOR]: 'Doctor Portal',
+  [ROLES.DISTRICT_OFFICER]: 'District Portal',
+  [ROLES.ADMIN]: 'Admin Portal',
+};
+
+const PORTAL_HOME = {
+  [ROLES.MOTHER]: '/mother/dashboard',
+  [ROLES.CHW]: '/chw/dashboard',
+  [ROLES.NURSE]: '/nurse/dashboard',
+  [ROLES.DOCTOR]: '/doctor/dashboard',
+  [ROLES.DISTRICT_OFFICER]: '/district/dashboard',
+  [ROLES.ADMIN]: '/admin/dashboard',
+};
 
 export const Header = () => {
   const { profile, signOut } = useAuthStore();
@@ -19,6 +37,9 @@ export const Header = () => {
     return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
   };
 
+  const homePath = PORTAL_HOME[profile?.role] || '/dashboard';
+  const portalName = PORTAL_NAMES[profile?.role] || '';
+
   return (
     <header className={styles.header}>
       <div className={styles.leftArea}>
@@ -30,9 +51,10 @@ export const Header = () => {
           <Menu size={24} />
         </button>
         
-        <Link to="/dashboard" className={styles.brand}>
+        <Link to={homePath} className={styles.brand}>
           <Heart fill="currentColor" size={24} />
           <span className={styles.brandText}>NurtureAI</span>
+          {portalName && <span className={styles.portalBadge}>{portalName}</span>}
         </Link>
       </div>
 

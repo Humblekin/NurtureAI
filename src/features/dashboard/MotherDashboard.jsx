@@ -114,7 +114,7 @@ export const MotherDashboard = () => {
             <CardBody className="flex-col gap-4 items-center" style={{ color: 'var(--text-secondary)' }}>
               <Heart size={24} style={{ opacity: 0.5 }} />
               <span className="font-medium">No Active Pregnancy</span>
-              <Link to="/health">
+              <Link to="/mother/pregnancy">
                 <Button size="sm" variant="outline">Register Pregnancy</Button>
               </Link>
             </CardBody>
@@ -143,7 +143,7 @@ export const MotherDashboard = () => {
                 </>
               )}
             </div>
-            <Link to="/health">
+            <Link to="/mother/pregnancy">
               <Button size="sm" variant="outline" fullWidth>View Details</Button>
             </Link>
           </CardBody>
@@ -160,7 +160,7 @@ export const MotherDashboard = () => {
                 Have a health question? Amina is here to help 24/7.
               </p>
             </div>
-            <Link to="/amina">
+            <Link to="/shared/amina">
               <Button size="sm" style={{ background: 'white', color: 'var(--color-secondary-700)' }} fullWidth>
                 Chat Now
               </Button>
@@ -173,7 +173,7 @@ export const MotherDashboard = () => {
       <div className="grid grid-2">
         {children?.length > 0 ? (
           children.map(child => (
-            <Link key={child.id} to={`/children/${child.id}`}>
+            <Link key={child.id} to={`/mother/children/${child.id}`}>
               <Card hoverable clickable>
                 <CardBody className="flex gap-4 items-center">
                   <div style={{
@@ -208,7 +208,7 @@ export const MotherDashboard = () => {
             </CardBody>
           </Card>
         )}
-        <Link to="/children/new">
+        <Link to="/mother/children/new">
           <Card hoverable clickable className="flex-center" style={{ borderStyle: 'dashed', background: 'transparent' }}>
             <CardBody className="flex-col items-center gap-2 text-center" style={{ color: 'var(--text-secondary)' }}>
               <Baby size={24} style={{ opacity: 0.5 }} />

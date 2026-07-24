@@ -15,6 +15,7 @@ export const VisitForm = () => {
   const { logVisit, updateVisit, isLoading, visits } = useVisitStore();
   const { profile } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
+  const rolePrefix = profile?.role || 'chw';
   
   const [formData, setFormData] = useState({
     patient_id: '',
@@ -62,7 +63,7 @@ export const VisitForm = () => {
     
     if (success) {
       addToast({ type: 'success', message: isEdit ? 'Visit updated.' : 'Visit logged successfully.' });
-      navigate('/visits');
+      navigate(`/${rolePrefix}/visits`);
     } else {
       addToast({ type: 'error', title: isEdit ? 'Update failed' : 'Failed to log visit', message: error });
     }
@@ -71,7 +72,7 @@ export const VisitForm = () => {
   return (
     <div className="page-content fade-in">
       <div style={{ marginBottom: 'var(--space-6)' }}>
-        <Link to="/visits" className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
+        <Link to={`/${profile?.role === 'chw' ? 'chw' : 'nurse'}/visits`} className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
           <ArrowLeft size={16} /> Back to visits
         </Link>
         <h1 className="heading-2">{isEdit ? 'Edit Visit' : 'Log Health Visit'}</h1>
@@ -169,7 +170,7 @@ export const VisitForm = () => {
           <Button 
             type="button" 
             variant="secondary" 
-            onClick={() => navigate('/visits')}
+            onClick={() => navigate(`/${rolePrefix}/visits`)}
           >
             Cancel
           </Button>

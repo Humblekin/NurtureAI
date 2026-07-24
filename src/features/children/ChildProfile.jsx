@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Baby, FileText, Syringe, TrendingUp, Plus, Share2, ExternalLink, Pencil, Trash2 } from 'lucide-react';
 import useChildStore from '../../stores/childStore';
+import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
@@ -14,6 +15,7 @@ import GrowthForm from './GrowthForm';
 
 export const ChildProfile = () => {
   const { id } = useParams();
+  const { profile } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
   const { 
     children, 
@@ -49,7 +51,7 @@ export const ChildProfile = () => {
     return (
       <div className="page-content text-center">
         <h2 className="heading-3">Child record not found</h2>
-        <Link to="/children">
+        <Link to={`/${profile?.role === 'mother' ? 'mother' : profile?.role}/children`}>
           <Button variant="secondary" style={{ marginTop: 'var(--space-4)' }}>Back to list</Button>
         </Link>
       </div>
@@ -59,7 +61,7 @@ export const ChildProfile = () => {
   return (
     <div className="page-content fade-in">
       <div style={{ marginBottom: 'var(--space-6)' }}>
-        <Link to="/children" className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
+        <Link to={`/${profile?.role === 'mother' ? 'mother' : profile?.role}/children`} className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
           <ArrowLeft size={16} /> Back to list
         </Link>
         <div className="flex-between align-start">

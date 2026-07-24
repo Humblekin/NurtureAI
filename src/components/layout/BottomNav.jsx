@@ -1,53 +1,69 @@
 import { NavLink } from 'react-router-dom';
-import { Home, Users, MessageCircle, Calendar, Settings } from 'lucide-react';
+import { Home, Users, Baby, Calendar, MessageCircle, Settings, Heart, Activity, HeartPulse, ClipboardList, Building2, FileText } from 'lucide-react';
 import useAuthStore, { ROLES } from '../../stores/authStore';
 import styles from './BottomNav.module.css';
 
-// Simplistic 5-tab mobile nav configuration
 const getMobileNavConfig = (role) => {
-  const aminaTab = { name: 'Amina', path: '/amina', icon: MessageCircle };
-  const settingsTab = { name: 'Settings', path: '/settings', icon: Settings };
-
   switch (role) {
     case ROLES.MOTHER:
       return [
-        { name: 'Home', path: '/dashboard', icon: Home },
-        { name: 'Health', path: '/health', icon: Calendar },
-        aminaTab,
-        { name: 'Children', path: '/children', icon: Users },
-        settingsTab,
+        { name: 'Home', path: '/mother/dashboard', icon: Home },
+        { name: 'Health', path: '/mother/pregnancy', icon: Heart },
+        { name: 'Amina', path: '/shared/amina', icon: MessageCircle },
+        { name: 'Children', path: '/mother/children', icon: Baby },
+        { name: 'Settings', path: '/shared/settings', icon: Settings },
       ];
+
     case ROLES.CHW:
       return [
-        { name: 'Home', path: '/dashboard', icon: Home },
-        { name: 'Patients', path: '/mothers', icon: Users },
-        aminaTab,
-        { name: 'Visits', path: '/visits', icon: Calendar },
-        settingsTab,
+        { name: 'Home', path: '/chw/dashboard', icon: Home },
+        { name: 'Mothers', path: '/chw/mothers', icon: Users },
+        { name: 'Amina', path: '/shared/amina', icon: MessageCircle },
+        { name: 'Visits', path: '/chw/visits', icon: Calendar },
+        { name: 'Settings', path: '/shared/settings', icon: Settings },
       ];
+
     case ROLES.NURSE:
+      return [
+        { name: 'Home', path: '/nurse/dashboard', icon: Home },
+        { name: 'Patients', path: '/nurse/mothers', icon: Users },
+        { name: 'Amina', path: '/shared/amina', icon: MessageCircle },
+        { name: 'ANC', path: '/nurse/anc', icon: HeartPulse },
+        { name: 'Settings', path: '/shared/settings', icon: Settings },
+      ];
+
     case ROLES.DOCTOR:
       return [
-        { name: 'Home', path: '/dashboard', icon: Home },
-        { name: 'Patients', path: '/mothers', icon: Users },
-        aminaTab,
-        { name: 'Appointments', path: '/appointments', icon: Calendar },
-        settingsTab,
+        { name: 'Home', path: '/doctor/dashboard', icon: Home },
+        { name: 'Patients', path: '/doctor/mothers', icon: Users },
+        { name: 'Amina', path: '/shared/amina', icon: MessageCircle },
+        { name: 'Referrals', path: '/doctor/referrals', icon: ClipboardList },
+        { name: 'Settings', path: '/shared/settings', icon: Settings },
       ];
+
     case ROLES.DISTRICT_OFFICER:
+      return [
+        { name: 'Home', path: '/district/dashboard', icon: Home },
+        { name: 'Facilities', path: '/district/facilities', icon: Building2 },
+        { name: 'Amina', path: '/shared/amina', icon: MessageCircle },
+        { name: 'Reports', path: '/district/reports', icon: FileText },
+        { name: 'Settings', path: '/shared/settings', icon: Settings },
+      ];
+
     case ROLES.ADMIN:
       return [
-        { name: 'Home', path: '/dashboard', icon: Home },
-        { name: 'Reports', path: '/reports', icon: Users },
-        aminaTab,
-        { name: 'Facilities', path: '/admin/facilities', icon: Calendar },
-        settingsTab,
+        { name: 'Home', path: '/admin/dashboard', icon: Home },
+        { name: 'Users', path: '/admin/users', icon: Users },
+        { name: 'Amina', path: '/shared/amina', icon: MessageCircle },
+        { name: 'Facilities', path: '/admin/facilities', icon: Activity },
+        { name: 'Settings', path: '/shared/settings', icon: Settings },
       ];
+
     default:
       return [
         { name: 'Home', path: '/dashboard', icon: Home },
-        aminaTab,
-        settingsTab,
+        { name: 'Amina', path: '/shared/amina', icon: MessageCircle },
+        { name: 'Settings', path: '/shared/settings', icon: Settings },
       ];
   }
 };
@@ -66,8 +82,8 @@ export const BottomNav = () => {
             to={item.path}
             className={({ isActive }) => `${styles.navItem} ${isActive ? styles.active : ''}`}
           >
-            <Icon size={24} strokeWidth={2} />
-            <span className={styles.label}>{item.name}</span>
+            <Icon size={20} />
+            <span className={styles.navLabel}>{item.name}</span>
           </NavLink>
         );
       })}

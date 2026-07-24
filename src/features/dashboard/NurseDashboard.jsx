@@ -93,12 +93,12 @@ export const NurseDashboard = () => {
         <Card>
           <CardHeader title="Quick Actions" />
           <CardBody className="flex-col gap-3">
-            <Link to="/mothers" style={{ textDecoration: 'none' }}>
+            <Link to="/nurse/mothers" style={{ textDecoration: 'none' }}>
               <Button variant="outline" leftIcon={<Users size={18} />} fullWidth style={{ justifyContent: 'flex-start' }}>
                 View All Patients
               </Button>
             </Link>
-            <Link to="/referrals" style={{ textDecoration: 'none' }}>
+            <Link to="/nurse/referrals" style={{ textDecoration: 'none' }}>
               <Button variant="outline" leftIcon={<AlertCircle size={18} />} fullWidth style={{ justifyContent: 'flex-start' }}>
                 Manage Referrals
               </Button>
