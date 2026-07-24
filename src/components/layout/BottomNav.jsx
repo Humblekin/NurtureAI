@@ -18,12 +18,29 @@ const getMobileNavConfig = (role) => {
         settingsTab,
       ];
     case ROLES.CHW:
-    case ROLES.NURSE:
       return [
         { name: 'Home', path: '/dashboard', icon: Home },
-        { name: 'Patients', path: '/patients', icon: Users },
+        { name: 'Patients', path: '/mothers', icon: Users },
         aminaTab,
         { name: 'Visits', path: '/visits', icon: Calendar },
+        settingsTab,
+      ];
+    case ROLES.NURSE:
+    case ROLES.DOCTOR:
+      return [
+        { name: 'Home', path: '/dashboard', icon: Home },
+        { name: 'Patients', path: '/mothers', icon: Users },
+        aminaTab,
+        { name: 'Appointments', path: '/appointments', icon: Calendar },
+        settingsTab,
+      ];
+    case ROLES.DISTRICT_OFFICER:
+    case ROLES.ADMIN:
+      return [
+        { name: 'Home', path: '/dashboard', icon: Home },
+        { name: 'Reports', path: '/reports', icon: Users },
+        aminaTab,
+        { name: 'Facilities', path: '/admin/facilities', icon: Calendar },
         settingsTab,
       ];
     default:

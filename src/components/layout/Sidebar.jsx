@@ -25,7 +25,7 @@ const getNavConfig = (role) => {
     case ROLES.CHW:
       return [
         { name: 'Dashboard', path: '/dashboard', icon: Home },
-        { name: 'Patients', path: '/patients', icon: Users },
+        { name: 'Patients', path: '/mothers', icon: Users },
         { name: 'Visits', path: '/visits', icon: Calendar },
         { name: 'Referrals', path: '/referrals', icon: Activity },
         ...baseNav
@@ -34,7 +34,7 @@ const getNavConfig = (role) => {
     case ROLES.DOCTOR:
       return [
         { name: 'Dashboard', path: '/dashboard', icon: Home },
-        { name: 'Patients', path: '/patients', icon: Users },
+        { name: 'Patients', path: '/mothers', icon: Users },
         { name: 'Appointments', path: '/appointments', icon: Calendar },
         { name: 'Referrals', path: '/referrals', icon: Stethoscope },
         { name: 'Reports', path: '/reports', icon: FileText },
@@ -43,7 +43,7 @@ const getNavConfig = (role) => {
     case ROLES.DISTRICT_OFFICER:
       return [
         { name: 'Dashboard', path: '/dashboard', icon: Home },
-        { name: 'Patients', path: '/patients', icon: Users },
+        { name: 'Patients', path: '/mothers', icon: Users },
         { name: 'Reports', path: '/reports', icon: FileText },
         { name: 'Facilities', path: '/admin/facilities', icon: Activity },
         ...baseNav
