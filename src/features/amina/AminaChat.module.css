@@ -289,6 +289,69 @@
 }
 
 /* ============================================
+   PERMISSION DENIED OVERLAY
+   ============================================ */
+.permissionDeniedOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  z-index: 20;
+  padding: var(--space-4);
+}
+
+.permissionDeniedCard {
+  background: var(--bg-primary);
+  border-radius: var(--radius-xl);
+  padding: var(--space-6);
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+  box-shadow: var(--shadow-xl);
+  border: 1px solid var(--border-color);
+}
+
+.permissionDeniedCard h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-xl);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+}
+
+.permissionDeniedCard > p {
+  margin: 0 0 var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.permissionSteps {
+  text-align: left;
+  margin: var(--space-3) 0 var(--space-4);
+  padding: var(--space-3);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.permissionSteps p {
+  margin: 0 0 var(--space-2);
+}
+
+.permissionSteps ul {
+  margin: 0 0 var(--space-2);
+  padding-left: var(--space-4);
+}
+
+.permissionSteps li {
+  margin-bottom: var(--space-1);
+  line-height: 1.5;
+}
+
+/* ============================================
    CHAT MODE — Text Conversation
    ============================================ */
 .chatPage {
@@ -667,6 +730,10 @@
   .pauseBtn {
     width: 44px;
     height: 44px;
+  }
+
+  .voiceControls {
+    bottom: calc(var(--bottom-nav-height) + var(--space-4));
   }
 }
 

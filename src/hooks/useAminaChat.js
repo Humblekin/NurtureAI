@@ -26,10 +26,31 @@ export function useSpeechRecognition(language = 'en') {
   const [transcript, setTranscript] = useState('');
   const [isSupported, setIsSupported] = useState(false);
   const [error, setError] = useState(null);
+  const [micPermission, setMicPermission] = useState('unknown');
   const recognitionRef = useRef(null);
   const shouldListenRef = useRef(false);
   const onFinalRef = useRef(null);
   const onInterimRef = useRef(null);
+
+  // Check mic permission status proactively
+  const checkMicPermission = useCallback(async () => {
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        const status = await navigator.permissions.query({ name: 'microphone' });
+        setMicPermission(status.state);
+        status.onchange = () => setMicPermission(status.state);
+        return status.state;
+      }
+    } catch {
+      // Permissions API not supported for microphone — proceed anyway
+    }
+    setMicPermission('unknown');
+    return 'unknown';
+  }, []);
+
+  useEffect(() => {
+    checkMicPermission();
+  }, [checkMicPermission]);
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -83,7 +104,8 @@ export function useSpeechRecognition(language = 'en') {
       console.warn('Speech recognition error:', event.error);
       if (event.error === 'not-allowed') {
         shouldListenRef.current = false;
-        setError('Microphone access was denied. Please allow microphone permission in your browser settings.');
+        setMicPermission('denied');
+        setError('Microphone permission is blocked. To use voice chat:\n\n• Chrome: Click the lock icon in the address bar → Microphone → Allow\n• Safari: Settings → Websites → Microphone → Allow\n• Firefox: Click the mic icon in the address bar → Allow\n• Edge: Click the lock icon in the address bar → Microphone → Allow\n\nOr switch to Chat mode to type instead.');
       } else if (event.error === 'network') {
         setError('Network error during speech recognition.');
       } else if (event.error === 'aborted') {
@@ -101,8 +123,16 @@ export function useSpeechRecognition(language = 'en') {
     };
   }, [language]);
 
-  const startListening = useCallback(() => {
+  const startListening = useCallback(async () => {
     if (!recognitionRef.current) return;
+
+    // Proactively check mic permission before starting
+    const permState = await checkMicPermission();
+    if (permState === 'denied') {
+      setError('Microphone permission is blocked. To use voice chat:\n\n• Chrome: Click the lock icon in the address bar → Microphone → Allow\n• Safari: Settings → Websites → Microphone → Allow\n• Firefox: Click the mic icon in the address bar → Allow\n\nOr switch to Chat mode to type instead.');
+      return;
+    }
+
     shouldListenRef.current = true;
     setError(null);
     setTranscript('');
@@ -112,7 +142,7 @@ export function useSpeechRecognition(language = 'en') {
     } catch {
       // May already be started
     }
-  }, []);
+  }, [checkMicPermission]);
 
   const stopListening = useCallback(() => {
     shouldListenRef.current = false;
@@ -126,8 +156,8 @@ export function useSpeechRecognition(language = 'en') {
   const onInterim = useCallback((cb) => { onInterimRef.current = cb; }, []);
 
   return {
-    isListening, transcript, isSupported, error,
-    startListening, stopListening, setTranscript,
+    isListening, transcript, isSupported, error, micPermission,
+    startListening, stopListening, setTranscript, checkMicPermission,
     onFinal, onInterim,
   };
 }
@@ -277,7 +307,7 @@ export function useVoiceConversation() {
   const { profile } = useAuthStore();
 
   const {
-    isListening, isSupported: sttSupported, error: sttError,
+    isListening, isSupported: sttSupported, error: sttError, micPermission,
     startListening, stopListening, onFinal, onInterim,
   } = useSpeechRecognition(language);
 
@@ -288,6 +318,8 @@ export function useVoiceConversation() {
   const greetingSpokenRef = useRef(false);
   const lastSpokenIdxRef = useRef(-1);
   const processingRef = useRef(false);
+  const voiceStateRef = useRef(voiceState);
+  voiceStateRef.current = voiceState;
 
   const welcomeMessages = useMemo(() => ({
     en: "Hello! I'm Amina, your healthcare companion. I'm here to help you with pregnancy, child health, nutrition, and more. How can I help you today?",
@@ -345,11 +377,12 @@ export function useVoiceConversation() {
 
   // When Amina finishes speaking → start listening again
   const handleSpeechEnd = useCallback(() => {
-    if (voiceState === VOICE_STATES.SPEAKING || voiceState === VOICE_STATES.GREETING) {
+    const currentState = voiceStateRef.current;
+    if (currentState === VOICE_STATES.SPEAKING || currentState === VOICE_STATES.GREETING) {
       setVoiceState(VOICE_STATES.LISTENING);
       startListening();
     }
-  }, [voiceState, startListening]);
+  }, [startListening]);
 
   // Register callbacks
   useEffect(() => { onFinal(handleFinalSpeech); }, [onFinal, handleFinalSpeech]);
@@ -439,6 +472,7 @@ export function useVoiceConversation() {
     isSpeaking,
     error: error || sttError,
     language,
+    micPermission,
     sttSupported,
     ttsSupported,
     togglePause,

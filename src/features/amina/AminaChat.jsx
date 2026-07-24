@@ -54,7 +54,7 @@ const TypingIndicator = () => (
 const VoiceMode = ({ voice, onSwitchToChat }) => {
   const {
     voiceState, messages, transcript, isListening,
-    error, language, togglePause, clearChat, switchLanguage,
+    error, language, micPermission, togglePause, clearChat, switchLanguage,
   } = voice;
 
   const avatarState = useMemo(() => {
@@ -113,6 +113,33 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
       {!aiConfigured && (
         <div className={styles.warningBanner}>
           AI is not configured. Set VITE_OPENROUTER_API_KEY in your .env file to enable Amina.
+        </div>
+      )}
+
+      {/* Mic permission denied — dedicated screen */}
+      {micPermission === 'denied' && (
+        <div className={styles.permissionDeniedOverlay}>
+          <div className={styles.permissionDeniedCard}>
+            <MicOff size={48} style={{ color: 'var(--color-danger-500)', marginBottom: 'var(--space-3)' }} />
+            <h3>Microphone Access Needed</h3>
+            <p>Your browser has blocked microphone access for this site.</p>
+            <div className={styles.permissionSteps}>
+              <p><strong>To enable voice chat:</strong></p>
+              <ul>
+                <li><strong>Chrome:</strong> Click the lock/tune icon in the address bar → Microphone → Allow</li>
+                <li><strong>Safari:</strong> Safari Settings → Websites → Microphone → Allow</li>
+                <li><strong>Firefox:</strong> Click the mic icon in the address bar → Allow</li>
+                <li><strong>Edge:</strong> Click the lock icon in the address bar → Microphone → Allow</li>
+              </ul>
+              <p>After enabling, click <strong>Retry</strong> below.</p>
+            </div>
+            <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'center' }}>
+              <Button size="sm" variant="outline" onClick={clearChat}>Retry</Button>
+              <Button size="sm" onClick={onSwitchToChat}>
+                <MessageSquare size={14} /> Use Chat Instead
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -188,9 +215,11 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
 
       {/* Bottom controls */}
       <div className={styles.voiceControls}>
-        <button className={`${styles.controlBtn} ${styles.pauseBtn}`} onClick={togglePause} title={voiceState === VOICE_STATES.PAUSED ? 'Resume' : 'Pause'}>
-          {voiceState === VOICE_STATES.PAUSED ? <Play size={20} /> : <Pause size={20} />}
-        </button>
+        {micPermission !== 'denied' && (
+          <button className={`${styles.controlBtn} ${styles.pauseBtn}`} onClick={togglePause} title={voiceState === VOICE_STATES.PAUSED ? 'Resume' : 'Pause'}>
+            {voiceState === VOICE_STATES.PAUSED ? <Play size={20} /> : <Pause size={20} />}
+          </button>
+        )}
         <button className={`${styles.controlBtn} ${styles.endCallBtn}`} onClick={clearChat} title="End conversation">
           <PhoneOff size={22} />
         </button>
