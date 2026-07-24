@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { 
   User, Phone, MapPin, Calendar, HeartPulse, 
-  ArrowLeft, AlertTriangle, Baby, Activity, FileText, Plus
+  ArrowLeft, AlertTriangle, Baby, Activity, FileText, Plus, Share2
 } from 'lucide-react';
 import useMotherStore from '../../stores/motherStore';
 import usePregnancyStore from '../../stores/pregnancyStore';
@@ -69,6 +69,9 @@ export const MotherProfile = () => {
           <div className="flex gap-2">
             <Link to={`/mothers/new`}>
               <Button variant="outline" leftIcon={<FileText size={18} />}>Edit Profile</Button>
+            </Link>
+            <Link to={`/referrals/new?patientId=${currentMother.id}&patientType=mother`}>
+              <Button variant="outline" leftIcon={<Share2 size={18} />}>Refer</Button>
             </Link>
             {activePregnancy && (
               <Button leftIcon={<Activity size={18} />} onClick={() => setANCModalOpen(true)}>

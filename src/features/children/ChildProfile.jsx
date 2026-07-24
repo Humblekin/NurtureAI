@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Baby, FileText, Syringe, TrendingUp, Plus } from 'lucide-react';
+import { ArrowLeft, Baby, FileText, Syringe, TrendingUp, Plus, Share2, ExternalLink } from 'lucide-react';
 import useChildStore from '../../stores/childStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
@@ -70,9 +70,14 @@ export const ChildProfile = () => {
               </p>
             </div>
           </div>
-          <Link to="/children/new">
-            <Button variant="outline" leftIcon={<FileText size={18} />}>Edit Record</Button>
-          </Link>
+          <div className="flex gap-2">
+            <Link to="/children/new">
+              <Button variant="outline" leftIcon={<FileText size={18} />}>Edit Record</Button>
+            </Link>
+            <Link to={`/referrals/new?patientId=${child.id}&patientType=child&motherId=${child.mother_id || ''}`}>
+              <Button variant="outline" leftIcon={<Share2 size={18} />}>Refer</Button>
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -91,7 +96,13 @@ export const ChildProfile = () => {
               </div>
               <div className="flex-between">
                 <span className="text-secondary body-sm">Mother ID</span>
-                <span className="font-medium">{child.mother_id || 'Not linked'}</span>
+                {child.mother_id ? (
+                  <Link to={`/mothers/${child.mother_id}`} className="flex items-center gap-1" style={{ color: 'var(--color-primary-600)', textDecoration: 'none', fontWeight: 500 }}>
+                    View Mother <ExternalLink size={12} />
+                  </Link>
+                ) : (
+                  <span className="font-medium">Not linked</span>
+                )}
               </div>
               {child.notes && (
                 <div style={{ marginTop: 'var(--space-2)', paddingTop: 'var(--space-2)', borderTop: '1px solid var(--border-default)' }}>

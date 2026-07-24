@@ -1,27 +1,55 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Activity } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Activity, ExternalLink } from 'lucide-react';
 import useReferralStore from '../../stores/referralStore';
 import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
+import db from '../../lib/db';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
+import Spinner from '../../components/ui/Spinner';
 
 export const ReferralForm = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { createReferral, isLoading } = useReferralStore();
   const { profile } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
-  
+
+  const patientId = searchParams.get('patientId') || '';
+  const patientType = searchParams.get('patientType') || 'mother';
+  const motherId = searchParams.get('motherId') || '';
+
+  const [facilities, setFacilities] = useState([]);
+  const [loadingFacilities, setLoadingFacilities] = useState(true);
+
   const [formData, setFormData] = useState({
-    patient_id: '',
-    patient_type: 'mother',
+    patient_id: patientId,
+    patient_type: patientType,
     to_facility_id: '',
     urgency: 'routine',
     reason: '',
     notes: '',
   });
+
+  useEffect(() => {
+    async function loadFacilities() {
+      setLoadingFacilities(true);
+      try {
+        const local = await db.facilities.toArray();
+        setFacilities(local);
+      } catch (err) {
+        console.error('Failed to load facilities:', err);
+      }
+      setLoadingFacilities(false);
+    }
+    loadFacilities();
+  }, []);
+
+  useEffect(() => {
+    setFormData(prev => ({ ...prev, patient_id: patientId, patient_type: patientType }));
+  }, [patientId, patientType]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -30,9 +58,9 @@ export const ReferralForm = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (!formData.patient_id || !formData.reason) {
-      addToast({ type: 'error', message: 'Patient ID and reason are required.' });
+      addToast({ type: 'error', message: 'Patient and reason are required.' });
       return;
     }
 
@@ -40,8 +68,9 @@ export const ReferralForm = () => {
       ...formData,
       from_facility_id: profile?.facility_id,
       from_worker_id: profile?.id,
+      mother_id: motherId || undefined,
     });
-    
+
     if (success) {
       addToast({ type: 'success', message: 'Referral created successfully.' });
       navigate('/referrals');
@@ -49,6 +78,8 @@ export const ReferralForm = () => {
       addToast({ type: 'error', title: 'Failed to create referral', message: error });
     }
   };
+
+  const otherFacilities = facilities.filter(f => f.id !== profile?.facility_id);
 
   return (
     <div className="page-content fade-in">
@@ -66,14 +97,31 @@ export const ReferralForm = () => {
         <Card style={{ maxWidth: '600px', marginBottom: 'var(--space-6)' }}>
           <CardHeader title="Referral Details" />
           <CardBody className="flex-col gap-4">
+            {/* Patient ID — auto-filled, read-only */}
             <Input
               label="Patient ID"
               name="patient_id"
               value={formData.patient_id}
-              onChange={handleChange}
-              placeholder="Enter patient UUID"
+              readOnly
+              placeholder="Auto-filled from patient profile"
               required
+              style={{ opacity: 0.8, cursor: 'not-allowed' }}
             />
+
+            {/* Mother Profile ID — optional link */}
+            {patientType === 'child' && motherId && (
+              <div className="flex items-center gap-2" style={{ padding: 'var(--space-3)', background: 'var(--surface-sunken)', borderRadius: 'var(--radius-md)' }}>
+                <span className="body-sm" style={{ color: 'var(--text-secondary)' }}>Mother Profile:</span>
+                <Link
+                  to={`/mothers/${motherId}`}
+                  className="flex items-center gap-1"
+                  style={{ color: 'var(--color-primary-600)', textDecoration: 'none', fontWeight: 500 }}
+                >
+                  View Mother Profile <ExternalLink size={14} />
+                </Link>
+              </div>
+            )}
+
             <div className="grid grid-2" style={{ gap: 'var(--space-4)' }}>
               <Input
                 label="Patient Type"
@@ -100,16 +148,41 @@ export const ReferralForm = () => {
                 ]}
               />
             </div>
-            <Input
-              label="Destination Facility ID"
-              name="to_facility_id"
-              value={formData.to_facility_id}
-              onChange={handleChange}
-              placeholder="Enter facility UUID"
-            />
+
+            {/* Destination Facility — dropdown */}
+            {loadingFacilities ? (
+              <div className="flex items-center gap-2" style={{ padding: 'var(--space-3)' }}>
+                <Spinner size={16} />
+                <span className="body-sm" style={{ color: 'var(--text-secondary)' }}>Loading facilities...</span>
+              </div>
+            ) : (
+              <Input
+                label="Destination Facility"
+                name="to_facility_id"
+                type="select"
+                value={formData.to_facility_id}
+                onChange={handleChange}
+                placeholder="Select a facility"
+                required
+                options={[
+                  { value: '', label: '— Select destination facility —' },
+                  ...otherFacilities.map(f => ({
+                    value: f.id,
+                    label: `${f.name} (${f.type === 'hospital' ? 'Hospital' : f.type === 'clinic' ? 'Clinic' : f.type === 'chps' ? 'CHPS Compound' : f.type === 'health_post' ? 'Health Post' : f.type})`,
+                  })),
+                ]}
+              />
+            )}
+
+            {otherFacilities.length === 0 && !loadingFacilities && (
+              <p className="body-sm" style={{ color: 'var(--color-warning-500)', marginTop: '-var(--space-2)' }}>
+                No other facilities registered. Add facilities in Admin → Facility Management first.
+              </p>
+            )}
+
             <div className="input-group">
               <label className="input-label">Reason for Referral</label>
-              <textarea 
+              <textarea
                 className="input-base"
                 name="reason"
                 value={formData.reason}
@@ -121,7 +194,7 @@ export const ReferralForm = () => {
             </div>
             <div className="input-group">
               <label className="input-label">Additional Notes</label>
-              <textarea 
+              <textarea
                 className="input-base"
                 name="notes"
                 value={formData.notes}
@@ -134,15 +207,15 @@ export const ReferralForm = () => {
         </Card>
 
         <div className="flex gap-4" style={{ maxWidth: '600px', justifyContent: 'flex-end' }}>
-          <Button 
-            type="button" 
-            variant="secondary" 
+          <Button
+            type="button"
+            variant="secondary"
             onClick={() => navigate('/referrals')}
           >
             Cancel
           </Button>
-          <Button 
-            type="submit" 
+          <Button
+            type="submit"
             loading={isLoading}
           >
             Create Referral
