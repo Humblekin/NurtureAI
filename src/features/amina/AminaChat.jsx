@@ -172,7 +172,14 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
       </div>
 
       {/* Error */}
-      {error && <div className={styles.errorBanner}>{error}</div>}
+      {error && (
+        <div className={styles.errorBanner}>
+          <p>{error}</p>
+          <Button size="sm" variant="outline" onClick={clearChat} style={{ marginTop: 'var(--space-2)' }}>
+            Try Again
+          </Button>
+        </div>
+      )}
 
       {/* Bottom controls */}
       <div className={styles.voiceControls}>

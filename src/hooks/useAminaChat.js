@@ -361,6 +361,15 @@ export function useVoiceConversation() {
     }
   }, [voiceState, isListening, startListening]);
 
+  // STT errors (not-allowed, network) → transition to error state
+  useEffect(() => {
+    if (sttError && voiceState !== VOICE_STATES.ERROR) {
+      stopListening();
+      setVoiceState(VOICE_STATES.ERROR);
+      setError(sttError);
+    }
+  }, [sttError, voiceState, stopListening]);
+
   // Clear error after 5 seconds
   useEffect(() => {
     if (error || sttError) {
