@@ -172,6 +172,43 @@
   font-style: italic;
 }
 
+/* Listening ring — pulsing blue circle */
+.listeningRing {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  border: 3px solid rgba(51, 154, 240, 0.3);
+  pointer-events: none;
+  animation: ringPulse 2s ease-in-out infinite;
+}
+
+@keyframes ringPulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); border-color: rgba(51, 154, 240, 0.3); }
+  50% { transform: translate(-50%, -50%) scale(1.08); border-color: rgba(51, 154, 240, 0.6); }
+}
+
+/* Thinking indicator */
+.thinkingIndicator {
+  position: absolute;
+  bottom: 120px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-3) var(--space-5);
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(12px);
+  border-radius: var(--radius-xl);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  z-index: 10;
+}
+
+[data-theme="dark"] .thinkingIndicator {
+  background: rgba(0, 0, 0, 0.3);
+}
+
 /* Floating voice controls */
 .voiceControls {
   position: absolute;
@@ -231,6 +268,23 @@
 
 .endCallBtn:hover {
   background: var(--color-danger-600);
+  transform: scale(1.05);
+}
+
+.pauseBtn {
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(8px);
+  color: var(--text-primary);
+  width: 48px;
+  height: 48px;
+}
+
+[data-theme="dark"] .pauseBtn {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.pauseBtn:hover {
+  background: rgba(255, 255, 255, 0.25);
   transform: scale(1.05);
 }
 
@@ -591,6 +645,15 @@
     font-size: var(--text-sm);
   }
 
+  .listeningRing {
+    width: 200px;
+    height: 200px;
+  }
+
+  .thinkingIndicator {
+    bottom: 100px;
+  }
+
   .controlBtn {
     width: 56px;
     height: 56px;
@@ -599,6 +662,11 @@
   .micBtn {
     width: 64px;
     height: 64px;
+  }
+
+  .pauseBtn {
+    width: 44px;
+    height: 44px;
   }
 }
 
