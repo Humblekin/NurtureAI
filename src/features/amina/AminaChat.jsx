@@ -62,8 +62,11 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
     switch (voiceState) {
       case VOICE_STATES.SPEAKING: return 'speaking';
       case VOICE_STATES.LISTENING: return 'listening';
-      case VOICE_STATES.PROCESSING: return 'speaking';
-      case VOICE_STATES.GREETING: return 'speaking';
+      case VOICE_STATES.PROCESSING: return 'processing';
+      case VOICE_STATES.GREETING: return 'greeting';
+      case VOICE_STATES.PAUSED: return 'paused';
+      case VOICE_STATES.ERROR: return 'error';
+      case VOICE_STATES.INITIALIZING: return 'initializing';
       default: return 'idle';
     }
   }, [voiceState]);

@@ -38,8 +38,27 @@ export function AminaBody({ state = 'idle', emotion = 'neutral' }) {
     }
 
     if (headRef.current) {
-      headRef.current.rotation.x = Math.sin(t * 0.7) * 0.03;
-      headRef.current.rotation.y = Math.sin(t * 0.5) * 0.02;
+      if (state === 'processing') {
+        // Thinking: head tilted, looking slightly up
+        headRef.current.rotation.x = THREE.MathUtils.lerp(headRef.current.rotation.x, -0.15, 0.03);
+        headRef.current.rotation.y = THREE.MathUtils.lerp(headRef.current.rotation.y, 0.08, 0.03);
+        headRef.current.rotation.z = THREE.MathUtils.lerp(headRef.current.rotation.z, 0.05, 0.03);
+      } else if (state === 'listening') {
+        // Active listening: subtle nod
+        headRef.current.rotation.x = Math.sin(t * 2) * 0.08;
+        headRef.current.rotation.y = THREE.MathUtils.lerp(headRef.current.rotation.y, 0, 0.05);
+        headRef.current.rotation.z = THREE.MathUtils.lerp(headRef.current.rotation.z, 0, 0.05);
+      } else if (state === 'greeting') {
+        // Greeting: friendly tilt
+        headRef.current.rotation.x = THREE.MathUtils.lerp(headRef.current.rotation.x, -0.05, 0.04);
+        headRef.current.rotation.y = Math.sin(t * 1.2) * 0.1;
+        headRef.current.rotation.z = THREE.MathUtils.lerp(headRef.current.rotation.z, 0.08, 0.04);
+      } else {
+        // Idle / speaking / paused / error / initializing
+        headRef.current.rotation.x = Math.sin(t * 0.7) * 0.03;
+        headRef.current.rotation.y = Math.sin(t * 0.5) * 0.02;
+        headRef.current.rotation.z = THREE.MathUtils.lerp(headRef.current.rotation.z, 0, 0.05);
+      }
     }
 
     // Blinking
@@ -50,37 +69,50 @@ export function AminaBody({ state = 'idle', emotion = 'neutral' }) {
       rightEyeRef.current.scale.y = THREE.MathUtils.lerp(rightEyeRef.current.scale.y, scaleY, 0.3);
     }
 
-    // Speaking mouth animation
+    // Mouth animation
     if (mouthRef.current) {
-      if (state === 'speaking') {
+      if (state === 'speaking' || state === 'greeting') {
         mouthRef.current.scale.y = 0.8 + Math.sin(t * 12) * 0.5 + Math.sin(t * 7) * 0.3;
         mouthRef.current.scale.x = 1 + Math.sin(t * 9) * 0.15;
       } else if (state === 'listening') {
         mouthRef.current.scale.y = THREE.MathUtils.lerp(mouthRef.current.scale.y, 0.6, 0.05);
         mouthRef.current.scale.x = THREE.MathUtils.lerp(mouthRef.current.scale.x, 1.1, 0.05);
+      } else if (state === 'processing') {
+        // Slightly pursed lips — thinking
+        mouthRef.current.scale.y = THREE.MathUtils.lerp(mouthRef.current.scale.y, 0.4, 0.04);
+        mouthRef.current.scale.x = THREE.MathUtils.lerp(mouthRef.current.scale.x, 0.85, 0.04);
       } else {
         mouthRef.current.scale.y = THREE.MathUtils.lerp(mouthRef.current.scale.y, 0.3, 0.05);
         mouthRef.current.scale.x = THREE.MathUtils.lerp(mouthRef.current.scale.x, 1, 0.05);
       }
     }
 
-    // Head nod for listening
-    if (headRef.current && state === 'listening') {
-      headRef.current.rotation.x = Math.sin(t * 2) * 0.08;
-    }
-
-    // Arm sway for idle
+    // Arm sway
     if (leftArmRef.current && rightArmRef.current) {
-      if (state === 'idle') {
+      if (state === 'speaking' || state === 'greeting') {
+        // Gesture while speaking/greeting
+        leftArmRef.current.rotation.x = Math.sin(t * 1.5) * 0.12;
+        rightArmRef.current.rotation.x = Math.sin(t * 1.5 + 1) * 0.15;
+        leftArmRef.current.rotation.z = THREE.MathUtils.lerp(leftArmRef.current.rotation.z, state === 'greeting' ? 0.3 : 0, 0.04);
+        rightArmRef.current.rotation.z = THREE.MathUtils.lerp(rightArmRef.current.rotation.z, state === 'greeting' ? -0.5 : 0, 0.04);
+      } else if (state === 'listening') {
+        // Arms still, attentive
+        leftArmRef.current.rotation.x = THREE.MathUtils.lerp(leftArmRef.current.rotation.x, 0, 0.05);
+        rightArmRef.current.rotation.x = THREE.MathUtils.lerp(rightArmRef.current.rotation.x, 0, 0.05);
+        leftArmRef.current.rotation.z = THREE.MathUtils.lerp(leftArmRef.current.rotation.z, 0, 0.05);
+        rightArmRef.current.rotation.z = THREE.MathUtils.lerp(rightArmRef.current.rotation.z, 0, 0.05);
+      } else if (state === 'processing') {
+        // One arm slightly raised — thinking gesture
+        leftArmRef.current.rotation.x = THREE.MathUtils.lerp(leftArmRef.current.rotation.x, -0.15, 0.03);
+        rightArmRef.current.rotation.x = THREE.MathUtils.lerp(rightArmRef.current.rotation.x, 0.05, 0.03);
+        leftArmRef.current.rotation.z = THREE.MathUtils.lerp(leftArmRef.current.rotation.z, 0, 0.05);
+        rightArmRef.current.rotation.z = THREE.MathUtils.lerp(rightArmRef.current.rotation.z, 0, 0.05);
+      } else {
+        // Idle
         leftArmRef.current.rotation.x = Math.sin(t * 0.8) * 0.05;
         rightArmRef.current.rotation.x = Math.sin(t * 0.8 + Math.PI) * 0.05;
-      } else if (state === 'speaking') {
-        // Subtle gesture while speaking
-        leftArmRef.current.rotation.x = Math.sin(t * 1.5) * 0.1;
-        rightArmRef.current.rotation.x = Math.sin(t * 1.5 + 1) * 0.12;
-      } else {
-        leftArmRef.current.rotation.x = 0;
-        rightArmRef.current.rotation.x = 0;
+        leftArmRef.current.rotation.z = THREE.MathUtils.lerp(leftArmRef.current.rotation.z, 0, 0.05);
+        rightArmRef.current.rotation.z = THREE.MathUtils.lerp(rightArmRef.current.rotation.z, 0, 0.05);
       }
     }
   });

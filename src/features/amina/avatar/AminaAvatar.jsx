@@ -1,15 +1,9 @@
-import { Suspense, useState, useEffect } from 'react';
+import { Suspense, useState, useEffect, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, ContactShadows } from '@react-three/drei';
 import AminaBody from './AminaBody';
 import VRMAvatar from './VRMAvatar';
 import styles from './AminaAvatar.module.css';
-
-/**
- * Amina 3D Avatar Scene
- * Renders the 3D Amina character inside a Canvas with lighting and controls.
- * Supports both VRM model loading and procedural fallback.
- */
 
 const LoadingFallback = () => (
   <mesh>
@@ -21,20 +15,17 @@ const LoadingFallback = () => (
 const Scene = ({ state, emotion, vrmUrl }) => {
   return (
     <>
-      {/* Lighting */}
       <ambientLight intensity={0.5} />
       <directionalLight position={[2, 3, 5]} intensity={1} castShadow />
       <directionalLight position={[-1, 2, 3]} intensity={0.3} color="#ffeedd" />
       <pointLight position={[0, 1, 2]} intensity={0.2} color="#20c997" />
 
-      {/* Avatar */}
       {vrmUrl ? (
         <VRMAvatar vrmUrl={vrmUrl} state={state} emotion={emotion} />
       ) : (
         <AminaBody state={state} emotion={emotion} />
       )}
 
-      {/* Ground shadow */}
       <ContactShadows
         position={[0, -1.2, 0]}
         opacity={0.4}
@@ -43,7 +34,6 @@ const Scene = ({ state, emotion, vrmUrl }) => {
         far={2}
       />
 
-      {/* Controls */}
       <OrbitControls
         enableZoom={false}
         enablePan={false}
@@ -57,8 +47,29 @@ const Scene = ({ state, emotion, vrmUrl }) => {
   );
 };
 
-export const AminaAvatar = ({ 
-  state = 'idle', 
+const STATE_RING_CLASS = {
+  listening: styles.ringListening,
+  speaking: styles.ringSpeaking,
+  processing: styles.ringProcessing,
+  greeting: styles.ringSpeaking,
+  paused: styles.ringPaused,
+  error: styles.ringError,
+  initializing: styles.ringProcessing,
+};
+
+const STATE_LABEL = {
+  initializing: 'Starting...',
+  greeting: 'Greeting you...',
+  listening: 'Listening...',
+  processing: 'Thinking...',
+  speaking: 'Speaking...',
+  paused: 'Paused',
+  error: 'Error',
+  idle: '',
+};
+
+export const AminaAvatar = ({
+  state = 'idle',
   emotion = 'neutral',
   vrmUrl = null,
   className = '',
@@ -66,19 +77,25 @@ export const AminaAvatar = ({
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    // Small delay to ensure canvas is mounted
     const timer = setTimeout(() => setIsReady(true), 100);
     return () => clearTimeout(timer);
   }, []);
 
+  const ringClass = STATE_RING_CLASS[state] || '';
+  const label = STATE_LABEL[state] || '';
+  const isActive = state !== 'idle' && state !== 'paused' && state !== 'error';
+
   return (
     <div className={`${styles.avatarContainer} ${className}`}>
+      {/* Animated ring around avatar */}
+      <div className={`${styles.stateRing} ${ringClass} ${isActive ? styles.ringActive : ''}`} />
+
       {isReady && (
         <Canvas
           camera={{ position: [0, 0.4, 4.5], fov: 32 }}
           dpr={[1, 2]}
-          gl={{ 
-            antialias: true, 
+          gl={{
+            antialias: true,
             alpha: true,
             powerPreference: 'high-performance',
           }}
@@ -89,10 +106,17 @@ export const AminaAvatar = ({
           </Suspense>
         </Canvas>
       )}
-      
-      {/* State indicator */}
+
+      {/* Bottom indicator: state-specific animations + label */}
       <div className={styles.stateIndicator}>
         {state === 'speaking' && (
+          <div className={styles.speakingDots}>
+            <span className={styles.dot} />
+            <span className={styles.dot} />
+            <span className={styles.dot} />
+          </div>
+        )}
+        {state === 'greeting' && (
           <div className={styles.speakingDots}>
             <span className={styles.dot} />
             <span className={styles.dot} />
@@ -102,7 +126,37 @@ export const AminaAvatar = ({
         {state === 'listening' && (
           <div className={styles.listeningPulse} />
         )}
+        {state === 'processing' && (
+          <div className={styles.processingDots}>
+            <span className={styles.pdot} />
+            <span className={styles.pdot} />
+            <span className={styles.pdot} />
+          </div>
+        )}
+        {state === 'paused' && (
+          <div className={styles.pausedIcon}>
+            <span className={styles.pauseBar} />
+            <span className={styles.pauseBar} />
+          </div>
+        )}
+        {state === 'error' && (
+          <div className={styles.errorDot} />
+        )}
+        {state === 'initializing' && (
+          <div className={styles.processingDots}>
+            <span className={styles.pdot} />
+            <span className={styles.pdot} />
+            <span className={styles.pdot} />
+          </div>
+        )}
       </div>
+
+      {/* State label */}
+      {label && (
+        <div className={`${styles.stateLabel} ${state === 'error' ? styles.stateLabelError : ''}`}>
+          {label}
+        </div>
+      )}
     </div>
   );
 };
