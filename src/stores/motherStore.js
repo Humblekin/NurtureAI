@@ -15,7 +15,7 @@ const useMotherStore = create((set, get) => ({
   fetchMothers: async () => {
     set({ isLoading: true, error: null });
     try {
-      const mothers = await db.mothers.where('deleted_at').equals(null).toArray();
+      const mothers = await db.mothers.filter(m => !m.deleted_at).toArray();
       set({ mothers, isLoading: false });
     } catch (error) {
       console.error('Failed to fetch mothers:', error);

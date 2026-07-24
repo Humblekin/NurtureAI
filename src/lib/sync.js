@@ -12,6 +12,17 @@ import db, { getPendingSyncs, removeSyncEntry } from './db';
 let isSyncing = false;
 let syncListeners = [];
 
+const LOCAL_ONLY_FIELDS = ['synced_at', 'deleted_at'];
+
+function stripLocalFields(data) {
+  if (!data || typeof data !== 'object') return data;
+  const clean = { ...data };
+  for (const field of LOCAL_ONLY_FIELDS) {
+    delete clean[field];
+  }
+  return clean;
+}
+
 /**
  * Register a listener for sync status changes.
  */
@@ -43,7 +54,8 @@ export async function processSyncQueue() {
 
     for (const entry of pending) {
       try {
-        const data = JSON.parse(entry.data);
+        const rawData = JSON.parse(entry.data);
+        const data = stripLocalFields(rawData);
         let result;
 
         switch (entry.operation) {
