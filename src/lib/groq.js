@@ -184,7 +184,7 @@ export async function chatCompletion(messages, options = {}) {
   }
 
   const {
-    model = 'openrouter/free',
+    model = 'google/gemini-2.0-flash-exp:free',
     temperature = 0.7,
     maxTokens = 1024,
     userRole = 'mother',

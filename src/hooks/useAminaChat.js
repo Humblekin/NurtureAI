@@ -319,6 +319,8 @@ export function useVoiceConversation() {
   const processingRef = useRef(false);
   const voiceStateRef = useRef(voiceState);
   voiceStateRef.current = voiceState;
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
   const welcomeMessages = useMemo(() => ({
     en: "Hello! I'm Amina, your healthcare companion. I'm here to help you with pregnancy, child health, nutrition, and more. How can I help you today?",
@@ -339,7 +341,7 @@ export function useVoiceConversation() {
         ? '\n\nIMPORTANT: The user is communicating in Dagbani. You MUST respond entirely in Dagbani. The official welcome message has already been shown by the app — do NOT repeat it. Use simple Dagbani with occasional English medical terms in parentheses when needed for clarity. Follow the Dagbani Language Behavior Rules in your system prompt.'
         : '\n\nThe user is communicating in English. Respond in English.';
 
-      const allMessages = [...messages, userMessage];
+      const allMessages = [...messagesRef.current, userMessage];
       const apiMessages = allMessages
         .filter(m => m.role !== 'system')
         .map(m => ({ role: m.role, content: m.content }));
@@ -360,19 +362,29 @@ export function useVoiceConversation() {
     } finally {
       processingRef.current = false;
     }
-  }, [messages, language, profile?.role]);
+  }, [language, profile?.role]);
 
   // Handle final speech result → process and respond
   const handleFinalSpeech = useCallback(async (text) => {
     if (!text || processingRef.current) return;
     setTranscript('');
 
-    const response = await sendToAI(text);
-    if (response) {
-      setVoiceState(VOICE_STATES.SPEAKING);
-      speak(response);
+    try {
+      const response = await sendToAI(text);
+      if (response) {
+        setVoiceState(VOICE_STATES.SPEAKING);
+        speak(response);
+      } else {
+        console.warn('Amina: No response from AI');
+        setVoiceState(VOICE_STATES.LISTENING);
+        startListening();
+      }
+    } catch (err) {
+      console.error('Amina: handleFinalSpeech error:', err);
+      setVoiceState(VOICE_STATES.LISTENING);
+      startListening();
     }
-  }, [sendToAI, speak]);
+  }, [sendToAI, speak, startListening]);
 
   // When Amina finishes speaking → start listening again
   const handleSpeechEnd = useCallback(() => {
