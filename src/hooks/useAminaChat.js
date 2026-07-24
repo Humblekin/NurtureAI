@@ -175,48 +175,58 @@ export function useSpeechSynthesis(language = 'en') {
     }
 
     // Fallback: Browser TTS
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+    if (!('speechSynthesis' in window)) {
+      setIsSpeaking(false);
+      onEndRef.current?.();
+      return;
+    }
 
+    const synth = window.speechSynthesis;
+    synth.cancel();
+
+    const isDagbani = language === 'dag';
+    const malePatterns = [
+      'david', 'james', 'john', 'mike', 'daniel', 'mark', 'robert',
+      'richard', 'william', 'thomas', 'christopher', 'matthew',
+      'google uk english male', 'google us male',
+      'microsoft david', 'microsoft mark', 'microsoft james',
+      'microsoft richard', 'microsoft george',
+    ];
+    const femalePatterns = [
+      'female', 'woman', 'girl', 'she',
+      'samantha', 'zira', 'karen', 'moira', 'tessa', 'veena',
+      'susan', 'sarah', 'linda', 'michelle', 'heather', 'hazel',
+      'google uk english female', 'google us female',
+      'microsoft zira', 'microsoft hazel', 'microsoft susan',
+    ];
+
+    function selectVoice() {
+      const voices = synth.getVoices();
+      if (!voices.length) return null;
+
+      // Prefer English female voice
+      let v = voices.find(x => x.lang.startsWith('en') && femalePatterns.some(f => x.name.toLowerCase().includes(f)));
+      if (v) return v;
+
+      // Any English voice (prefer female by name, skip known male)
+      v = voices.find(x => x.lang.startsWith('en') && !malePatterns.some(m => x.name.toLowerCase().includes(m)));
+      if (v) return v;
+
+      // Any voice at all — just speak
+      return voices[0] || null;
+    }
+
+    function startSpeaking() {
       const utterance = new SpeechSynthesisUtterance(text);
-      const isDagbani = language === 'dag';
+      const voice = selectVoice();
 
-      const malePatterns = [
-        'david', 'james', 'john', 'mike', 'daniel', 'mark', 'robert',
-        'richard', 'william', 'thomas', 'christopher', 'matthew',
-        'google uk english male', 'google us male',
-        'microsoft david', 'microsoft mark', 'microsoft james',
-        'microsoft richard', 'microsoft george',
-      ];
-      const femalePatterns = [
-        'female', 'woman', 'girl', 'she',
-        'samantha', 'zira', 'karen', 'moira', 'tessa', 'veena',
-        'susan', 'sarah', 'linda', 'michelle', 'heather', 'hazel',
-        'google uk english female', 'google us female',
-        'microsoft zira', 'microsoft hazel', 'microsoft susan',
-      ];
-
-      const voices = window.speechSynthesis.getVoices();
-      let selectedVoice = voices.find(v => v.lang === 'en-GB' && femalePatterns.some(f => v.name.toLowerCase().includes(f)));
-      if (!selectedVoice) selectedVoice = voices.find(v => v.lang === 'en-GB');
-      if (!selectedVoice) selectedVoice = voices.find(v => v.lang.startsWith('en') && femalePatterns.some(f => v.name.toLowerCase().includes(f)));
-      if (!selectedVoice) selectedVoice = voices.find(v => femalePatterns.some(f => v.name.toLowerCase().includes(f)));
-
-      if (selectedVoice) {
-        const nameLower = selectedVoice.name.toLowerCase();
-        if (malePatterns.some(m => nameLower.includes(m))) {
-          setIsSpeaking(false);
-          onEndRef.current?.();
-          return;
-        }
-        utterance.voice = selectedVoice;
+      if (voice) {
+        utterance.voice = voice;
+        utterance.lang = isDagbani ? 'en-GB' : (voice.lang || 'en-GB');
       } else {
-        setIsSpeaking(false);
-        onEndRef.current?.();
-        return;
+        utterance.lang = isDagbani ? 'en-GB' : 'en-US';
       }
 
-      utterance.lang = isDagbani ? 'en-GB' : (utterance.voice?.lang || 'en-GB');
       utterance.rate = isDagbani ? 0.85 : 0.9;
       utterance.pitch = isDagbani ? 1.2 : 1.1;
 
@@ -224,7 +234,23 @@ export function useSpeechSynthesis(language = 'en') {
       utterance.onend = () => { setIsSpeaking(false); onEndRef.current?.(); };
       utterance.onerror = () => { setIsSpeaking(false); onEndRef.current?.(); };
 
-      window.speechSynthesis.speak(utterance);
+      synth.speak(utterance);
+    }
+
+    // On mobile, voices load asynchronously
+    if (synth.getVoices().length) {
+      startSpeaking();
+    } else {
+      const onVoicesChanged = () => {
+        synth.removeEventListener('voiceschanged', onVoicesChanged);
+        startSpeaking();
+      };
+      synth.addEventListener('voiceschanged', onVoicesChanged);
+      // Fallback: if voiceschanged never fires, speak anyway after 500ms
+      setTimeout(() => {
+        synth.removeEventListener('voiceschanged', onVoicesChanged);
+        if (!synth.speaking) startSpeaking();
+      }, 500);
     }
   }, [language]);
 

@@ -61,26 +61,32 @@ export async function textToSpeech(text, options = {}) {
 
 /**
  * Play audio from ArrayBuffer.
+ * Uses AudioContext for mobile compatibility (bypasses autoplay policy).
  * @param {ArrayBuffer} audioData - Audio data
  * @returns {Promise<void>}
  */
-export function playAudio(audioData) {
+let sharedAudioCtx = null;
+
+function getAudioContext() {
+  if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
+    sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (sharedAudioCtx.state === 'suspended') {
+    sharedAudioCtx.resume();
+  }
+  return sharedAudioCtx;
+}
+
+export async function playAudio(audioData) {
+  const ctx = getAudioContext();
+  const buffer = await ctx.decodeAudioData(audioData);
   return new Promise((resolve, reject) => {
-    const blob = new Blob([audioData], { type: 'audio/mpeg' });
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-
-    audio.onended = () => {
-      URL.revokeObjectURL(url);
-      resolve();
-    };
-
-    audio.onerror = (e) => {
-      URL.revokeObjectURL(url);
-      reject(e);
-    };
-
-    audio.play().catch(reject);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+    source.onended = resolve;
+    source.onerror = reject;
+    source.start(0);
   });
 }
 
