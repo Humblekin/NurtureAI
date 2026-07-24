@@ -51,6 +51,7 @@ export function createConversationManager(deps) {
   let language = 'en';
   let userProfile = null;
   let greetingSpoken = false;
+  let healthContext = '';
 
   // Silence detection
   let lastSpeechTime = 0;
@@ -206,6 +207,7 @@ export function createConversationManager(deps) {
       const response = await sendToAI(apiMessages, {
         userRole: userProfile?.role || 'mother',
         languageInstruction: langInstruction,
+        healthContext,
       });
 
       if (destroyed) return;
@@ -314,6 +316,7 @@ export function createConversationManager(deps) {
         const response = await sendToAI(apiMessages, {
           userRole: userProfile?.role || 'mother',
           languageInstruction: langInstruction,
+          healthContext,
         });
 
         if (destroyed) return response;
@@ -395,6 +398,13 @@ export function createConversationManager(deps) {
      */
     setUserProfile(profile) {
       userProfile = profile;
+    },
+
+    /**
+     * Set health context (patient data injected into AI prompts).
+     */
+    setHealthContext(ctx) {
+      healthContext = ctx;
     },
 
     /**

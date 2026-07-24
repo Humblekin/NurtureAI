@@ -39,6 +39,9 @@ db.version(1).stores({
 
   // ---- App Settings ----
   settings: 'key',
+
+  // ---- Notifications / Reminders ----
+  notifications: 'id, type, priority, read, created_at, patient_id',
 });
 
 // Version 2: Add deleted_at for soft delete support

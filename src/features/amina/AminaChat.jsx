@@ -1,9 +1,12 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Send, Mic, MicOff, Volume2, VolumeX, Trash2, User, Globe, MessageSquare, Phone, PhoneOff, Pause, Play } from 'lucide-react';
+import { Send, Mic, MicOff, Volume2, VolumeX, Trash2, User, Globe, MessageSquare, Phone, PhoneOff, Pause, Play, Bell, BellOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useVoiceConversation, VOICE_STATES, useSpeechRecognition, useSpeechSynthesis } from '../../hooks/useAminaChat';
 import { isAiConfigured, chatCompletion } from '../../lib/groq';
 import useAuthStore from '../../stores/authStore';
+import { buildHealthContext } from '../../services/healthContext';
+import { runReminderEngine } from '../../services/reminderEngine';
+import useNotificationStore from '../../stores/notificationStore';
 import Button from '../../components/ui/Button';
 import AminaAvatar from './avatar/AminaAvatar';
 import styles from './AminaChat.module.css';
@@ -342,6 +345,18 @@ function useAminaChatChatMode() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const { profile } = useAuthStore();
+  const healthContextRef = useRef('');
+
+  // Fetch health context when profile changes
+  useEffect(() => {
+    if (profile?.id && profile?.role) {
+      buildHealthContext(profile).then(ctx => {
+        healthContextRef.current = ctx;
+      }).catch(err => {
+        console.error('Failed to build health context:', err);
+      });
+    }
+  }, [profile]);
 
   const sendMessage = useCallback(async (content) => {
     if (!content.trim() || isLoading) return;
@@ -355,7 +370,11 @@ function useAminaChatChatMode() {
         ? '\n\nIMPORTANT: The user is communicating in Dagbani. You MUST respond entirely in Dagbani. Follow the Dagbani Language Behavior Rules in your system prompt.'
         : '\n\nThe user is communicating in English. Respond in English.';
       const apiMessages = newMessages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }));
-      const response = await chatCompletion(apiMessages, { userRole: profile?.role || 'mother', languageInstruction: langInstruction });
+      const response = await chatCompletion(apiMessages, {
+        userRole: profile?.role || 'mother',
+        languageInstruction: langInstruction,
+        healthContext: healthContextRef.current,
+      });
       setMessages(prev => [...prev, { role: 'assistant', content: response }]);
     } catch {
       setError('Failed to get response. Please try again.');
@@ -380,11 +399,62 @@ function useAminaChatChatMode() {
 export const AminaChat = () => {
   const [mode, setMode] = useState('voice');
   const voice = useVoiceConversation();
+  const { profile } = useAuthStore();
+  const { unreadCount, fetchNotifications } = useNotificationStore();
+  const [showNotifications, setShowNotifications] = useState(false);
+  const { notifications } = useNotificationStore();
 
-  if (mode === 'voice') {
-    return <VoiceMode voice={voice} onSwitchToChat={() => setMode('chat')} />;
-  }
-  return <ChatMode onSwitchToVoice={() => setMode('voice')} />;
+  // Run reminder engine on mount
+  useEffect(() => {
+    if (profile?.id) {
+      runReminderEngine(profile).then(() => {
+        fetchNotifications();
+      }).catch(console.error);
+    }
+  }, [profile?.id]);
+
+  return (
+    <div className={styles.aminaChat}>
+      {/* Notification bell */}
+      <div className={styles.notificationBell}>
+        <button
+          className={styles.bellButton}
+          onClick={() => setShowNotifications(!showNotifications)}
+          aria-label="Notifications"
+        >
+          {unreadCount > 0 ? <Bell size={20} /> : <BellOff size={20} />}
+          {unreadCount > 0 && <span className={styles.badge}>{unreadCount}</span>}
+        </button>
+
+        <AnimatePresence>
+          {showNotifications && notifications.length > 0 && (
+            <motion.div
+              className={styles.notificationDropdown}
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <div className={styles.notifHeader}>
+                <h4>Health Reminders</h4>
+              </div>
+              {notifications.map(n => (
+                <div key={n.id} className={`${styles.notifItem} ${styles[`priority_${n.priority}`]}`}>
+                  <strong>{n.title}</strong>
+                  <p>{n.message}</p>
+                </div>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {mode === 'voice' ? (
+        <VoiceMode voice={voice} onSwitchToChat={() => setMode('chat')} />
+      ) : (
+        <ChatMode onSwitchToVoice={() => setMode('voice')} />
+      )}
+    </div>
+  );
 };
 
 export default AminaChat;

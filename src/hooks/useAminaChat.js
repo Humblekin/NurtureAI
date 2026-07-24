@@ -3,6 +3,7 @@ import { chatCompletion } from '../lib/groq';
 import { textToSpeech, playAudio, isElevenLabsConfigured } from '../lib/tts';
 import useAuthStore from '../stores/authStore';
 import { createConversationManager, CONVERSATION_STATES } from '../services/conversationManager';
+import { buildHealthContext } from '../services/healthContext';
 
 export { CONVERSATION_STATES };
 
@@ -289,6 +290,22 @@ export function useVoiceConversation() {
   } = useSpeechSynthesis(language);
 
   const managerRef = useRef(null);
+  const healthContextRef = useRef('');
+
+  // Fetch health context whenever profile changes
+  useEffect(() => {
+    if (profile?.id && profile?.role) {
+      buildHealthContext(profile).then(ctx => {
+        healthContextRef.current = ctx;
+        // Update manager if it exists
+        if (managerRef.current) {
+          managerRef.current.setHealthContext(ctx);
+        }
+      }).catch(err => {
+        console.error('Failed to build health context:', err);
+      });
+    }
+  }, [profile]);
 
   // Create manager
   useEffect(() => {
@@ -380,6 +397,9 @@ export function useVoiceConversation() {
     if (!mgr) return;
     mgr.setLanguage(language);
     mgr.setUserProfile(profile);
+    if (healthContextRef.current) {
+      mgr.setHealthContext(healthContextRef.current);
+    }
     await mgr.init({ language, userProfile: profile });
   }, [language, profile]);
 
