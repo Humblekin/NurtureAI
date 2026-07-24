@@ -227,21 +227,6 @@ export const AminaChat = () => {
               </motion.div>
             )}
           </AnimatePresence>
-
-          {/* Last Amina response overlay */}
-          <AnimatePresence>
-            {!isLoading && !isListening && messages.length > 1 && (
-              <motion.div
-                className={styles.lastResponse}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                key={messages.length}
-              >
-                <p>{messages[messages.length - 1].content}</p>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
 
         {/* Error */}

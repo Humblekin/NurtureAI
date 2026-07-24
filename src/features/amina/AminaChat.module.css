@@ -112,13 +112,13 @@
   justify-content: center;
   position: relative;
   min-height: 0;
+  overflow: hidden;
 }
 
 .voiceAvatar {
   width: 100%;
-  max-width: 400px;
-  height: 60%;
-  min-height: 280px;
+  height: 100%;
+  min-height: 400px;
 }
 
 /* Voice info */
@@ -170,36 +170,6 @@
   font-size: var(--text-base);
   color: var(--text-primary);
   font-style: italic;
-}
-
-/* Last response overlay */
-.lastResponse {
-  position: absolute;
-  bottom: 100px;
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: 85%;
-  text-align: center;
-  padding: var(--space-4) var(--space-6);
-  background: rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(16px);
-  border-radius: var(--radius-xl);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  z-index: 10;
-}
-
-[data-theme="dark"] .lastResponse {
-  background: rgba(0, 0, 0, 0.35);
-  border-color: rgba(255, 255, 255, 0.05);
-}
-
-.lastResponse p {
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--text-primary);
-  line-height: var(--leading-normal);
-  max-height: 120px;
-  overflow-y: auto;
 }
 
 /* Floating voice controls */
@@ -600,8 +570,7 @@
   }
 
   .voiceAvatar {
-    max-width: 280px;
-    min-height: 200px;
+    min-height: 320px;
   }
 
   .voiceName {
@@ -610,17 +579,6 @@
 
   .voiceStatus {
     font-size: var(--text-xs);
-  }
-
-  .lastResponse {
-    bottom: 90px;
-    max-width: 90%;
-    padding: var(--space-3) var(--space-4);
-  }
-
-  .lastResponse p {
-    font-size: var(--text-xs);
-    max-height: 80px;
   }
 
   .liveTranscript {
