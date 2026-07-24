@@ -148,10 +148,12 @@ export function useSpeechRecognition(language = 'en') {
 
   const onFinal = useCallback((cb) => { onFinalRef.current = cb; }, []);
   const onInterim = useCallback((cb) => { onInterimRef.current = cb; }, []);
+  const resetMicPermission = useCallback(() => setMicPermission('unknown'), []);
 
   return {
     isListening, transcript, isSupported, error, micPermission,
     startListening, stopListening, setTranscript, checkMicPermission,
+    resetMicPermission,
     onFinal, onInterim,
   };
 }
@@ -302,7 +304,7 @@ export function useVoiceConversation() {
 
   const {
     isListening, isSupported: sttSupported, error: sttError, micPermission,
-    startListening, stopListening, onFinal, onInterim,
+    startListening, stopListening, resetMicPermission, onFinal, onInterim,
   } = useSpeechRecognition(language);
 
   const {
@@ -459,12 +461,12 @@ export function useVoiceConversation() {
     stopSpeaking();
     setMessages([]);
     setTranscript('');
-    setMicPermission('unknown');
+    resetMicPermission();
     processingRef.current = false;
     lastSpokenIdxRef.current = -1;
     greetingSpokenRef.current = false;
     setVoiceState(VOICE_STATES.INITIALIZING);
-  }, [stopListening, stopSpeaking]);
+  }, [stopListening, stopSpeaking, resetMicPermission]);
 
   const switchLanguage = useCallback((lang) => {
     setLanguage(lang);
