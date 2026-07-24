@@ -175,9 +175,14 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
       {error && (
         <div className={styles.errorBanner}>
           <p>{error}</p>
-          <Button size="sm" variant="outline" onClick={clearChat} style={{ marginTop: 'var(--space-2)' }}>
-            Try Again
-          </Button>
+          <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <Button size="sm" variant="outline" onClick={clearChat}>
+              Retry
+            </Button>
+            <Button size="sm" variant="outline" onClick={onSwitchToChat}>
+              <MessageSquare size={14} /> Use Chat Instead
+            </Button>
+          </div>
         </div>
       )}
 

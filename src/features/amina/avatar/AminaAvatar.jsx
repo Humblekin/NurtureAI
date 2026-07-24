@@ -51,7 +51,7 @@ const Scene = ({ state, emotion, vrmUrl }) => {
         maxPolarAngle={Math.PI / 2.1}
         minAzimuthAngle={-Math.PI / 6}
         maxAzimuthAngle={Math.PI / 6}
-        target={[0, 0.2, 0]}
+        target={[0, 0.4, 0]}
       />
     </>
   );
@@ -75,7 +75,7 @@ export const AminaAvatar = ({
     <div className={`${styles.avatarContainer} ${className}`}>
       {isReady && (
         <Canvas
-          camera={{ position: [0, 0.2, 3.2], fov: 35 }}
+          camera={{ position: [0, 0.4, 4.5], fov: 32 }}
           dpr={[1, 2]}
           gl={{ 
             antialias: true, 
