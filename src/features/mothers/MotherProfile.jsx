@@ -2,27 +2,33 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { 
   User, Phone, MapPin, Calendar, HeartPulse, 
-  ArrowLeft, AlertTriangle, Baby, Activity, FileText, Plus, Share2
+  ArrowLeft, AlertTriangle, Baby, Activity, FileText, Plus, Share2, Pencil, Trash2
 } from 'lucide-react';
 import useMotherStore from '../../stores/motherStore';
 import usePregnancyStore from '../../stores/pregnancyStore';
 import useChildStore from '../../stores/childStore';
+import useAppStore from '../../stores/appStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import Modal from '../../components/ui/Modal';
+import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import PregnancyForm from '../pregnancies/PregnancyForm';
 import AntenatalVisitForm from '../pregnancies/AntenatalVisitForm';
 
 export const MotherProfile = () => {
   const { id } = useParams();
-  const { fetchMotherByProfileId, currentMother, isLoading: isMotherLoading } = useMotherStore();
-  const { fetchPregnanciesByMotherId, pregnancyHistory, activePregnancy, antenatalVisits, isLoading: isPregnancyLoading } = usePregnancyStore();
+  const { fetchMotherByProfileId, currentMother, softDelete: deleteMother, isLoading: isMotherLoading } = useMotherStore();
+  const { fetchPregnanciesByMotherId, pregnancyHistory, activePregnancy, antenatalVisits, softDelete: deletePregnancy, deleteAntenatalVisit, isLoading: isPregnancyLoading } = usePregnancyStore();
   const { fetchChildrenByMotherId, children, isLoading: isChildrenLoading } = useChildStore();
+  const addToast = useAppStore((state) => state.addToast);
 
   const [isPregnancyModalOpen, setPregnancyModalOpen] = useState(false);
+  const [editingPregnancy, setEditingPregnancy] = useState(null);
   const [isANCModalOpen, setANCModalOpen] = useState(false);
+  const [editingANC, setEditingANC] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
     if (id) {
@@ -67,7 +73,7 @@ export const MotherProfile = () => {
             </p>
           </div>
           <div className="flex gap-2">
-            <Link to={`/mothers/new`}>
+            <Link to={`/mothers/${currentMother.id}/edit`}>
               <Button variant="outline" leftIcon={<FileText size={18} />}>Edit Profile</Button>
             </Link>
             <Link to={`/referrals/new?patientId=${currentMother.id}&patientType=mother`}>
@@ -164,7 +170,11 @@ export const MotherProfile = () => {
                   {antenatalVisits.slice(0, 3).map(visit => (
                     <div key={visit.id} className="flex-between p-2" style={{ background: 'var(--surface-sunken)', borderRadius: 'var(--radius-sm)' }}>
                       <span className="body-sm font-medium">{new Date(visit.visit_date).toLocaleDateString()}</span>
-                      <span className="caption text-secondary">{visit.gestational_age ? `Wk ${visit.gestational_age}` : '—'}</span>
+                      <div className="flex items-center gap-1">
+                        <span className="caption text-secondary">{visit.gestational_age ? `Wk ${visit.gestational_age}` : '—'}</span>
+                        <button className="icon-btn-xs" onClick={() => { setEditingANC(visit); setANCModalOpen(true); }} title="Edit"><Pencil size={12} /></button>
+                        <button className="icon-btn-xs danger" onClick={() => setDeleteTarget({ type: 'anc', id: visit.id, name: `ANC Visit (${new Date(visit.visit_date).toLocaleDateString()})` })} title="Delete"><Trash2 size={12} /></button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -196,9 +206,13 @@ export const MotherProfile = () => {
                       <p className="font-medium">Pregnancy ({new Date(preg.created_at).getFullYear()})</p>
                       <p className="caption text-secondary">EDD: {preg.edd ? new Date(preg.edd).toLocaleDateString() : 'Unknown'}</p>
                     </div>
-                    <Badge variant={preg.status === 'active' ? 'primary' : 'neutral'}>
-                      {preg.status === 'active' ? 'Current' : 'Completed'}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={preg.status === 'active' ? 'primary' : 'neutral'}>
+                        {preg.status === 'active' ? 'Current' : 'Completed'}
+                      </Badge>
+                      <button className="icon-btn-sm" onClick={() => { setEditingPregnancy(preg); setPregnancyModalOpen(true); }} title="Edit"><Pencil size={14} /></button>
+                      <button className="icon-btn-sm danger" onClick={() => setDeleteTarget({ type: 'pregnancy', id: preg.id, name: `Pregnancy (${new Date(preg.created_at).getFullYear()})` })} title="Delete"><Trash2 size={14} /></button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -252,33 +266,54 @@ export const MotherProfile = () => {
       </div>
       <Modal 
         isOpen={isPregnancyModalOpen} 
-        onClose={() => setPregnancyModalOpen(false)}
-        title="Record New Pregnancy"
+        onClose={() => { setPregnancyModalOpen(false); setEditingPregnancy(null); }}
+        title={editingPregnancy ? 'Edit Pregnancy' : 'Record New Pregnancy'}
       >
         <PregnancyForm 
           motherId={currentMother.id}
+          initialData={editingPregnancy}
           onSuccess={() => {
             setPregnancyModalOpen(false);
-            fetchPregnanciesByMotherId(currentMother.id); // Refresh
+            setEditingPregnancy(null);
+            fetchPregnanciesByMotherId(currentMother.id);
           }}
-          onCancel={() => setPregnancyModalOpen(false)}
+          onCancel={() => { setPregnancyModalOpen(false); setEditingPregnancy(null); }}
         />
       </Modal>
 
       <Modal 
         isOpen={isANCModalOpen} 
-        onClose={() => setANCModalOpen(false)}
-        title="Log Antenatal Visit"
+        onClose={() => { setANCModalOpen(false); setEditingANC(null); }}
+        title={editingANC ? 'Edit ANC Visit' : 'Log Antenatal Visit'}
       >
         <AntenatalVisitForm 
           pregnancyId={activePregnancy?.id}
+          initialData={editingANC}
           onSuccess={() => {
             setANCModalOpen(false);
-            fetchPregnanciesByMotherId(currentMother.id); // Refresh to get updated visits/risk
+            setEditingANC(null);
+            fetchPregnanciesByMotherId(currentMother.id);
           }}
-          onCancel={() => setANCModalOpen(false)}
+          onCancel={() => { setANCModalOpen(false); setEditingANC(null); }}
         />
       </Modal>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title={`Delete ${deleteTarget?.type === 'pregnancy' ? 'Pregnancy' : 'ANC Visit'}`}
+        message={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
+        onConfirm={async () => {
+          if (deleteTarget.type === 'pregnancy') {
+            await deletePregnancy(deleteTarget.id);
+          } else if (deleteTarget.type === 'anc') {
+            await deleteAntenatalVisit(deleteTarget.id);
+          }
+          addToast({ type: 'success', message: 'Record deleted.' });
+          setDeleteTarget(null);
+          fetchPregnanciesByMotherId(currentMother.id);
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 };

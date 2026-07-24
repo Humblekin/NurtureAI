@@ -2,37 +2,27 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { chatCompletion } from '../lib/groq';
 import { textToSpeech, playAudio, isElevenLabsConfigured } from '../lib/tts';
 import useAuthStore from '../stores/authStore';
+import { createConversationManager, CONVERSATION_STATES } from '../services/conversationManager';
 
-/**
- * Conversation states:
- *   initializing → greeting → listening → processing → speaking → listening
- *                                                    ↗ interrupted
- */
-export const VOICE_STATES = {
-  INITIALIZING: 'initializing',
-  GREETING: 'greeting',
-  LISTENING: 'listening',
-  PROCESSING: 'processing',
-  SPEAKING: 'speaking',
-  PAUSED: 'paused',
-  ERROR: 'error',
-};
+export { CONVERSATION_STATES };
+
+// Backward-compatible alias for existing components
+export const VOICE_STATES = CONVERSATION_STATES;
 
 // ============================================================
-// Speech Recognition — Continuous with auto-restart
+// Speech Recognition — standalone hook for ChatMode mic button
 // ============================================================
 export function useSpeechRecognition(language = 'en') {
   const [isListening, setIsListening] = useState(false);
-  const [transcript, setTranscript] = useState('');
-  const [isSupported, setIsSupported] = useState(false);
+  const [isSupported, setIsSupported] = useState(undefined);
   const [error, setError] = useState(null);
   const [micPermission, setMicPermission] = useState('unknown');
+  const [transcript, setTranscript] = useState('');
   const recognitionRef = useRef(null);
   const shouldListenRef = useRef(false);
   const onFinalRef = useRef(null);
   const onInterimRef = useRef(null);
 
-  // Check mic permission status on mount — informational only, doesn't block usage
   const checkMicPermission = useCallback(async () => {
     try {
       if (navigator.permissions && navigator.permissions.query) {
@@ -44,11 +34,13 @@ export function useSpeechRecognition(language = 'en') {
         return status.state;
       }
     } catch {
-      // Permissions API not supported for microphone — proceed anyway
+      // Permissions API not supported for microphone
     }
     setMicPermission('unknown');
     return 'unknown';
   }, []);
+
+  const resetMicPermission = useCallback(() => setMicPermission('unknown'), []);
 
   useEffect(() => {
     checkMicPermission();
@@ -91,7 +83,6 @@ export function useSpeechRecognition(language = 'en') {
 
     recognition.onend = () => {
       setIsListening(false);
-      // Auto-restart if we should still be listening
       if (shouldListenRef.current) {
         try {
           recognition.start();
@@ -110,7 +101,7 @@ export function useSpeechRecognition(language = 'en') {
       } else if (event.error === 'network') {
         setError('Network error during speech recognition.');
       } else if (event.error === 'aborted') {
-        // Intentional stop — do nothing
+        // Intentional stop
       } else if (event.error !== 'no-speech') {
         setError('Speech recognition error. Please try again.');
       }
@@ -126,7 +117,6 @@ export function useSpeechRecognition(language = 'en') {
 
   const startListening = useCallback(async () => {
     if (!recognitionRef.current) return;
-
     shouldListenRef.current = true;
     setError(null);
     setTranscript('');
@@ -134,7 +124,7 @@ export function useSpeechRecognition(language = 'en') {
       recognitionRef.current.start();
       setIsListening(true);
     } catch {
-      // May already be started — ignore
+      // May already be started
     }
   }, []);
 
@@ -148,7 +138,6 @@ export function useSpeechRecognition(language = 'en') {
 
   const onFinal = useCallback((cb) => { onFinalRef.current = cb; }, []);
   const onInterim = useCallback((cb) => { onInterimRef.current = cb; }, []);
-  const resetMicPermission = useCallback(() => setMicPermission('unknown'), []);
 
   return {
     isListening, transcript, isSupported, error, micPermission,
@@ -159,7 +148,7 @@ export function useSpeechRecognition(language = 'en') {
 }
 
 // ============================================================
-// Speech Synthesis — with interruption support
+// Speech Synthesis — standalone hook for ChatMode auto-speak
 // ============================================================
 export function useSpeechSynthesis(language = 'en') {
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -174,7 +163,6 @@ export function useSpeechSynthesis(language = 'en') {
   const speak = useCallback(async (text) => {
     if (!text) return;
 
-    // Cancel any ongoing speech
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = new AbortController();
 
@@ -229,41 +217,30 @@ export function useSpeechSynthesis(language = 'en') {
     function selectVoice() {
       const voices = synth.getVoices();
       if (!voices.length) return null;
-
-      // Prefer English female voice
       let v = voices.find(x => x.lang.startsWith('en') && femalePatterns.some(f => x.name.toLowerCase().includes(f)));
       if (v) return v;
-
-      // Any English voice (prefer female by name, skip known male)
       v = voices.find(x => x.lang.startsWith('en') && !malePatterns.some(m => x.name.toLowerCase().includes(m)));
       if (v) return v;
-
-      // Any voice at all — just speak
       return voices[0] || null;
     }
 
     function startSpeaking() {
       const utterance = new SpeechSynthesisUtterance(text);
       const voice = selectVoice();
-
       if (voice) {
         utterance.voice = voice;
         utterance.lang = isDagbani ? 'en-GB' : (voice.lang || 'en-GB');
       } else {
         utterance.lang = isDagbani ? 'en-GB' : 'en-US';
       }
-
       utterance.rate = isDagbani ? 0.85 : 0.9;
       utterance.pitch = isDagbani ? 1.2 : 1.1;
-
       utterance.onstart = () => setIsSpeaking(true);
       utterance.onend = () => { setIsSpeaking(false); onEndRef.current?.(); };
       utterance.onerror = () => { setIsSpeaking(false); onEndRef.current?.(); };
-
       synth.speak(utterance);
     }
 
-    // On mobile, voices load asynchronously
     if (synth.getVoices().length) {
       startSpeaking();
     } else {
@@ -272,7 +249,6 @@ export function useSpeechSynthesis(language = 'en') {
         startSpeaking();
       };
       synth.addEventListener('voiceschanged', onVoicesChanged);
-      // Fallback: if voiceschanged never fires, speak anyway after 500ms
       setTimeout(() => {
         synth.removeEventListener('voiceschanged', onVoicesChanged);
         if (!synth.speaking) startSpeaking();
@@ -292,186 +268,167 @@ export function useSpeechSynthesis(language = 'en') {
 }
 
 // ============================================================
-// Voice Conversation — State machine + auto-flow
+// Voice Conversation — wires ConversationManager into React
 // ============================================================
 export function useVoiceConversation() {
-  const [voiceState, setVoiceState] = useState(VOICE_STATES.INITIALIZING);
+  const [voiceState, setVoiceState] = useState(CONVERSATION_STATES.INITIALIZING);
   const [language, setLanguage] = useState('en');
   const [messages, setMessages] = useState([]);
   const [error, setError] = useState(null);
   const [transcript, setTranscript] = useState('');
+  const [micPermission, setMicPermission] = useState('unknown');
   const { profile } = useAuthStore();
 
   const {
-    isListening, isSupported: sttSupported, error: sttError, micPermission,
-    startListening, stopListening, resetMicPermission, onFinal, onInterim,
+    isListening, isSupported: sttSupported, error: sttError,
+    startListening, stopListening, resetMicPermission,
   } = useSpeechRecognition(language);
 
   const {
     isSpeaking, isSupported: ttsSupported, speak, stop: stopSpeaking, onEnd,
   } = useSpeechSynthesis(language);
 
-  const greetingSpokenRef = useRef(false);
-  const lastSpokenIdxRef = useRef(-1);
-  const processingRef = useRef(false);
-  const voiceStateRef = useRef(voiceState);
-  voiceStateRef.current = voiceState;
-  const messagesRef = useRef(messages);
-  messagesRef.current = messages;
+  const managerRef = useRef(null);
 
-  const welcomeMessages = useMemo(() => ({
-    en: "Hello! I'm Amina, your healthcare companion. I'm here to help you with pregnancy, child health, nutrition, and more. How can I help you today?",
-    dag: "Mani n nyɛ Amina. Adaa laafee yuligu lana. Bihi alaafee yulibu lana, bihi laafeehi yulibu lana, abindira alaafee yulibu lana. Yelima wula ka nyen soŋa zaŋkpa n ni kali a binyerishaŋa?",
-  }), []);
-
-  // Send message to AI and get response
-  const sendToAI = useCallback(async (userText) => {
-    if (processingRef.current) return;
-    processingRef.current = true;
-    setVoiceState(VOICE_STATES.PROCESSING);
-
-    const userMessage = { role: 'user', content: userText };
-    setMessages(prev => [...prev, userMessage]);
-
-    try {
-      const langInstruction = language === 'dag'
-        ? '\n\nIMPORTANT: The user is communicating in Dagbani. You MUST respond entirely in Dagbani. The official welcome message has already been shown by the app — do NOT repeat it. Use simple Dagbani with occasional English medical terms in parentheses when needed for clarity. Follow the Dagbani Language Behavior Rules in your system prompt.'
-        : '\n\nThe user is communicating in English. Respond in English.';
-
-      const allMessages = [...messagesRef.current, userMessage];
-      const apiMessages = allMessages
-        .filter(m => m.role !== 'system')
-        .map(m => ({ role: m.role, content: m.content }));
-
-      const response = await chatCompletion(apiMessages, {
-        userRole: profile?.role || 'mother',
-        languageInstruction: langInstruction,
-      });
-
-      const assistantMessage = { role: 'assistant', content: response };
-      setMessages(prev => [...prev, assistantMessage]);
-      return response;
-    } catch (err) {
-      console.error('AI error:', err);
-      const errorMsg = 'I apologize, I encountered an error. Please try again.';
-      setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
-      return errorMsg;
-    } finally {
-      processingRef.current = false;
-    }
-  }, [language, profile?.role]);
-
-  // Handle final speech result → process and respond
-  const handleFinalSpeech = useCallback(async (text) => {
-    if (!text || processingRef.current) return;
-    setTranscript('');
-
-    try {
-      const response = await sendToAI(text);
-      if (response) {
-        setVoiceState(VOICE_STATES.SPEAKING);
-        speak(response);
-      } else {
-        console.warn('Amina: No response from AI');
-        setVoiceState(VOICE_STATES.LISTENING);
-        startListening();
-      }
-    } catch (err) {
-      console.error('Amina: handleFinalSpeech error:', err);
-      setVoiceState(VOICE_STATES.LISTENING);
-      startListening();
-    }
-  }, [sendToAI, speak, startListening]);
-
-  // When Amina finishes speaking → start listening again
-  const handleSpeechEnd = useCallback(() => {
-    const currentState = voiceStateRef.current;
-    if (currentState === VOICE_STATES.SPEAKING || currentState === VOICE_STATES.GREETING) {
-      setVoiceState(VOICE_STATES.LISTENING);
-      startListening();
-    }
-  }, [startListening]);
-
-  // Register callbacks
-  useEffect(() => { onFinal(handleFinalSpeech); }, [onFinal, handleFinalSpeech]);
-  useEffect(() => { onEnd(handleSpeechEnd); }, [onEnd, handleSpeechEnd]);
-  useEffect(() => { onInterim((text) => setTranscript(text)); }, [onInterim]);
-
-  // Interruption: user speaks while Amina is speaking → stop and listen
+  // Create manager
   useEffect(() => {
-    if (isListening && isSpeaking) {
-      stopSpeaking();
-      // Don't start listening here — the onEnd callback will handle it
-    }
-  }, [isListening, isSpeaking, stopSpeaking]);
+    const manager = createConversationManager({
+      sendToAI: async (apiMessages, opts) => {
+        return chatCompletion(apiMessages, opts);
+      },
+      speakText: async (text) => {
+        await speak(text);
+        // Wait for speech to finish
+        return new Promise((resolve) => {
+          const check = () => {
+            if (!isSpeaking) resolve();
+            else setTimeout(check, 100);
+          };
+          // Small delay to let speaking state update
+          setTimeout(check, 50);
+        });
+      },
+      stopSpeech: () => {
+        stopSpeaking();
+      },
+      onStateChange: (state) => setVoiceState(state),
+      onMessagesChange: (msgs) => setMessages(msgs),
+      onTranscriptChange: (t) => setTranscript(t),
+      onError: (err) => setError(err),
+    });
+    managerRef.current = manager;
 
-  // Auto-start greeting when ready
-  useEffect(() => {
-    if (voiceState === VOICE_STATES.INITIALIZING && sttSupported !== undefined) {
-      if (sttSupported || ttsSupported) {
-        greetingSpokenRef.current = true;
-        setVoiceState(VOICE_STATES.GREETING);
-        const welcome = welcomeMessages[language] || welcomeMessages.en;
-        setMessages([{ role: 'assistant', content: welcome }]);
-        speak(welcome);
-      } else {
-        setVoiceState(VOICE_STATES.ERROR);
-        setError('Voice features are not supported in this browser.');
-      }
-    }
-  }, [voiceState, sttSupported, ttsSupported, language, speak, welcomeMessages]);
+    return () => {
+      manager.destroy();
+      managerRef.current = null;
+    };
+  // speak and stopSpeaking are stable refs from useSpeechSynthesis
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Sync listening state
+  // Sync micPermission from STT hook
   useEffect(() => {
-    if (voiceState === VOICE_STATES.LISTENING && !isListening && micPermission !== 'denied') {
-      startListening();
+    if (sttError?.includes('permission') || sttError?.includes('not-allowed')) {
+      setMicPermission('denied');
     }
-  }, [voiceState, isListening, startListening, micPermission]);
+  }, [sttError]);
 
-  // STT errors (not-allowed, network) → transition to error state
+  // STT errors → error state
   useEffect(() => {
-    if (sttError && voiceState !== VOICE_STATES.ERROR) {
-      stopListening();
-      setVoiceState(VOICE_STATES.ERROR);
+    if (sttError && voiceState !== CONVERSATION_STATES.ERROR) {
       setError(sttError);
     }
-  }, [sttError, voiceState, stopListening]);
+  }, [sttError, voiceState]);
 
   // Clear error after 5 seconds
   useEffect(() => {
-    if (error || sttError) {
-      const timer = setTimeout(() => { setError(null); }, 5000);
+    if (error) {
+      const timer = setTimeout(() => setError(null), 5000);
       return () => clearTimeout(timer);
     }
-  }, [error, sttError]);
+  }, [error]);
+
+  // Detect mic permission denied from speech recognition
+  useEffect(() => {
+    const checkPerm = async () => {
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          const status = await navigator.permissions.query({ name: 'microphone' });
+          setMicPermission(status.state);
+          status.onchange = () => setMicPermission(status.state);
+          return;
+        }
+      } catch { /* ignore */ }
+      setMicPermission('unknown');
+    };
+    checkPerm();
+  }, []);
+
+  // Barge-in: user speaks while Amina is speaking → stop speech
+  useEffect(() => {
+    if (isListening && isSpeaking) {
+      const mgr = managerRef.current;
+      if (mgr) {
+        stopSpeaking();
+        mgr.onSpeechStopped();
+      }
+    }
+  }, [isListening, isSpeaking, stopSpeaking]);
+
+  const initConversation = useCallback(async () => {
+    const mgr = managerRef.current;
+    if (!mgr) return;
+    mgr.setLanguage(language);
+    mgr.setUserProfile(profile);
+    await mgr.init({ language, userProfile: profile });
+  }, [language, profile]);
 
   const togglePause = useCallback(() => {
-    if (voiceState === VOICE_STATES.PAUSED) {
-      setVoiceState(VOICE_STATES.LISTENING);
-      startListening();
+    const mgr = managerRef.current;
+    if (!mgr) return;
+    if (voiceState === CONVERSATION_STATES.PAUSED) {
+      mgr.resume();
     } else {
-      stopListening();
-      stopSpeaking();
-      setVoiceState(VOICE_STATES.PAUSED);
+      mgr.pause();
     }
-  }, [voiceState, startListening, stopListening, stopSpeaking]);
+  }, [voiceState]);
 
   const clearChat = useCallback(() => {
-    stopListening();
-    stopSpeaking();
+    const mgr = managerRef.current;
+    if (mgr) {
+      mgr.reset();
+    }
+    resetMicPermission();
     setMessages([]);
     setTranscript('');
-    resetMicPermission();
-    processingRef.current = false;
-    lastSpokenIdxRef.current = -1;
-    greetingSpokenRef.current = false;
-    setVoiceState(VOICE_STATES.INITIALIZING);
-  }, [stopListening, stopSpeaking, resetMicPermission]);
+    setError(null);
+    setVoiceState(CONVERSATION_STATES.INITIALIZING);
+  }, [resetMicPermission]);
 
   const switchLanguage = useCallback((lang) => {
     setLanguage(lang);
-    clearChat();
-  }, [clearChat]);
+    const mgr = managerRef.current;
+    if (mgr) {
+      mgr.reset();
+      mgr.setLanguage(lang);
+    }
+    resetMicPermission();
+    setMessages([]);
+    setTranscript('');
+    setVoiceState(CONVERSATION_STATES.INITIALIZING);
+  }, [resetMicPermission]);
+
+  // Auto-init when component mounts
+  useEffect(() => {
+    if (voiceState === CONVERSATION_STATES.INITIALIZING && sttSupported !== undefined) {
+      if (sttSupported || ttsSupported) {
+        initConversation();
+      } else {
+        setVoiceState(CONVERSATION_STATES.ERROR);
+        setError('Voice features are not supported in this browser.');
+      }
+    }
+  }, [voiceState, sttSupported, ttsSupported, initConversation]);
 
   return {
     voiceState,
@@ -482,8 +439,6 @@ export function useVoiceConversation() {
     error: error || sttError,
     language,
     micPermission,
-    sttSupported,
-    ttsSupported,
     togglePause,
     clearChat,
     switchLanguage,

@@ -1,28 +1,36 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Baby, FileText, Syringe, TrendingUp, Plus, Share2, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Baby, FileText, Syringe, TrendingUp, Plus, Share2, ExternalLink, Pencil, Trash2 } from 'lucide-react';
 import useChildStore from '../../stores/childStore';
+import useAppStore from '../../stores/appStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import Spinner from '../../components/ui/Spinner';
 import Modal from '../../components/ui/Modal';
+import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import VaccineForm from './VaccineForm';
 import GrowthForm from './GrowthForm';
 
 export const ChildProfile = () => {
   const { id } = useParams();
+  const addToast = useAppStore((state) => state.addToast);
   const { 
     children, 
     fetchVaccinations, 
     fetchGrowthRecords, 
+    deleteVaccination,
+    deleteGrowthRecord,
     vaccinations, 
     growthRecords 
   } = useChildStore();
 
   const [isLoading, setIsLoading] = useState(true);
   const [isVaccineModalOpen, setVaccineModalOpen] = useState(false);
+  const [editingVax, setEditingVax] = useState(null);
   const [isGrowthModalOpen, setGrowthModalOpen] = useState(false);
+  const [editingGrowth, setEditingGrowth] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const child = children.find(c => c.id === id);
   const childVax = vaccinations[id] || [];
@@ -71,7 +79,7 @@ export const ChildProfile = () => {
             </div>
           </div>
           <div className="flex gap-2">
-            <Link to="/children/new">
+            <Link to={`/children/${child.id}/edit`}>
               <Button variant="outline" leftIcon={<FileText size={18} />}>Edit Record</Button>
             </Link>
             <Link to={`/referrals/new?patientId=${child.id}&patientType=child&motherId=${child.mother_id || ''}`}>
@@ -136,7 +144,11 @@ export const ChildProfile = () => {
                         <p className="font-medium">{vax.vaccine_name}</p>
                         <p className="caption text-secondary">Given: {new Date(vax.date_given).toLocaleDateString()}</p>
                       </div>
-                      <Badge variant="success" solid>Administered</Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="success" solid>Administered</Badge>
+                        <button className="icon-btn-sm" onClick={() => { setEditingVax(vax); setVaccineModalOpen(true); }} title="Edit"><Pencil size={14} /></button>
+                        <button className="icon-btn-sm danger" onClick={() => setDeleteTarget({ type: 'vax', id: vax.id, childId: id, name: vax.vaccine_name })} title="Delete"><Trash2 size={14} /></button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -169,6 +181,10 @@ export const ChildProfile = () => {
                         <p className="font-medium">{record.weight || record.weight_kg} kg • {record.height || record.height_cm} cm</p>
                         <p className="caption text-secondary">Date: {new Date(record.recorded_date).toLocaleDateString()}</p>
                       </div>
+                      <div className="flex items-center gap-2">
+                        <button className="icon-btn-sm" onClick={() => { setEditingGrowth(record); setGrowthModalOpen(true); }} title="Edit"><Pencil size={14} /></button>
+                        <button className="icon-btn-sm danger" onClick={() => setDeleteTarget({ type: 'growth', id: record.id, childId: id, name: `Growth (${new Date(record.recorded_date).toLocaleDateString()})` })} title="Delete"><Trash2 size={14} /></button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -184,33 +200,55 @@ export const ChildProfile = () => {
 
       <Modal 
         isOpen={isVaccineModalOpen} 
-        onClose={() => setVaccineModalOpen(false)}
-        title="Log Vaccination"
+        onClose={() => { setVaccineModalOpen(false); setEditingVax(null); }}
+        title={editingVax ? 'Edit Vaccination' : 'Log Vaccination'}
       >
         <VaccineForm 
           childId={id}
+          initialData={editingVax}
           onSuccess={() => {
             setVaccineModalOpen(false);
+            setEditingVax(null);
             fetchVaccinations(id);
           }}
-          onCancel={() => setVaccineModalOpen(false)}
+          onCancel={() => { setVaccineModalOpen(false); setEditingVax(null); }}
         />
       </Modal>
 
       <Modal 
         isOpen={isGrowthModalOpen} 
-        onClose={() => setGrowthModalOpen(false)}
-        title="Log Growth Measurement"
+        onClose={() => { setGrowthModalOpen(false); setEditingGrowth(null); }}
+        title={editingGrowth ? 'Edit Growth Measurement' : 'Log Growth Measurement'}
       >
         <GrowthForm 
           childId={id}
+          initialData={editingGrowth}
           onSuccess={() => {
             setGrowthModalOpen(false);
+            setEditingGrowth(null);
             fetchGrowthRecords(id);
           }}
-          onCancel={() => setGrowthModalOpen(false)}
+          onCancel={() => { setGrowthModalOpen(false); setEditingGrowth(null); }}
         />
       </Modal>
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title={`Delete ${deleteTarget?.type === 'vax' ? 'Vaccination' : 'Growth Record'}`}
+        message={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
+        onConfirm={async () => {
+          if (deleteTarget.type === 'vax') {
+            await deleteVaccination(deleteTarget.id, deleteTarget.childId);
+          } else if (deleteTarget.type === 'growth') {
+            await deleteGrowthRecord(deleteTarget.id, deleteTarget.childId);
+          }
+          addToast({ type: 'success', message: 'Record deleted.' });
+          setDeleteTarget(null);
+          fetchVaccinations(id);
+          fetchGrowthRecords(id);
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 };

@@ -446,3 +446,32 @@ textarea.input-base {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ---- Icon Buttons (inline actions) ---- */
+.icon-btn-sm,
+.icon-btn-xs {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 4px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  flex-shrink: 0;
+}
+.icon-btn-sm:hover,
+.icon-btn-xs:hover {
+  background: var(--surface-hover, rgba(0,0,0,0.06));
+  color: var(--text-primary);
+}
+.icon-btn-sm.danger:hover,
+.icon-btn-xs.danger:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-danger, #ef4444);
+}
+.icon-btn-xs {
+  padding: 2px;
+}

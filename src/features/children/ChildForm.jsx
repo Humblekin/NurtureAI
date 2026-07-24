@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, Link, useParams } from 'react-router-dom';
 import { User, Calendar, Scale, ArrowLeft } from 'lucide-react';
 import useChildStore from '../../stores/childStore';
 import useAppStore from '../../stores/appStore';
@@ -9,18 +9,37 @@ import Button from '../../components/ui/Button';
 
 export const ChildForm = () => {
   const navigate = useNavigate();
-  const { registerChild, isLoading } = useChildStore();
+  const { id } = useParams();
+  const isEdit = !!id;
+  const { registerChild, updateChild, isLoading, children } = useChildStore();
   const addToast = useAppStore((state) => state.addToast);
   
   const [formData, setFormData] = useState({
-    mother_id: '', // Would normally be selected or pre-filled
+    mother_id: '',
     full_name: '',
     date_of_birth: '',
     gender: 'female',
-    birth_weight: '', // kg
+    birth_weight: '',
     birth_facility: '',
     notes: '',
   });
+
+  useEffect(() => {
+    if (isEdit && children.length > 0) {
+      const child = children.find(c => c.id === id);
+      if (child) {
+        setFormData({
+          mother_id: child.mother_id || '',
+          full_name: child.full_name || '',
+          date_of_birth: child.date_of_birth || '',
+          gender: child.gender || 'female',
+          birth_weight: child.birth_weight || '',
+          birth_facility: child.birth_facility || '',
+          notes: child.notes || '',
+        });
+      }
+    }
+  }, [id, isEdit, children]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -35,25 +54,27 @@ export const ChildForm = () => {
       return;
     }
 
-    const { success, data, error } = await registerChild(formData);
+    const { success, data, error } = isEdit
+      ? await updateChild(id, formData)
+      : await registerChild(formData);
     
     if (success) {
-      addToast({ type: 'success', message: 'Child registered successfully.' });
-      navigate('/children');
+      addToast({ type: 'success', message: isEdit ? 'Child record updated.' : 'Child registered successfully.' });
+      navigate(isEdit ? `/children/${id}` : '/children');
     } else {
-      addToast({ type: 'error', title: 'Registration failed', message: error });
+      addToast({ type: 'error', title: isEdit ? 'Update failed' : 'Registration failed', message: error });
     }
   };
 
   return (
     <div className="page-content fade-in">
       <div style={{ marginBottom: 'var(--space-6)' }}>
-        <Link to="/children" className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
-          <ArrowLeft size={16} /> Back to list
+        <Link to={isEdit ? `/children/${id}` : '/children'} className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
+          <ArrowLeft size={16} /> Back
         </Link>
-        <h1 className="heading-2">Register Child</h1>
+        <h1 className="heading-2">{isEdit ? 'Edit Child Record' : 'Register Child'}</h1>
         <p className="body-md" style={{ color: 'var(--text-secondary)' }}>
-          Create a new health record for a child.
+          {isEdit ? 'Update the child\'s health record.' : 'Create a new health record for a child.'}
         </p>
       </div>
 
@@ -140,7 +161,7 @@ export const ChildForm = () => {
           <Button 
             type="button" 
             variant="secondary" 
-            onClick={() => navigate('/children')}
+            onClick={() => navigate(isEdit ? `/children/${id}` : '/children')}
           >
             Cancel
           </Button>
@@ -148,7 +169,7 @@ export const ChildForm = () => {
             type="submit" 
             loading={isLoading}
           >
-            Register Child
+            {isEdit ? 'Update Child' : 'Register Child'}
           </Button>
         </div>
       </form>

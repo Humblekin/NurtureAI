@@ -1,18 +1,22 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Plus, Filter, AlertTriangle } from 'lucide-react';
+import { Search, Plus, Filter, AlertTriangle, Trash2 } from 'lucide-react';
 import useMotherStore from '../../stores/motherStore';
+import useAppStore from '../../stores/appStore';
 import { Card, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 import Badge from '../../components/ui/Badge';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
+import ConfirmDialog from '../../components/ui/ConfirmDialog';
 
 export const MotherList = () => {
-  const { mothers, fetchMothers, isLoading } = useMotherStore();
+  const { mothers, fetchMothers, softDelete, isLoading } = useMotherStore();
+  const addToast = useAppStore((state) => state.addToast);
   const [searchTerm, setSearchTerm] = useState('');
-  const [filter, setFilter] = useState('all'); // all, high-risk
+  const [filter, setFilter] = useState('all');
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
     fetchMothers();
@@ -72,7 +76,7 @@ export const MotherList = () => {
       ) : filteredMothers.length > 0 ? (
         <div className="grid grid-3">
           {filteredMothers.map((mother) => (
-            <Link to={`/mothers/${mother.profile_id}`} key={mother.id} style={{ textDecoration: 'none' }}>
+            <Link to={`/mothers/${mother.profile_id || mother.id}`} key={mother.id} style={{ textDecoration: 'none' }}>
               <Card hoverable className="h-full">
                 <CardBody className="flex-col h-full gap-3">
                   <div className="flex-between align-start">
@@ -80,12 +84,21 @@ export const MotherList = () => {
                       <h3 className="heading-5" style={{ color: 'var(--text-primary)' }}>{mother.full_name}</h3>
                       <p className="body-sm" style={{ color: 'var(--text-secondary)' }}>{mother.community || 'Unknown Community'}</p>
                     </div>
-                    {mother.risk_level === 'high' && (
-                      <Badge variant="critical" solid title="High Risk Pregnancy">
-                        <AlertTriangle size={12} style={{ marginRight: '4px' }} />
-                        High Risk
-                      </Badge>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {mother.risk_level === 'high' && (
+                        <Badge variant="critical" solid title="High Risk Pregnancy">
+                          <AlertTriangle size={12} style={{ marginRight: '4px' }} />
+                          High Risk
+                        </Badge>
+                      )}
+                      <button
+                        className="icon-btn-sm danger"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteTarget({ id: mother.id, name: mother.full_name }); }}
+                        title="Delete"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
                   
                   <div style={{ marginTop: 'auto', paddingTop: 'var(--space-3)', borderTop: '1px solid var(--border-default)' }}>
@@ -110,6 +123,18 @@ export const MotherList = () => {
           )}
         />
       )}
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete Mother"
+        message={`Are you sure you want to archive "${deleteTarget?.name}"? They can be restored from the admin panel.`}
+        onConfirm={async () => {
+          await softDelete(deleteTarget.id);
+          addToast({ type: 'success', message: 'Mother archived.' });
+          setDeleteTarget(null);
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 };

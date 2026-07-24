@@ -15,7 +15,7 @@ const useMotherStore = create((set, get) => ({
   fetchMothers: async () => {
     set({ isLoading: true, error: null });
     try {
-      const mothers = await db.mothers.toArray();
+      const mothers = await db.mothers.where('deleted_at').equals(null).toArray();
       set({ mothers, isLoading: false });
     } catch (error) {
       console.error('Failed to fetch mothers:', error);
@@ -101,6 +101,53 @@ const useMotherStore = create((set, get) => ({
       console.error('Failed to update mother:', error);
       set({ error: error.message, isLoading: false });
       return { success: false, error: error.message };
+    }
+  },
+
+  softDelete: async (id) => {
+    try {
+      const existing = await db.mothers.get(id);
+      if (!existing) throw new Error('Mother not found');
+      const updated = { ...existing, deleted_at: new Date().toISOString() };
+      await db.mothers.put(updated);
+      await queueSync('mothers', id, 'UPDATE', updated);
+      set((state) => ({
+        mothers: state.mothers.filter(m => m.id !== id),
+        currentMother: state.currentMother?.id === id ? null : state.currentMother,
+      }));
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to soft-delete mother:', error);
+      set({ error: error.message });
+      return { success: false, error: error.message };
+    }
+  },
+
+  restore: async (id) => {
+    try {
+      const existing = await db.mothers.get(id);
+      if (!existing) throw new Error('Mother not found');
+      const updated = { ...existing, deleted_at: null };
+      await db.mothers.put(updated);
+      await queueSync('mothers', id, 'UPDATE', updated);
+      set((state) => ({
+        mothers: [...state.mothers, updated],
+      }));
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to restore mother:', error);
+      set({ error: error.message });
+      return { success: false, error: error.message };
+    }
+  },
+
+  fetchArchived: async () => {
+    try {
+      const archived = await db.mothers.where('deleted_at').notEqual(null).toArray();
+      return archived;
+    } catch (error) {
+      console.error('Failed to fetch archived mothers:', error);
+      return [];
     }
   },
 }));

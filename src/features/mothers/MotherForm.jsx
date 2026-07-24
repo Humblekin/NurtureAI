@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, Link, useParams } from 'react-router-dom';
 import { User, Phone, MapPin, Calendar, HeartPulse, ArrowLeft } from 'lucide-react';
 import useMotherStore from '../../stores/motherStore';
 import useAppStore from '../../stores/appStore';
@@ -9,7 +9,9 @@ import Button from '../../components/ui/Button';
 
 export const MotherForm = () => {
   const navigate = useNavigate();
-  const { registerMother, isLoading } = useMotherStore();
+  const { id } = useParams();
+  const isEdit = !!id;
+  const { registerMother, updateMother, isLoading, mothers } = useMotherStore();
   const addToast = useAppStore((state) => state.addToast);
   
   const [formData, setFormData] = useState({
@@ -20,8 +22,26 @@ export const MotherForm = () => {
     blood_group: '',
     medical_history: '',
     risk_level: 'low',
-    edd: '', // Estimated Date of Delivery
+    edd: '',
   });
+
+  useEffect(() => {
+    if (isEdit && mothers.length > 0) {
+      const mother = mothers.find(m => m.id === id);
+      if (mother) {
+        setFormData({
+          full_name: mother.full_name || '',
+          phone: mother.phone || '',
+          date_of_birth: mother.date_of_birth || '',
+          community: mother.community || '',
+          blood_group: mother.blood_group || '',
+          medical_history: mother.medical_history || '',
+          risk_level: mother.risk_level || 'low',
+          edd: mother.edd || '',
+        });
+      }
+    }
+  }, [id, isEdit, mothers]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -36,27 +56,27 @@ export const MotherForm = () => {
       return;
     }
 
-    const { success, data, error } = await registerMother(formData);
+    const { success, data, error } = isEdit
+      ? await updateMother(id, formData)
+      : await registerMother(formData);
     
     if (success) {
-      addToast({ type: 'success', message: 'Mother registered successfully.' });
-      // In a real app, we'd navigate to the mother's profile, but we don't have it yet.
-      // navigate(`/mothers/${data.id}`);
-      navigate('/mothers');
+      addToast({ type: 'success', message: isEdit ? 'Mother profile updated.' : 'Mother registered successfully.' });
+      navigate(isEdit ? `/mothers/${id}` : '/mothers');
     } else {
-      addToast({ type: 'error', title: 'Registration failed', message: error });
+      addToast({ type: 'error', title: isEdit ? 'Update failed' : 'Registration failed', message: error });
     }
   };
 
   return (
     <div className="page-content fade-in">
       <div style={{ marginBottom: 'var(--space-6)' }}>
-        <Link to="/mothers" className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
-          <ArrowLeft size={16} /> Back to list
+        <Link to={isEdit ? `/mothers/${id}` : '/mothers'} className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
+          <ArrowLeft size={16} /> Back
         </Link>
-        <h1 className="heading-2">Register Mother</h1>
+        <h1 className="heading-2">{isEdit ? 'Edit Mother Profile' : 'Register Mother'}</h1>
         <p className="body-md" style={{ color: 'var(--text-secondary)' }}>
-          Add a new expecting mother to the system.
+          {isEdit ? 'Update the mother\'s information.' : 'Add a new expecting mother to the system.'}
         </p>
       </div>
 
@@ -161,7 +181,7 @@ export const MotherForm = () => {
           <Button 
             type="button" 
             variant="secondary" 
-            onClick={() => navigate('/mothers')}
+            onClick={() => navigate(isEdit ? `/mothers/${id}` : '/mothers')}
           >
             Cancel
           </Button>
@@ -169,7 +189,7 @@ export const MotherForm = () => {
             type="submit" 
             loading={isLoading}
           >
-            Register Mother
+            {isEdit ? 'Update Mother' : 'Register Mother'}
           </Button>
         </div>
       </form>

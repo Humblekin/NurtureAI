@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom';
 import { 
   Home, Users, Baby, Calendar, Activity,
   FileText, Settings, HeartPulse, Stethoscope, MessageCircle, 
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, Archive
 } from 'lucide-react';
 import useAuthStore, { ROLES } from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
@@ -53,6 +53,7 @@ const getNavConfig = (role) => {
         { name: 'Dashboard', path: '/dashboard', icon: Home },
         { name: 'Users', path: '/admin/users', icon: Users },
         { name: 'Facilities', path: '/admin/facilities', icon: Activity },
+        { name: 'Archive', path: '/admin/archive', icon: Archive },
         { name: 'Reports', path: '/reports', icon: FileText },
         { name: 'Settings', path: '/settings', icon: Settings },
       ];

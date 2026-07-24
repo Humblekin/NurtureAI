@@ -5,17 +5,18 @@ import useAppStore from '../../stores/appStore';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
 
-export const GrowthForm = ({ childId, onSuccess, onCancel }) => {
-  const { recordGrowth, isLoading } = useChildStore();
+export const GrowthForm = ({ childId, initialData, onSuccess, onCancel }) => {
+  const { recordGrowth, updateGrowthRecord, isLoading } = useChildStore();
   const addToast = useAppStore((state) => state.addToast);
+  const isEdit = !!initialData;
   
   const [formData, setFormData] = useState({
-    recorded_date: new Date().toISOString().split('T')[0],
-    weight_kg: '',
-    height_cm: '',
-    head_circumference_cm: '',
-    muac_cm: '',
-    notes: '',
+    recorded_date: initialData?.recorded_date || new Date().toISOString().split('T')[0],
+    weight_kg: initialData?.weight_kg ?? initialData?.weight ?? '',
+    height_cm: initialData?.height_cm ?? initialData?.height ?? '',
+    head_circumference_cm: initialData?.head_circumference_cm || '',
+    muac_cm: initialData?.muac_cm || '',
+    notes: initialData?.notes || '',
   });
 
   const handleChange = (e) => {
@@ -31,14 +32,17 @@ export const GrowthForm = ({ childId, onSuccess, onCancel }) => {
       return;
     }
 
-    const { success, error } = await recordGrowth(childId, {
+    const payload = {
       ...formData,
       weight: parseFloat(formData.weight_kg) || null,
       height: parseFloat(formData.height_cm) || null,
-    });
+    };
+    const { success, error } = isEdit
+      ? await updateGrowthRecord(initialData.id, childId, payload)
+      : await recordGrowth(childId, payload);
     
     if (success) {
-      addToast({ type: 'success', message: 'Growth measurement recorded.' });
+      addToast({ type: 'success', message: isEdit ? 'Growth record updated.' : 'Growth measurement recorded.' });
       if (onSuccess) onSuccess();
     } else {
       addToast({ type: 'error', title: 'Failed to record', message: error });
@@ -115,7 +119,7 @@ export const GrowthForm = ({ childId, onSuccess, onCancel }) => {
 
       <div className="flex gap-3" style={{ justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
         <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" loading={isLoading}>Record Measurement</Button>
+        <Button type="submit" loading={isLoading}>{isEdit ? 'Update Measurement' : 'Record Measurement'}</Button>
       </div>
     </form>
   );

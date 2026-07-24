@@ -5,16 +5,17 @@ import useAppStore from '../../stores/appStore';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
 
-export const VaccineForm = ({ childId, onSuccess, onCancel }) => {
-  const { recordVaccination, isLoading } = useChildStore();
+export const VaccineForm = ({ childId, initialData, onSuccess, onCancel }) => {
+  const { recordVaccination, updateVaccination, isLoading } = useChildStore();
   const addToast = useAppStore((state) => state.addToast);
+  const isEdit = !!initialData;
   
   const [formData, setFormData] = useState({
-    vaccine_name: '',
-    date_given: new Date().toISOString().split('T')[0],
-    dose: 1,
-    batch_number: '',
-    notes: '',
+    vaccine_name: initialData?.vaccine_name || '',
+    date_given: initialData?.date_given || new Date().toISOString().split('T')[0],
+    dose: initialData?.dose || 1,
+    batch_number: initialData?.batch_number || '',
+    notes: initialData?.notes || '',
   });
 
   const handleChange = (e) => {
@@ -30,10 +31,12 @@ export const VaccineForm = ({ childId, onSuccess, onCancel }) => {
       return;
     }
 
-    const { success, error } = await recordVaccination(childId, formData);
+    const { success, error } = isEdit
+      ? await updateVaccination(initialData.id, childId, formData)
+      : await recordVaccination(childId, formData);
     
     if (success) {
-      addToast({ type: 'success', message: 'Vaccination recorded.' });
+      addToast({ type: 'success', message: isEdit ? 'Vaccination updated.' : 'Vaccination recorded.' });
       if (onSuccess) onSuccess();
     } else {
       addToast({ type: 'error', title: 'Failed to record', message: error });
@@ -107,7 +110,7 @@ export const VaccineForm = ({ childId, onSuccess, onCancel }) => {
 
       <div className="flex gap-3" style={{ justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
         <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" loading={isLoading}>Record Vaccine</Button>
+        <Button type="submit" loading={isLoading}>{isEdit ? 'Update Vaccine' : 'Record Vaccine'}</Button>
       </div>
     </form>
   );

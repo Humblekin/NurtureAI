@@ -1,20 +1,24 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Calendar, Plus, Search, Filter } from 'lucide-react';
+import { Calendar, Plus, Search, Filter, Pencil, Trash2 } from 'lucide-react';
 import useVisitStore from '../../stores/visitStore';
 import useAuthStore from '../../stores/authStore';
+import useAppStore from '../../stores/appStore';
 import { Card, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 import Badge from '../../components/ui/Badge';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
+import ConfirmDialog from '../../components/ui/ConfirmDialog';
 
 export const VisitList = () => {
   const { profile } = useAuthStore();
-  const { visits, fetchVisitsByWorker, isLoading } = useVisitStore();
+  const { visits, fetchVisitsByWorker, softDelete, isLoading } = useVisitStore();
+  const addToast = useAppStore((state) => state.addToast);
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState('all');
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
     if (profile?.id) {
@@ -92,9 +96,21 @@ export const VisitList = () => {
                     <Calendar size={16} style={{ color: 'var(--color-primary-500)' }} />
                     <span className="font-medium">{new Date(visit.visit_date).toLocaleDateString()}</span>
                   </div>
-                  <Badge variant={visitTypeColors[visit.visit_type] || 'info'} solid>
-                    {visit.visit_type?.replace('_', ' ')}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={visitTypeColors[visit.visit_type] || 'info'} solid>
+                      {visit.visit_type?.replace('_', ' ')}
+                    </Badge>
+                    <Link to={`/visits/${visit.id}/edit`} onClick={(e) => e.stopPropagation()}>
+                      <button className="icon-btn-sm" title="Edit"><Pencil size={14} /></button>
+                    </Link>
+                    <button
+                      className="icon-btn-sm danger"
+                      onClick={(e) => { e.preventDefault(); setDeleteTarget({ id: visit.id, name: `Visit (${new Date(visit.visit_date).toLocaleDateString()})` }); }}
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
                 <p className="body-sm" style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>
                   Patient: {visit.patient_id?.slice(0, 8)}... ({visit.patient_type})
@@ -119,6 +135,18 @@ export const VisitList = () => {
           )}
         />
       )}
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete Visit"
+        message={`Are you sure you want to delete "${deleteTarget?.name}"? This cannot be undone.`}
+        onConfirm={async () => {
+          await softDelete(deleteTarget.id);
+          addToast({ type: 'success', message: 'Visit deleted.' });
+          setDeleteTarget(null);
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 };

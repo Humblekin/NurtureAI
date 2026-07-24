@@ -41,6 +41,19 @@ db.version(1).stores({
   settings: 'key',
 });
 
+// Version 2: Add deleted_at for soft delete support
+db.version(2).stores({
+  mothers: 'id, profile_id, full_name, community, risk_level, assigned_worker_id, deleted_at, synced_at',
+  pregnancies: 'id, mother_id, status, risk_level, edd, deleted_at, synced_at',
+  antenatal_visits: 'id, pregnancy_id, visit_date, visit_number, deleted_at, synced_at',
+  children: 'id, mother_id, full_name, birth_date, gender, deleted_at, synced_at',
+  vaccinations: 'id, child_id, vaccine_name, date_given, deleted_at, synced_at',
+  growth_records: 'id, child_id, recorded_date, deleted_at, synced_at',
+  visits: 'id, worker_id, patient_id, patient_type, visit_type, visit_date, deleted_at, synced_at',
+  referrals: 'id, patient_id, from_facility_id, to_facility_id, urgency, status, deleted_at, synced_at',
+  facilities: 'id, name, type, district_id, deleted_at, synced_at',
+});
+
 /**
  * Add a record to the sync queue for later upload.
  * @param {string} tableName - The Supabase table name

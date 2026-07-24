@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, Link, useParams } from 'react-router-dom';
 import { Calendar, ArrowLeft } from 'lucide-react';
 import useVisitStore from '../../stores/visitStore';
 import useAuthStore from '../../stores/authStore';
@@ -10,7 +10,9 @@ import Button from '../../components/ui/Button';
 
 export const VisitForm = () => {
   const navigate = useNavigate();
-  const { logVisit, isLoading } = useVisitStore();
+  const { id } = useParams();
+  const isEdit = !!id;
+  const { logVisit, updateVisit, isLoading, visits } = useVisitStore();
   const { profile } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
   
@@ -23,6 +25,23 @@ export const VisitForm = () => {
     findings: '',
     actions_taken: '',
   });
+
+  useEffect(() => {
+    if (isEdit && visits.length > 0) {
+      const visit = visits.find(v => v.id === id);
+      if (visit) {
+        setFormData({
+          patient_id: visit.patient_id || '',
+          patient_type: visit.patient_type || 'mother',
+          visit_type: visit.visit_type || 'home',
+          visit_date: visit.visit_date || new Date().toISOString().split('T')[0],
+          notes: visit.notes || '',
+          findings: visit.findings || '',
+          actions_taken: visit.actions_taken || '',
+        });
+      }
+    }
+  }, [id, isEdit, visits]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -37,16 +56,15 @@ export const VisitForm = () => {
       return;
     }
 
-    const { success, error } = await logVisit({
-      ...formData,
-      worker_id: profile?.id,
-    });
+    const { success, error } = isEdit
+      ? await updateVisit(id, formData)
+      : await logVisit({ ...formData, worker_id: profile?.id });
     
     if (success) {
-      addToast({ type: 'success', message: 'Visit logged successfully.' });
+      addToast({ type: 'success', message: isEdit ? 'Visit updated.' : 'Visit logged successfully.' });
       navigate('/visits');
     } else {
-      addToast({ type: 'error', title: 'Failed to log visit', message: error });
+      addToast({ type: 'error', title: isEdit ? 'Update failed' : 'Failed to log visit', message: error });
     }
   };
 
@@ -56,9 +74,9 @@ export const VisitForm = () => {
         <Link to="/visits" className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
           <ArrowLeft size={16} /> Back to visits
         </Link>
-        <h1 className="heading-2">Log Health Visit</h1>
+        <h1 className="heading-2">{isEdit ? 'Edit Visit' : 'Log Health Visit'}</h1>
         <p className="body-md" style={{ color: 'var(--text-secondary)' }}>
-          Record a health visit for a patient.
+          {isEdit ? 'Update the visit record.' : 'Record a health visit for a patient.'}
         </p>
       </div>
 
@@ -159,7 +177,7 @@ export const VisitForm = () => {
             type="submit" 
             loading={isLoading}
           >
-            Log Visit
+            {isEdit ? 'Update Visit' : 'Log Visit'}
           </Button>
         </div>
       </form>

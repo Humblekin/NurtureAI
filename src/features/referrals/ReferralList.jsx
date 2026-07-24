@@ -1,20 +1,24 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Activity, Plus, Search, Filter } from 'lucide-react';
+import { Activity, Plus, Search, Filter, Trash2 } from 'lucide-react';
 import useReferralStore from '../../stores/referralStore';
 import useAuthStore from '../../stores/authStore';
+import useAppStore from '../../stores/appStore';
 import { Card, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 import Badge from '../../components/ui/Badge';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
+import ConfirmDialog from '../../components/ui/ConfirmDialog';
 
 export const ReferralList = () => {
-  const { referrals, fetchOutgoingReferrals, isLoading } = useReferralStore();
+  const { referrals, fetchOutgoingReferrals, softDelete, isLoading } = useReferralStore();
   const { profile } = useAuthStore();
+  const addToast = useAppStore((state) => state.addToast);
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState('all');
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   useEffect(() => {
     const userId = profile?.id || profile?.facility_id;
@@ -100,13 +104,20 @@ export const ReferralList = () => {
                     <Activity size={16} style={{ color: 'var(--color-primary-500)' }} />
                     <span className="font-medium">{new Date(referral.created_at).toLocaleDateString()}</span>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 items-center">
                     <Badge variant={urgencyColors[referral.urgency] || 'info'} solid>
                       {referral.urgency}
                     </Badge>
                     <Badge variant={statusColors[referral.status] || 'info'}>
                       {referral.status}
                     </Badge>
+                    <button
+                      className="icon-btn-sm danger"
+                      onClick={(e) => { e.preventDefault(); setDeleteTarget({ id: referral.id, name: `Referral to ${referral.to_facility_id || 'unknown'}` }); }}
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
                 <p className="body-sm" style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>
@@ -132,6 +143,18 @@ export const ReferralList = () => {
           )}
         />
       )}
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete Referral"
+        message={`Are you sure you want to delete "${deleteTarget?.name}"? This cannot be undone.`}
+        onConfirm={async () => {
+          await softDelete(deleteTarget.id);
+          addToast({ type: 'success', message: 'Referral deleted.' });
+          setDeleteTarget(null);
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 };

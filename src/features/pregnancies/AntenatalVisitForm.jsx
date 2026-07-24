@@ -5,21 +5,22 @@ import useAppStore from '../../stores/appStore';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
 
-export const AntenatalVisitForm = ({ pregnancyId, onSuccess, onCancel }) => {
-  const { logAntenatalVisit, isLoading } = usePregnancyStore();
+export const AntenatalVisitForm = ({ pregnancyId, initialData, onSuccess, onCancel }) => {
+  const { logAntenatalVisit, updateAntenatalVisit, isLoading } = usePregnancyStore();
   const addToast = useAppStore((state) => state.addToast);
+  const isEdit = !!initialData;
   
   const [formData, setFormData] = useState({
     pregnancy_id: pregnancyId,
-    visit_date: new Date().toISOString().split('T')[0],
-    gestational_age: '', // in weeks
-    weight: '', // kg
-    blood_pressure: '', // e.g., 120/80
-    fundal_height: '', // cm
-    fetal_heart_rate: '', // bpm
-    symptoms: '',
-    notes: '',
-    assessed_risk_level: '' // optional update to risk level
+    visit_date: initialData?.visit_date || new Date().toISOString().split('T')[0],
+    gestational_age: initialData?.gestational_age || '',
+    weight: initialData?.weight || '',
+    blood_pressure: initialData?.blood_pressure || '',
+    fundal_height: initialData?.fundal_height || '',
+    fetal_heart_rate: initialData?.fetal_heart_rate || '',
+    symptoms: initialData?.symptoms || '',
+    notes: initialData?.notes || '',
+    assessed_risk_level: initialData?.assessed_risk_level || ''
   });
 
   const handleChange = (e) => {
@@ -30,10 +31,12 @@ export const AntenatalVisitForm = ({ pregnancyId, onSuccess, onCancel }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    const { success, error } = await logAntenatalVisit(formData);
+    const { success, error } = isEdit
+      ? await updateAntenatalVisit(initialData.id, formData)
+      : await logAntenatalVisit(formData);
     
     if (success) {
-      addToast({ type: 'success', message: 'Antenatal visit logged successfully.' });
+      addToast({ type: 'success', message: isEdit ? 'Antenatal visit updated.' : 'Antenatal visit logged successfully.' });
       if (onSuccess) onSuccess();
     } else {
       addToast({ type: 'error', title: 'Failed to log visit', message: error });
@@ -138,7 +141,7 @@ export const AntenatalVisitForm = ({ pregnancyId, onSuccess, onCancel }) => {
 
       <div className="flex gap-3" style={{ justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
         <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" loading={isLoading}>Log Visit</Button>
+        <Button type="submit" loading={isLoading}>{isEdit ? 'Update Visit' : 'Log Visit'}</Button>
       </div>
     </form>
   );

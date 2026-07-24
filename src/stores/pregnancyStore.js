@@ -15,7 +15,7 @@ const usePregnancyStore = create((set, get) => ({
   fetchPregnanciesByMotherId: async (motherId) => {
     set({ isLoading: true, error: null });
     try {
-      const pregnancies = await db.pregnancies.where('mother_id').equals(motherId).toArray();
+      const pregnancies = await db.pregnancies.where('mother_id').equals(motherId).filter(p => !p.deleted_at).toArray();
       const active = pregnancies.find(p => p.status === 'active') || null;
       
       set({ 
@@ -131,7 +131,94 @@ const usePregnancyStore = create((set, get) => ({
     } catch (error) {
       console.error('Failed to update pregnancy risk:', error);
     }
-  }
+  },
+
+  updatePregnancy: async (id, updates) => {
+    try {
+      const existing = await db.pregnancies.get(id);
+      if (!existing) throw new Error('Pregnancy not found');
+      const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
+      await db.pregnancies.put(updated);
+      await queueSync('pregnancies', id, 'UPDATE', updated);
+      set((state) => ({
+        activePregnancy: state.activePregnancy?.id === id ? updated : state.activePregnancy,
+        pregnancyHistory: state.pregnancyHistory.map(p => p.id === id ? updated : p),
+      }));
+      return { success: true, data: updated };
+    } catch (error) {
+      console.error('Failed to update pregnancy:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  updateAntenatalVisit: async (id, updates) => {
+    try {
+      const existing = await db.antenatal_visits.get(id);
+      if (!existing) throw new Error('Visit not found');
+      const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
+      await db.antenatal_visits.put(updated);
+      await queueSync('antenatal_visits', id, 'UPDATE', updated);
+      set((state) => ({
+        antenatalVisits: state.antenatalVisits.map(v => v.id === id ? updated : v),
+      }));
+      return { success: true, data: updated };
+    } catch (error) {
+      console.error('Failed to update antenatal visit:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  deleteAntenatalVisit: async (id) => {
+    try {
+      await db.antenatal_visits.delete(id);
+      await queueSync('antenatal_visits', id, 'DELETE', { id });
+      set((state) => ({
+        antenatalVisits: state.antenatalVisits.filter(v => v.id !== id),
+      }));
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to delete antenatal visit:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  softDelete: async (id) => {
+    try {
+      const existing = await db.pregnancies.get(id);
+      if (!existing) throw new Error('Pregnancy not found');
+      const updated = { ...existing, deleted_at: new Date().toISOString() };
+      await db.pregnancies.put(updated);
+      await queueSync('pregnancies', id, 'UPDATE', updated);
+      set((state) => ({
+        pregnancyHistory: state.pregnancyHistory.filter(p => p.id !== id),
+        activePregnancy: state.activePregnancy?.id === id ? null : state.activePregnancy,
+      }));
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  restore: async (id) => {
+    try {
+      const existing = await db.pregnancies.get(id);
+      if (!existing) throw new Error('Pregnancy not found');
+      const updated = { ...existing, deleted_at: null };
+      await db.pregnancies.put(updated);
+      await queueSync('pregnancies', id, 'UPDATE', updated);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  fetchArchived: async () => {
+    try {
+      return await db.pregnancies.where('deleted_at').notEqual(null).toArray();
+    } catch (error) {
+      return [];
+    }
+  },
 }));
 
 export default usePregnancyStore;

@@ -23,6 +23,7 @@ import AppointmentList from '../features/health/AppointmentList';
 import ReportsPage from '../features/reports/ReportsPage';
 import AdminUsers from '../features/admin/AdminUsers';
 import AdminFacilities from '../features/admin/AdminFacilities';
+import AdminArchive from '../features/admin/AdminArchive';
 
 export const router = createBrowserRouter([
   {
@@ -59,6 +60,14 @@ export const router = createBrowserRouter([
         )
       },
       {
+        path: 'mothers/:id/edit',
+        element: (
+          <AuthGuard allowedRoles={['chw', 'nurse', 'doctor', 'admin']}>
+            <MotherForm />
+          </AuthGuard>
+        )
+      },
+      {
         path: 'mothers/:id',
         element: (
           <AuthGuard allowedRoles={['chw', 'nurse', 'doctor', 'admin']}>
@@ -84,6 +93,14 @@ export const router = createBrowserRouter([
         )
       },
       {
+        path: 'children/:id/edit',
+        element: (
+          <AuthGuard allowedRoles={['chw', 'nurse', 'doctor', 'admin']}>
+            <ChildForm />
+          </AuthGuard>
+        )
+      },
+      {
         path: 'children/:id',
         element: (
           <AuthGuard allowedRoles={['mother', 'chw', 'nurse', 'doctor', 'admin']}>
@@ -102,6 +119,14 @@ export const router = createBrowserRouter([
       },
       {
         path: 'visits/new',
+        element: (
+          <AuthGuard allowedRoles={['chw', 'nurse', 'doctor', 'admin']}>
+            <VisitForm />
+          </AuthGuard>
+        )
+      },
+      {
+        path: 'visits/:id/edit',
         element: (
           <AuthGuard allowedRoles={['chw', 'nurse', 'doctor', 'admin']}>
             <VisitForm />
@@ -185,6 +210,15 @@ export const router = createBrowserRouter([
         element: (
           <AuthGuard allowedRoles={['admin', 'district_officer']}>
             <AdminFacilities />
+          </AuthGuard>
+        )
+      },
+      // Admin - Archive
+      {
+        path: 'admin/archive',
+        element: (
+          <AuthGuard allowedRoles={['admin']}>
+            <AdminArchive />
           </AuthGuard>
         )
       },

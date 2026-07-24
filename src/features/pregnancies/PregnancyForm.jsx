@@ -5,18 +5,19 @@ import useAppStore from '../../stores/appStore';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
 
-export const PregnancyForm = ({ motherId, onSuccess, onCancel }) => {
-  const { registerPregnancy, isLoading } = usePregnancyStore();
+export const PregnancyForm = ({ motherId, initialData, onSuccess, onCancel }) => {
+  const { registerPregnancy, updatePregnancy, isLoading } = usePregnancyStore();
   const addToast = useAppStore((state) => state.addToast);
+  const isEdit = !!initialData;
   
   const [formData, setFormData] = useState({
     mother_id: motherId,
-    lmp: '', // Last Menstrual Period
-    edd: '', // Estimated Date of Delivery
-    gravida: 1, // Total number of pregnancies
-    para: 0, // Number of viable births
-    risk_level: 'low',
-    notes: ''
+    lmp: initialData?.lmp || '',
+    edd: initialData?.edd || '',
+    gravida: initialData?.gravida || 1,
+    para: initialData?.para || 0,
+    risk_level: initialData?.risk_level || 'low',
+    notes: initialData?.notes || ''
   });
 
   const handleChange = (e) => {
@@ -32,10 +33,12 @@ export const PregnancyForm = ({ motherId, onSuccess, onCancel }) => {
       return;
     }
 
-    const { success, error } = await registerPregnancy(formData);
+    const { success, error } = isEdit
+      ? await updatePregnancy(initialData.id, formData)
+      : await registerPregnancy(formData);
     
     if (success) {
-      addToast({ type: 'success', message: 'Pregnancy record created.' });
+      addToast({ type: 'success', message: isEdit ? 'Pregnancy record updated.' : 'Pregnancy record created.' });
       if (onSuccess) onSuccess();
     } else {
       addToast({ type: 'error', title: 'Failed to create record', message: error });
@@ -112,7 +115,7 @@ export const PregnancyForm = ({ motherId, onSuccess, onCancel }) => {
 
       <div className="flex gap-3" style={{ justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
         <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" loading={isLoading}>Save Record</Button>
+        <Button type="submit" loading={isLoading}>{isEdit ? 'Update Record' : 'Save Record'}</Button>
       </div>
     </form>
   );
