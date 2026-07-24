@@ -315,6 +315,104 @@ body {
   background-size: 200% 100%;
 }
 
+/* ---- Form Helpers ---- */
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.input-label {
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  color: var(--text-primary);
+}
+
+.input-base {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-base);
+  font-family: var(--font-family-primary);
+  color: var(--text-primary);
+  background: var(--surface-base);
+  border: 1.5px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  transition: all var(--transition-fast);
+  outline: none;
+  min-height: 44px;
+  resize: vertical;
+}
+
+.input-base::placeholder {
+  color: var(--text-disabled);
+}
+
+.input-base:hover:not(:focus):not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.input-base:focus {
+  border-color: var(--border-focus);
+  box-shadow: var(--shadow-focus);
+}
+
+.input-base:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: var(--surface-sunken);
+}
+
+textarea.input-base {
+  min-height: 80px;
+  line-height: var(--leading-normal);
+}
+
+@media (max-width: 768px) {
+  textarea.input-base {
+    min-height: 70px;
+    font-size: var(--text-sm);
+  }
+}
+
+/* ---- Warning Banner ---- */
+.warning-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-warning-50);
+  border: 1px solid var(--color-warning-200);
+  border-radius: var(--radius-lg);
+  color: var(--color-warning-800);
+}
+
+[data-theme="dark"] .warning-banner {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: var(--color-warning-200);
+}
+
+.warning-banner-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.warning-banner-text {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.warning-banner-text a {
+  color: inherit;
+  font-weight: var(--font-medium);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.warning-banner-text a:hover {
+  opacity: 0.8;
+}
+
 /* ---- Visually Hidden (Accessibility) ---- */
 .sr-only {
   position: absolute;

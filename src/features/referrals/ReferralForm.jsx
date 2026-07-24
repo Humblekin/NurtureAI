@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Activity, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Activity, ExternalLink, AlertTriangle } from 'lucide-react';
 import useReferralStore from '../../stores/referralStore';
 import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
@@ -175,9 +175,14 @@ export const ReferralForm = () => {
             )}
 
             {otherFacilities.length === 0 && !loadingFacilities && (
-              <p className="body-sm" style={{ color: 'var(--color-warning-500)', marginTop: '-var(--space-2)' }}>
-                No other facilities registered. Add facilities in Admin → Facility Management first.
-              </p>
+              <div className="warning-banner">
+                <AlertTriangle size={18} className="warning-banner-icon" />
+                <div className="warning-banner-text">
+                  No other facilities registered. Add facilities in{' '}
+                  <Link to="/admin/facilities">Admin → Facility Management</Link>{' '}
+                  first.
+                </div>
+              </div>
             )}
 
             <div className="input-group">
