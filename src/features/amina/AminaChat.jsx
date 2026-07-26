@@ -3,7 +3,7 @@ import { Send, Mic, MicOff, Volume2, VolumeX, Trash2, User, Globe, MessageSquare
 import { motion, AnimatePresence } from 'framer-motion';
 import { useVoiceConversation, VOICE_STATES, useSpeechRecognition, useSpeechSynthesis } from '../../hooks/useAminaChat';
 import { isAiConfigured, chatCompletion } from '../../lib/groq';
-import { isDeepgramConfigured, speak as deepgramSpeak } from '../../services/deepgram';
+import { isDeepgramConfigured, speak as deepgramSpeak, unlockAudio } from '../../services/deepgram';
 import useAuthStore from '../../stores/authStore';
 import { buildHealthContext } from '../../services/healthContext';
 import { runReminderEngine, generateAminaGreeting } from '../../services/reminderEngine';
@@ -157,7 +157,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
               <p>After enabling, click <strong>Retry Voice</strong> below.</p>
             </div>
             <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'center' }}>
-              <Button size="sm" onClick={retryMicPermission}>
+              <Button size="sm" onClick={() => { unlockAudio(); retryMicPermission(); }}>
                 <Mic size={14} /> Retry Voice
               </Button>
               <Button size="sm" variant="outline" onClick={onSwitchToChat}>
@@ -233,7 +233,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
             <p style={{ color: 'var(--text-secondary)', fontSize: '14px', textAlign: 'center', maxWidth: '280px' }}>
               Amina needs microphone access to listen and respond to you.
             </p>
-            <Button onClick={startConversation} size="lg">
+            <Button onClick={() => { unlockAudio(); startConversation(); }} size="lg">
               <Mic size={18} /> Start Talking with Amina
             </Button>
             <button

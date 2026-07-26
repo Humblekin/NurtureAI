@@ -9,6 +9,32 @@ const DEEPGRAM_WS_URL = 'wss://api.deepgram.com/v1/listen';
 
 // ---- Helpers ----
 
+let audioUnlocked = false;
+
+/**
+ * Unlock audio playback on mobile browsers.
+ * MUST be called from a user gesture (click/tap) BEFORE any async work.
+ * Without this, iOS/Safari will block audio.play() even with user gesture
+ * if the play() call happens in a different microtask.
+ */
+export function unlockAudio() {
+  if (audioUnlocked) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const buffer = ctx.createBuffer(1, 1, 22050);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+    source.start(0);
+    if (ctx.state === 'suspended') {
+      ctx.resume();
+    }
+    audioUnlocked = true;
+  } catch (e) {
+    console.warn('[Audio] Unlock failed:', e);
+  }
+}
+
 export function isDeepgramConfigured() {
   return !!DEEPGRAM_API_KEY;
 }
