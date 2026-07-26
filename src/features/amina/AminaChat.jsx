@@ -64,30 +64,6 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
     togglePause, bargeIn, clearChat, switchLanguage,
   } = voice;
 
-  const [diag, setDiag] = useState(null);
-
-  // Diagnostic: validate Deepgram API key on mount
-  useEffect(() => {
-    const key = import.meta.env.VITE_DEEPGRAM_API_KEY;
-    if (!key) {
-      setDiag({ ok: false, msg: 'VITE_DEEPGRAM_API_KEY is not set in your .env file' });
-      return;
-    }
-
-    fetch('https://api.deepgram.com/v1/speak?model=aura-asteria-en', {
-      method: 'POST',
-      headers: { Authorization: 'Token ' + key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: ' ' }),
-    }).then(r => {
-      if (!r.ok) {
-        return r.text().then(t => setDiag({ ok: false, msg: 'API key rejected (' + r.status + '): ' + t }));
-      }
-      setDiag({ ok: true, msg: 'Voice ready — API key valid' });
-    }).catch(e => {
-      setDiag({ ok: false, msg: 'Cannot reach Deepgram — check your internet connection. Error: ' + e.message });
-    });
-  }, []);
-
   const avatarState = useMemo(() => {
     switch (voiceState) {
       case VOICE_STATES.SPEAKING: return 'speaking';
@@ -160,16 +136,6 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
               <MessageSquare size={14} /> Use Chat Instead
             </Button>
           </div>
-        </div>
-      )}
-
-      {/* API Key diagnostic */}
-      {deepgramConfigured && diag && (
-        <div className={styles.warningBanner} style={{
-          background: diag.ok ? 'var(--color-success-50, #f0fdf4)' : 'var(--color-danger-50, #fff5f5)',
-          borderColor: diag.ok ? 'var(--color-success-200, #bbf7d0)' : 'var(--color-danger-200, #fecaca)',
-        }}>
-          <p style={{ margin: 0, fontSize: '13px' }}>{diag.ok ? '✅' : '❌'} {diag.msg}</p>
         </div>
       )}
 

@@ -38,7 +38,7 @@ export function isDeepgramConfigured() {
  */
 function startRestSTT(stream, callbacks, options) {
   const sttLanguage = options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US';
-  const SEGMENT_MS = 3000;
+  const SEGMENT_MS = 1500;
   let stopped = false;
   let recorder = null;
   let isRecording = false;
