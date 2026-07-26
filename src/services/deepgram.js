@@ -195,12 +195,12 @@ let audioCtx = null;
 let currentSource = null;
 let currentAbortController = null;
 
-async function getAudioContext() {
+function getAudioContext() {
   if (!audioCtx || audioCtx.state === 'closed') {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
   if (audioCtx.state === 'suspended') {
-    await audioCtx.resume();
+    audioCtx.resume();
   }
   return audioCtx;
 }
@@ -224,8 +224,8 @@ function chunkText(text, maxLen = TTS_MAX_CHUNK) {
   return chunks.filter(Boolean);
 }
 
-async function playBuffer(buffer, abortSignal) {
-  const ctx = await getAudioContext();
+function playBuffer(buffer, abortSignal) {
+  const ctx = getAudioContext();
   return new Promise((resolve, reject) => {
     const source = ctx.createBufferSource();
     source.buffer = buffer;
@@ -291,7 +291,7 @@ export async function speak(text, options = {}) {
       }
 
       const arrayBuffer = await response.arrayBuffer();
-      const ctx = await getAudioContext();
+      const ctx = getAudioContext();
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
 
       console.log('[TTS] 🔊 Playing chunk, duration:', audioBuffer.duration.toFixed(1) + 's');
