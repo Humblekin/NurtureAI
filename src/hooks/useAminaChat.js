@@ -345,6 +345,12 @@ export function useVoiceConversation() {
     else mgr.pause();
   }, [voiceState]);
 
+  const bargeIn = useCallback(() => {
+    const mgr = managerRef.current;
+    if (!mgr) return;
+    mgr.bargeIn();
+  }, []);
+
   const clearChat = useCallback(() => {
     const mgr = managerRef.current;
     if (mgr) mgr.reset();
@@ -385,6 +391,6 @@ export function useVoiceConversation() {
     voiceState, messages, transcript, isListening, isSpeaking,
     error, language, micPermission, micReady,
     startConversation, retryMicPermission,
-    togglePause, clearChat, switchLanguage,
+    togglePause, bargeIn, clearChat, switchLanguage,
   };
 }

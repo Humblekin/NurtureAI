@@ -61,7 +61,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
     voiceState, messages, transcript, isListening,
     error, language, micPermission, micReady,
     startConversation, retryMicPermission,
-    togglePause, clearChat, switchLanguage,
+    togglePause, bargeIn, clearChat, switchLanguage,
   } = voice;
 
   const avatarState = useMemo(() => {
@@ -270,6 +270,11 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
           {micPermission !== 'denied' && (
             <button className={`${styles.controlBtn} ${styles.pauseBtn}`} onClick={togglePause} title={voiceState === VOICE_STATES.PAUSED ? 'Resume' : 'Pause'}>
               {voiceState === VOICE_STATES.PAUSED ? <Play size={20} /> : <Pause size={20} />}
+            </button>
+          )}
+          {voiceState === VOICE_STATES.SPEAKING && micPermission !== 'denied' && (
+            <button className={`${styles.controlBtn} ${styles.micBtn}`} onClick={bargeIn} title="Interrupt Amina">
+              <Mic size={22} />
             </button>
           )}
           <button className={`${styles.controlBtn} ${styles.endCallBtn}`} onClick={clearChat} title="End conversation">
