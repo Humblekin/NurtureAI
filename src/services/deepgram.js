@@ -13,13 +13,12 @@ let audioUnlocked = false;
 export function unlockAudio() {
   if (audioUnlocked) return;
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = getAudioContext();
     const buffer = ctx.createBuffer(1, 1, 22050);
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(ctx.destination);
     source.start(0);
-    if (ctx.state === 'suspended') ctx.resume();
     audioUnlocked = true;
   } catch (e) {
     console.warn('[Audio] Unlock failed:', e);
@@ -182,10 +181,21 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
   return startRestSTT(stream, callbacks, options);
 }
 
-// ---- Text-to-Speech (REST API) ----
+// ---- Text-to-Speech (Web Audio API — no user-gesture restriction) ----
 
-let currentAudio = null;
+let audioCtx = null;
+let currentSource = null;
 let currentAbortController = null;
+
+function getAudioContext() {
+  if (!audioCtx || audioCtx.state === 'closed') {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+  return audioCtx;
+}
 
 const TTS_MAX_CHUNK = 1000;
 
@@ -206,28 +216,33 @@ function chunkText(text, maxLen = TTS_MAX_CHUNK) {
   return chunks.filter(Boolean);
 }
 
-function playAudioChunk(audio, abortSignal) {
+function playBuffer(buffer, abortSignal) {
   return new Promise((resolve, reject) => {
-    const onAbort = () => { audio.pause(); audio.currentTime = 0; reject(new DOMException('Aborted', 'AbortError')); };
+    const ctx = getAudioContext();
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+    currentSource = source;
+
+    const cleanup = () => {
+      abortSignal.removeEventListener('abort', onAbort);
+      currentSource = null;
+    };
+
+    const onAbort = () => {
+      try { source.stop(); } catch {}
+      cleanup();
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+
     abortSignal.addEventListener('abort', onAbort, { once: true });
-    audio.onended = () => { abortSignal.removeEventListener('abort', onAbort); resolve(); };
-    audio.onerror = (e) => { abortSignal.removeEventListener('abort', onAbort); reject(e); };
-    audio.play().catch((err) => {
-      if (err.name === 'NotAllowedError') {
-        unlockAudio();
-        setTimeout(() => {
-          audio.play().then(resolve).catch(() => { abortSignal.removeEventListener('abort', onAbort); reject(err); });
-        }, 100);
-      } else {
-        abortSignal.removeEventListener('abort', onAbort);
-        reject(err);
-      }
-    });
+    source.onended = () => { cleanup(); resolve(); };
+    source.start(0);
   });
 }
 
 /**
- * Convert text to speech using Deepgram TTS.
+ * Convert text to speech using Deepgram TTS + Web Audio API.
  */
 export async function speak(text, options = {}) {
   if (!DEEPGRAM_API_KEY) {
@@ -267,32 +282,29 @@ export async function speak(text, options = {}) {
         throw new Error(`Deepgram TTS error ${response.status}: ${errBody}`);
       }
 
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audio.preload = 'auto';
-      currentAudio = audio;
+      const arrayBuffer = await response.arrayBuffer();
+      const ctx = getAudioContext();
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
 
-      console.log('[TTS] 🔊 Playing, size:', blob.size, 'bytes');
+      console.log('[TTS] 🔊 Playing chunk, duration:', audioBuffer.duration.toFixed(1) + 's');
       if (!started) { started = true; options.onSpeechStart?.(); }
 
-      await playAudioChunk(audio, abortController.signal);
-      URL.revokeObjectURL(url);
+      await playBuffer(audioBuffer, abortController.signal);
     }
   } catch (err) {
     if (err.name !== 'AbortError') console.error('[TTS] Error:', err);
     throw err;
   } finally {
-    currentAudio = null;
+    currentSource = null;
     currentAbortController = null;
     options.onSpeechEnd?.();
   }
 }
 
 export function stopSpeaking() {
-  if (currentAudio) {
-    try { currentAudio.pause(); currentAudio.currentTime = 0; } catch {}
-    currentAudio = null;
+  if (currentSource) {
+    try { currentSource.stop(); } catch {}
+    currentSource = null;
   }
   if (currentAbortController) {
     currentAbortController.abort();
