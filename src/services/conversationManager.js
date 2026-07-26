@@ -217,7 +217,6 @@ export function createConversationManager(deps) {
       } catch (speakErr) {
         if (speakErr.name === 'AbortError') {
           // Barge-in — user spoke while we were speaking
-          // Fall through to restart listening below
         } else {
           console.error('[ConversationManager] Speech error:', speakErr);
           onError?.('speech_error');
@@ -226,8 +225,12 @@ export function createConversationManager(deps) {
 
       if (destroyed) return;
 
-      // Return to listening — this is the core of the continuous conversation loop
-      restartListening();
+      // onSpeechEnded() already calls restartListening() when TTS finishes.
+      // Only restart here as a fallback if state is still SPEAKING
+      // (e.g. speakText threw before onSpeechEnd could fire).
+      if (state === CONVERSATION_STATES.SPEAKING) {
+        restartListening();
+      }
     } catch (err) {
       if (destroyed) return;
       if (err.name === 'AbortError') return; // Cancelled by new request

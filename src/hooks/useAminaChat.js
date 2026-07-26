@@ -241,6 +241,7 @@ export function useVoiceConversation() {
       onError: (err) => {
         console.error('[Voice] STT error:', err);
         if (err.includes('permission')) setMicPermission('denied');
+        setError(`Voice recognition error: ${err}`);
       },
     }, { language });
   }, [language]);
