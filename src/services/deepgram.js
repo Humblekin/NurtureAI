@@ -168,7 +168,7 @@ function tryWebSocketSTT(stream, callbacks, options) {
  */
 function startRestSTT(stream, callbacks, options) {
   const sttLanguage = options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US';
-  const SEGMENT_MS = 3000; // 3-second audio segments
+  const SEGMENT_MS = 3000;
   let stopped = false;
   let recorder = null;
   let isRecording = false;
@@ -182,36 +182,48 @@ function startRestSTT(stream, callbacks, options) {
     : 'audio/webm';
 
   async function sendSegment(blob) {
-    if (stopped || blob.size < 100) return; // skip empty/tiny blobs
+    if (stopped) return;
+    if (blob.size < 50) {
+      console.log('[STT] 📡 Segment too small (' + blob.size + ' bytes), skipping');
+      return;
+    }
     try {
-      console.log('[STT] 📡 Sending audio segment:', blob.size, 'bytes');
+      console.log('[STT] 📡 Sending segment:', blob.size, 'bytes');
+      callbacks.onInterim?.('Processing speech...');
+
       const params = new URLSearchParams({
         model: 'nova-2',
         language: sttLanguage,
         smart_format: 'true',
-        detect_language: 'true',
       });
       const response = await fetch(`${DEEPGRAM_REST_URL}/v1/listen?${params.toString()}`, {
         method: 'POST',
         headers: {
           Authorization: `Token ${DEEPGRAM_API_KEY}`,
-          'Content-Type': mimeType,
+          'Content-Type': 'audio/webm',
         },
         body: blob,
       });
       if (!response.ok) {
         const errText = await response.text();
-        console.error('[STT] ❌ REST STT error:', response.status, errText);
+        const errMsg = `Deepgram error ${response.status}: ${errText}`;
+        console.error('[STT] ❌', errMsg);
+        callbacks.onError?.(errMsg);
         return;
       }
       const result = await response.json();
+      console.log('[STT] 📡 REST response:', JSON.stringify(result).substring(0, 200));
       const transcript = result.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim();
       if (transcript) {
         console.log('[STT] ✅ Final transcript:', transcript);
         callbacks.onFinal?.(transcript);
+      } else {
+        console.log('[STT] 📡 No speech detected in segment');
       }
     } catch (err) {
-      console.error('[STT] ❌ REST STT fetch error:', err);
+      const errMsg = 'REST STT failed: ' + err.message;
+      console.error('[STT] ❌', errMsg);
+      callbacks.onError?.(errMsg);
     }
   }
 
@@ -224,12 +236,18 @@ function startRestSTT(stream, callbacks, options) {
       recorder = new MediaRecorder(stream, { mimeType });
     } catch (err) {
       console.error('[STT] ❌ MediaRecorder creation failed:', err);
-      callbacks.onError?.('Microphone access failed');
+      callbacks.onError?.('Microphone access failed: ' + err.message);
       return;
     }
 
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) chunks.push(e.data);
+    };
+
+    recorder.onerror = (e) => {
+      console.error('[STT] ❌ MediaRecorder error:', e.error);
+      callbacks.onError?.('Recording error: ' + (e.error?.message || 'unknown'));
+      isRecording = false;
     };
 
     recorder.onstop = async () => {
@@ -239,14 +257,13 @@ function startRestSTT(stream, callbacks, options) {
         const blob = new Blob(chunks, { type: mimeType });
         await sendSegment(blob);
       }
-      // Immediately start next segment
       if (!stopped) startRecording();
     };
 
     recorder.start();
+    callbacks.onInterim?.('Listening...');
     console.log('[STT] 🎙️ REST mode: recording segment...');
 
-    // Stop and send after SEGMENT_MS
     setTimeout(() => {
       if (recorder && recorder.state === 'recording') {
         recorder.stop();
@@ -254,7 +271,6 @@ function startRestSTT(stream, callbacks, options) {
     }, SEGMENT_MS);
   }
 
-  // Start the first segment
   startRecording();
 
   return {

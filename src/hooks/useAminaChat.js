@@ -228,15 +228,22 @@ export function useVoiceConversation() {
   }, []);
 
   // ---- Start Deepgram listening ----
-  const startListening = useCallback(() => {
+  const startListening = useCallback(async () => {
     console.log('[Hook] 🎤 startListening called, stream:', !!streamRef.current, 'deepgram:', isDeepgramConfigured());
     if (!streamRef.current || !isDeepgramConfigured()) {
       console.warn('[Hook] ⚠️ Cannot start listening: stream or deepgram not ready');
       return;
     }
+
+    // Stop any previous STT session
+    if (sttRef.current) {
+      try { sttRef.current.stop(); } catch {}
+      sttRef.current = null;
+    }
+
     setTranscript('');
 
-    sttRef.current = startStreamingSTT(streamRef.current, {
+    const sttHandle = await startStreamingSTT(streamRef.current, {
       onInterim: (text) => setTranscript(text),
       onFinal: (text) => {
         console.log('[Hook] ✅ onFinal received:', text);
@@ -249,7 +256,8 @@ export function useVoiceConversation() {
         setError(`Voice recognition error: ${err}`);
       },
     }, { language });
-    console.log('[Hook] 🎤 startStreamingSTT returned:', !!sttRef.current);
+    sttRef.current = sttHandle;
+    console.log('[Hook] 🎤 STT started, handle:', !!sttHandle);
   }, [language]);
 
   const stopListening = useCallback(() => {
