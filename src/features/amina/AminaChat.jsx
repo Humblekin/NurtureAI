@@ -66,25 +66,41 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
 
   const [diag, setDiag] = useState(null);
 
-  // Diagnostic: test Deepgram API key on mount
+  // Diagnostic: test Deepgram API key + WebSocket connectivity on mount
   useEffect(() => {
     const key = import.meta.env.VITE_DEEPGRAM_API_KEY;
     if (!key) {
       setDiag({ ok: false, msg: 'VITE_DEEPGRAM_API_KEY is not set in your .env file' });
       return;
     }
-    fetch('https://api.deepgram.com/v1/projects', {
-      headers: { Authorization: 'Token ' + key },
+
+    // Test 1: REST API (TTS endpoint has CORS headers)
+    fetch('https://api.deepgram.com/v1/speak?model=aura-asteria-en', {
+      method: 'POST',
+      headers: { Authorization: 'Token ' + key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: ' ' }),
     }).then(r => {
-      if (r.ok) {
-        setDiag({ ok: true, msg: 'Deepgram API key is valid' });
-      } else {
-        r.text().then(t => {
-          setDiag({ ok: false, msg: 'Deepgram API key rejected (' + r.status + '): ' + t });
-        });
+      if (!r.ok) {
+        return r.text().then(t => setDiag({ ok: false, msg: 'API key rejected (' + r.status + '): ' + t }));
       }
+      // API key works — test WebSocket
+      setDiag({ ok: true, msg: 'API key valid, testing WebSocket...' });
+
+      const ws = new WebSocket('wss://api.deepgram.com/v1/listen?token=' + key + '&model=nova-2&language=en-US&encoding=opus&sample_rate=48000');
+      ws.onopen = () => {
+        setDiag({ ok: true, msg: 'Everything ready — microphone should work' });
+        ws.close();
+      };
+      ws.onerror = () => {
+        setDiag({ ok: false, msg: 'API key works but WebSocket blocked — your network may be blocking secure WebSocket connections. Try switching WiFi/mobile data.' });
+      };
+      ws.onclose = (e) => {
+        if (e.code !== 1000 && e.code !== 1005) {
+          setDiag({ ok: false, msg: 'WebSocket closed (code ' + e.code + ') — ' + (e.code === 1006 ? 'connection lost, check internet' : 'check Deepgram account') });
+        }
+      };
     }).catch(e => {
-      setDiag({ ok: false, msg: 'Cannot reach Deepgram API: ' + e.message });
+      setDiag({ ok: false, msg: 'Cannot reach Deepgram at all — check your internet connection. Error: ' + e.message });
     });
   }, []);
 
@@ -164,9 +180,12 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
       )}
 
       {/* API Key diagnostic */}
-      {deepgramConfigured && diag && !diag.ok && (
-        <div className={styles.warningBanner} style={{ background: 'var(--color-danger-50, #fff5f5)', borderColor: 'var(--color-danger-200, #fecaca)' }}>
-          <p><strong>Voice connection failed:</strong> {diag.msg}</p>
+      {deepgramConfigured && diag && (
+        <div className={styles.warningBanner} style={{
+          background: diag.ok ? 'var(--color-success-50, #f0fdf4)' : 'var(--color-danger-50, #fff5f5)',
+          borderColor: diag.ok ? 'var(--color-success-200, #bbf7d0)' : 'var(--color-danger-200, #fecaca)',
+        }}>
+          <p style={{ margin: 0, fontSize: '13px' }}>{diag.ok ? '✅' : '❌'} {diag.msg}</p>
         </div>
       )}
 
