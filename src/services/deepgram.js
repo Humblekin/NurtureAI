@@ -1,11 +1,10 @@
 /**
- * Real-time STT (WebSocket with REST fallback) + TTS (REST API).
- * Falls back to chunked REST upload when WebSocket is blocked by carrier.
+ * Real-time STT (REST chunked upload) + TTS (REST API).
+ * Uses chunked HTTP POST for speech-to-text — works on all networks.
  */
 
 const DEEPGRAM_API_KEY = import.meta.env.VITE_DEEPGRAM_API_KEY;
 const DEEPGRAM_REST_URL = 'https://api.deepgram.com';
-const DEEPGRAM_WS_URL = 'wss://api.deepgram.com/v1/listen';
 
 // ---- Helpers ----
 
@@ -32,135 +31,6 @@ export function isDeepgramConfigured() {
 }
 
 // ---- Speech-to-Text ----
-
-/**
- * Attempt WebSocket STT. Returns a promise that resolves { ok: true, stop }
- * if WebSocket connects, or { ok: false } if it fails (carrier block, etc).
- */
-function tryWebSocketSTT(stream, callbacks, options) {
-  return new Promise((resolve) => {
-    const sttLanguage = options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US';
-    const params = new URLSearchParams({
-      token: DEEPGRAM_API_KEY,
-      model: 'nova-2',
-      language: sttLanguage,
-      smart_format: 'true',
-      interim_results: 'true',
-      utterance_end_ms: '1000',
-      vad_events: 'true',
-      encoding: 'webm',
-      sample_rate: '48000',
-    });
-
-    const wsUrl = `${DEEPGRAM_WS_URL}?${params.toString()}`;
-    console.log('[STT] 🔌 Trying WebSocket...');
-
-    const ws = new WebSocket(wsUrl);
-    ws.binaryType = 'arraybuffer';
-    let stopped = false;
-    let connected = false;
-    let chunkCount = 0;
-
-    const connectTimeout = setTimeout(() => {
-      if (!connected) {
-        console.warn('[STT] ⚠️ WebSocket connect timeout — carrier may be blocking WSS');
-        try { ws.close(); } catch {}
-        resolve({ ok: false });
-      }
-    }, 5000);
-
-    ws.onopen = () => {
-      connected = true;
-      clearTimeout(connectTimeout);
-      console.log('[STT] ✅ WebSocket connected');
-      ws.send(JSON.stringify({
-        type: 'Configure',
-        processing: {
-          interim_results: true,
-          utterance_end_ms: 1000,
-          vad_events: true,
-          smart_format: true,
-        },
-      }));
-    };
-
-    ws.onerror = () => {
-      if (!connected) {
-        clearTimeout(connectTimeout);
-        resolve({ ok: false });
-      }
-    };
-
-    ws.onclose = (event) => {
-      if (!connected) {
-        clearTimeout(connectTimeout);
-        resolve({ ok: false });
-        return;
-      }
-      console.log('[STT] 🔌 WebSocket closed: code=' + event.code);
-      if (!stopped && event.code !== 1000) {
-        let msg = 'Voice connection lost';
-        if (event.code === 1006) msg = 'Connection lost — check your internet';
-        else if (event.code === 1002) msg = 'Invalid API key';
-        else if (event.code === 1008) msg = 'API key rejected — check Deepgram plan';
-        else msg = 'Voice disconnected (code ' + event.code + ')';
-        if (event.reason) msg += ': ' + event.reason;
-        callbacks.onError?.(msg);
-      }
-    };
-
-    ws.onmessage = (event) => {
-      if (stopped) return;
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'Results') {
-          const transcript = msg.channel?.alternatives?.[0]?.transcript?.trim();
-          if (msg.is_final && transcript) {
-            console.log('[STT] ✅ Final:', transcript);
-            callbacks.onFinal?.(transcript);
-          } else if (transcript) {
-            callbacks.onInterim?.(transcript);
-          }
-        }
-      } catch { /* ignore */ }
-    };
-
-    let recorder = null;
-    try {
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
-      recorder = new MediaRecorder(stream, { mimeType });
-      recorder.ondataavailable = async (e) => {
-        if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-          const buf = await e.data.arrayBuffer();
-          chunkCount++;
-          ws.send(buf);
-        }
-      };
-      recorder.start(100);
-    } catch (err) {
-      console.error('[STT] ❌ MediaRecorder error:', err);
-      clearTimeout(connectTimeout);
-      resolve({ ok: false });
-      return;
-    }
-
-    resolve({
-      ok: true,
-      stop: () => {
-        stopped = true;
-        console.log('[STT] 🛑 Stopping WebSocket STT, chunks:', chunkCount);
-        if (recorder && recorder.state !== 'inactive') {
-          try { recorder.stop(); } catch {}
-        }
-        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-          ws.close();
-        }
-      },
-    });
-  });
-}
 
 /**
  * REST-based STT fallback. Records audio in segments, sends via HTTP POST.

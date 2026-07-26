@@ -66,7 +66,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
 
   const [diag, setDiag] = useState(null);
 
-  // Diagnostic: test Deepgram API key + WebSocket connectivity on mount
+  // Diagnostic: validate Deepgram API key on mount
   useEffect(() => {
     const key = import.meta.env.VITE_DEEPGRAM_API_KEY;
     if (!key) {
@@ -74,7 +74,6 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
       return;
     }
 
-    // Test 1: REST API (TTS endpoint has CORS headers)
     fetch('https://api.deepgram.com/v1/speak?model=aura-asteria-en', {
       method: 'POST',
       headers: { Authorization: 'Token ' + key, 'Content-Type': 'application/json' },
@@ -83,24 +82,9 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
       if (!r.ok) {
         return r.text().then(t => setDiag({ ok: false, msg: 'API key rejected (' + r.status + '): ' + t }));
       }
-      // API key works — test WebSocket
-      setDiag({ ok: true, msg: 'API key valid, testing WebSocket...' });
-
-      const ws = new WebSocket('wss://api.deepgram.com/v1/listen?token=' + key + '&model=nova-2&language=en-US&encoding=opus&sample_rate=48000');
-      ws.onopen = () => {
-        setDiag({ ok: true, msg: 'Everything ready — microphone should work' });
-        ws.close();
-      };
-      ws.onerror = () => {
-        setDiag({ ok: true, msg: 'API key valid. WebSocket blocked by network — will use HTTP fallback for voice (works fine)' });
-      };
-      ws.onclose = (e) => {
-        if (e.code !== 1000 && e.code !== 1005) {
-          setDiag({ ok: true, msg: 'API key valid. WebSocket blocked (code ' + e.code + ') — will use HTTP fallback for voice' });
-        }
-      };
+      setDiag({ ok: true, msg: 'Voice ready — API key valid' });
     }).catch(e => {
-      setDiag({ ok: false, msg: 'Cannot reach Deepgram at all — check your internet connection. Error: ' + e.message });
+      setDiag({ ok: false, msg: 'Cannot reach Deepgram — check your internet connection. Error: ' + e.message });
     });
   }, []);
 
