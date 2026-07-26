@@ -11,15 +11,23 @@ const DEEPGRAM_REST_URL = 'https://api.deepgram.com';
 let audioUnlocked = false;
 
 export function unlockAudio() {
-  if (audioUnlocked) return;
   try {
-    const ctx = getAudioContext();
-    const buffer = ctx.createBuffer(1, 1, 22050);
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(ctx.destination);
-    source.start(0);
-    audioUnlocked = true;
+    // Create or reuse AudioContext (must be created during user gesture on mobile)
+    if (!audioCtx || audioCtx.state === 'closed') {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+    // Play silent buffer to unlock audio system
+    if (!audioUnlocked) {
+      const buffer = audioCtx.createBuffer(1, 1, 22050);
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioCtx.destination);
+      source.start(0);
+      audioUnlocked = true;
+    }
   } catch (e) {
     console.warn('[Audio] Unlock failed:', e);
   }
@@ -187,12 +195,12 @@ let audioCtx = null;
 let currentSource = null;
 let currentAbortController = null;
 
-function getAudioContext() {
+async function getAudioContext() {
   if (!audioCtx || audioCtx.state === 'closed') {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
   if (audioCtx.state === 'suspended') {
-    audioCtx.resume();
+    await audioCtx.resume();
   }
   return audioCtx;
 }
@@ -216,9 +224,9 @@ function chunkText(text, maxLen = TTS_MAX_CHUNK) {
   return chunks.filter(Boolean);
 }
 
-function playBuffer(buffer, abortSignal) {
+async function playBuffer(buffer, abortSignal) {
+  const ctx = await getAudioContext();
   return new Promise((resolve, reject) => {
-    const ctx = getAudioContext();
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(ctx.destination);
@@ -283,7 +291,7 @@ export async function speak(text, options = {}) {
       }
 
       const arrayBuffer = await response.arrayBuffer();
-      const ctx = getAudioContext();
+      const ctx = await getAudioContext();
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
 
       console.log('[TTS] 🔊 Playing chunk, duration:', audioBuffer.duration.toFixed(1) + 's');

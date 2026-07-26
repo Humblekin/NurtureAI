@@ -208,9 +208,8 @@ export function createConversationManager(deps) {
       // from firing immediately (isListening && isSpeaking would be true)
       stopListening();
 
-      // Transition to speaking
-      setState(CONVERSATION_STATES.SPEAKING);
-      console.log('[Conversation] 🔊 Speaking response...');
+      // Transition to speaking when audio actually starts (set in onSpeechStarted)
+      console.log('[Conversation] 🔊 About to speak response...');
 
       try {
         await speakText(response, aiAbortController.signal);
@@ -226,9 +225,9 @@ export function createConversationManager(deps) {
       if (destroyed) return;
 
       // onSpeechEnded() already calls restartListening() when TTS finishes.
-      // Only restart here as a fallback if state is still SPEAKING
+      // Only restart here as a fallback if we're still stuck in PROCESSING/SPEAKING
       // (e.g. speakText threw before onSpeechEnd could fire).
-      if (state === CONVERSATION_STATES.SPEAKING) {
+      if (state === CONVERSATION_STATES.PROCESSING || state === CONVERSATION_STATES.SPEAKING) {
         restartListening();
       }
     } catch (err) {
@@ -384,8 +383,7 @@ export function createConversationManager(deps) {
 
       forceState(CONVERSATION_STATES.IDLE);
 
-      // Speak personalized greeting
-      forceState(CONVERSATION_STATES.GREETING);
+      // Generate greeting text first
       const welcome = await generatePersonalizedGreeting();
       setMessages([{ role: 'assistant', content: welcome }]);
 
@@ -395,6 +393,8 @@ export function createConversationManager(deps) {
         pregnancyWeek: healthContext.match(/Week (\d+)/)?.[1] ? parseInt(healthContext.match(/Week (\d+)/)[1]) : null,
       });
 
+      // Set GREETING state right before audio starts (minimizes animation delay)
+      forceState(CONVERSATION_STATES.GREETING);
       try {
         aiAbortController = new AbortController();
         await speakText(welcome, aiAbortController.signal);
@@ -504,8 +504,11 @@ export function createConversationManager(deps) {
      * Called by hook when speech playback starts (for avatar sync).
      */
     onSpeechStarted() {
-      // Avatar already in SPEAKING state from setState — this is for any
-      // additional sync needs (e.g., lip sync timing)
+      // Set speaking state when audio actually starts playing
+      // (not before, to avoid animation-audio desync)
+      if (state === CONVERSATION_STATES.PROCESSING || state === CONVERSATION_STATES.GREETING) {
+        setState(CONVERSATION_STATES.SPEAKING);
+      }
     },
 
     /**
