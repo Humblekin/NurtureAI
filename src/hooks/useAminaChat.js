@@ -228,7 +228,7 @@ export function useVoiceConversation() {
   }, []);
 
   // ---- Start Deepgram listening ----
-  const startListening = useCallback(async () => {
+  const startListening = useCallback(() => {
     console.log('[Hook] 🎤 startListening called, stream:', !!streamRef.current, 'deepgram:', isDeepgramConfigured());
     if (!streamRef.current || !isDeepgramConfigured()) {
       console.warn('[Hook] ⚠️ Cannot start listening: stream or deepgram not ready');
@@ -243,7 +243,7 @@ export function useVoiceConversation() {
 
     setTranscript('');
 
-    const sttHandle = await startStreamingSTT(streamRef.current, {
+    const sttHandle = startStreamingSTT(streamRef.current, {
       onInterim: (text) => setTranscript(text),
       onFinal: (text) => {
         console.log('[Hook] ✅ onFinal received:', text);

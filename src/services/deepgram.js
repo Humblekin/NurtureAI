@@ -285,9 +285,10 @@ function startRestSTT(stream, callbacks, options) {
 }
 
 /**
- * Start streaming STT. Tries WebSocket first, falls back to REST if blocked.
+ * Start streaming STT (synchronous — REST mode).
+ * REST works on all networks including those blocking WebSocket.
  */
-export async function startStreamingSTT(stream, callbacks, options = {}) {
+export function startStreamingSTT(stream, callbacks, options = {}) {
   if (!DEEPGRAM_API_KEY) {
     console.error('[STT] ❌ Deepgram API key not configured');
     callbacks.onError?.('Deepgram API key not configured');
@@ -305,17 +306,8 @@ export async function startStreamingSTT(stream, callbacks, options = {}) {
     return { stop: () => {} };
   }
 
-  // Try WebSocket first
-  const wsResult = await tryWebSocketSTT(stream, callbacks, options);
-
-  if (wsResult.ok) {
-    console.log('[STT] ✅ Using WebSocket mode');
-    callbacks.onMode?.('websocket');
-    return { stop: wsResult.stop };
-  }
-
-  // WebSocket failed — fall back to REST
-  console.log('[STT] ⚠️ WebSocket failed, falling back to REST mode');
+  // Always use REST — works on all networks (mobile carriers, firewalls, etc.)
+  console.log('[STT] 📡 Starting REST STT mode');
   callbacks.onMode?.('rest');
   return startRestSTT(stream, callbacks, options);
 }
