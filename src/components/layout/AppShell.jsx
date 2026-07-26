@@ -9,6 +9,7 @@ import BottomNav from './BottomNav';
 import OfflineBanner from '../ui/OfflineBanner';
 import Toast from '../ui/Toast';
 import Spinner from '../ui/Spinner';
+import FloatingAminaButton from '../../features/amina/FloatingAminaButton';
 import styles from './AppShell.module.css';
 
 export const AppShell = () => {
@@ -65,6 +66,7 @@ export const AppShell = () => {
         </main>
       </div>
       <BottomNav />
+      {location.pathname.startsWith('/mother') && <FloatingAminaButton />}
       <Toast />
     </div>
   );

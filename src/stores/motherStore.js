@@ -150,6 +150,16 @@ const useMotherStore = create((set, get) => ({
       return [];
     }
   },
+
+  /**
+   * Reset store state — called on logout to prevent data leaking between users.
+   */
+  reset: () => set({
+    mothers: [],
+    currentMother: null,
+    isLoading: false,
+    error: null,
+  }),
 }));
 
 export default useMotherStore;

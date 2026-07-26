@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Baby, FileText, Syringe, TrendingUp, Plus, Share2, ExternalLink, Pencil, Trash2 } from 'lucide-react';
 import useChildStore from '../../stores/childStore';
+import useMotherStore from '../../stores/motherStore';
 import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
@@ -16,6 +17,7 @@ import GrowthForm from './GrowthForm';
 export const ChildProfile = () => {
   const { id } = useParams();
   const { profile } = useAuthStore();
+  const { currentMother, fetchMotherByProfileId } = useMotherStore();
   const addToast = useAppStore((state) => state.addToast);
   const { 
     children, 
@@ -38,6 +40,13 @@ export const ChildProfile = () => {
   const childVax = vaccinations[id] || [];
   const childGrowth = growthRecords[id] || [];
 
+  // Fetch mother record for ownership check
+  useEffect(() => {
+    if (profile?.role === 'mother' && profile?.id) {
+      fetchMotherByProfileId(profile.id);
+    }
+  }, [profile?.role, profile?.id, fetchMotherByProfileId]);
+
   useEffect(() => {
     if (id) {
       Promise.all([
@@ -47,10 +56,14 @@ export const ChildProfile = () => {
     }
   }, [id, fetchVaccinations, fetchGrowthRecords]);
 
-  if (!child) {
+  // Mother ownership guard
+  const isMotherUser = profile?.role === 'mother';
+  const isChildOwned = !isMotherUser || (child && currentMother && child.mother_id === currentMother.id);
+
+  if (!child || !isChildOwned) {
     return (
       <div className="page-content text-center">
-        <h2 className="heading-3">Child record not found</h2>
+        <h2 className="heading-3">{!child ? 'Child record not found' : 'Access denied'}</h2>
         <Link to={`/${profile?.role === 'mother' ? 'mother' : profile?.role}/children`}>
           <Button variant="secondary" style={{ marginTop: 'var(--space-4)' }}>Back to list</Button>
         </Link>
@@ -81,10 +94,10 @@ export const ChildProfile = () => {
             </div>
           </div>
           <div className="flex gap-2">
-            <Link to={`/children/${child.id}/edit`}>
-              <Button variant="outline" leftIcon={<FileText size={18} />}>Edit Record</Button>
+            <Link to={`/${profile.role === 'mother' ? 'mother' : profile.role === 'chw' ? 'chw' : 'admin'}/children/${child.id}/edit`}>
+              <Button variant="outline" leftIcon={<Pencil size={18} />}>Edit Record</Button>
             </Link>
-            <Link to={`/referrals/new?patientId=${child.id}&patientType=child&motherId=${child.mother_id || ''}`}>
+            <Link to={`/${profile.role === 'mother' ? 'mother' : profile.role === 'chw' ? 'chw' : 'admin'}/referrals/new?patientId=${child.id}&patientType=child&motherId=${child.mother_id || ''}`}>
               <Button variant="outline" leftIcon={<Share2 size={18} />}>Refer</Button>
             </Link>
           </div>

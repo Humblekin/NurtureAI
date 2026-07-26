@@ -13,13 +13,45 @@ let isSyncing = false;
 let syncListeners = [];
 
 const LOCAL_ONLY_FIELDS = ['synced_at', 'deleted_at'];
+const MAX_SYNC_ATTEMPTS = 5;
 
-function stripLocalFields(data) {
+/**
+ * Columns that exist in Supabase for each table.
+ * Anything not in this list is stripped before upsert to prevent 400 errors.
+ */
+const SUPABASE_COLUMNS = {
+  mothers: ['id', 'profile_id', 'full_name', 'phone', 'date_of_birth', 'community', 'blood_group', 'medical_history', 'risk_level', 'assigned_worker_id', 'edd', 'created_at', 'updated_at'],
+  pregnancies: ['id', 'mother_id', 'status', 'risk_level', 'lmp', 'edd', 'gravida', 'para', 'notes', 'created_at', 'updated_at'],
+  antenatal_visits: ['id', 'pregnancy_id', 'visit_date', 'visit_number', 'gestational_age', 'weight', 'blood_pressure', 'fundal_height', 'fetal_heart_rate', 'symptoms', 'notes', 'assessed_risk_level', 'created_at', 'updated_at'],
+  children: ['id', 'mother_id', 'full_name', 'date_of_birth', 'gender', 'birth_weight', 'birth_facility', 'notes', 'created_at', 'updated_at'],
+  vaccinations: ['id', 'child_id', 'vaccine_name', 'date_given', 'dose', 'batch_number', 'administered_by', 'notes', 'created_at', 'updated_at'],
+  growth_records: ['id', 'child_id', 'recorded_date', 'weight_kg', 'height_cm', 'head_circumference_cm', 'muac_cm', 'notes', 'created_at', 'updated_at'],
+  visits: ['id', 'worker_id', 'patient_id', 'patient_type', 'visit_type', 'visit_date', 'notes', 'findings', 'actions_taken', 'created_at', 'updated_at'],
+  referrals: ['id', 'patient_id', 'patient_type', 'from_facility_id', 'to_facility_id', 'from_worker_id', 'urgency', 'status', 'reason', 'notes', 'created_at', 'updated_at'],
+  profiles: ['id', 'full_name', 'phone', 'role', 'facility_id', 'community', 'avatar_url', 'created_at', 'updated_at'],
+  notifications: ['id', 'type', 'priority', 'title', 'message', 'read', 'patient_id', 'created_at'],
+  milestones: ['id', 'child_id', 'milestone_type', 'achieved_date', 'notes', 'created_at', 'updated_at'],
+};
+
+function stripLocalFields(data, tableName) {
   if (!data || typeof data !== 'object') return data;
   const clean = { ...data };
+
+  // Remove local-only fields
   for (const field of LOCAL_ONLY_FIELDS) {
     delete clean[field];
   }
+
+  // If we know the table schema, also strip unknown columns
+  const allowedColumns = SUPABASE_COLUMNS[tableName];
+  if (allowedColumns) {
+    for (const key of Object.keys(clean)) {
+      if (!allowedColumns.includes(key)) {
+        delete clean[key];
+      }
+    }
+  }
+
   return clean;
 }
 
@@ -53,9 +85,16 @@ export async function processSyncQueue() {
     let errorCount = 0;
 
     for (const entry of pending) {
+      // Skip entries that have exceeded max retries (likely RLS-blocked)
+      if ((entry.attempts || 0) >= MAX_SYNC_ATTEMPTS) {
+        console.warn(`[Sync] Skipping ${entry.table_name}/${entry.record_id} — max retries exceeded (${entry.last_error})`);
+        await removeSyncEntry(entry.id);
+        continue;
+      }
+
       try {
         const rawData = JSON.parse(entry.data);
-        const data = stripLocalFields(rawData);
+        const data = stripLocalFields(rawData, entry.table_name);
         let result;
 
         switch (entry.operation) {
@@ -154,15 +193,28 @@ export async function pullFromServer(tableName, lastSyncedAt) {
 
 /**
  * Set up automatic sync when network comes online.
+ * Includes periodic sync every 30 seconds to catch any missed queue entries.
  */
+let syncInterval = null;
+
 export function setupAutoSync() {
   window.addEventListener('online', () => {
     console.log('NurtureAI: Network restored, starting sync...');
-    processSyncQueue();
+    processSyncQueue().catch(err => console.error('Sync on reconnect failed:', err));
   });
+
+  // Periodic sync every 30 seconds (catches missed entries)
+  if (syncInterval) clearInterval(syncInterval);
+  syncInterval = setInterval(() => {
+    if (navigator.onLine && isSupabaseConfigured()) {
+      processSyncQueue().catch(err => console.error('Periodic sync failed:', err));
+    }
+  }, 30000);
 
   // Initial sync if online
   if (navigator.onLine && isSupabaseConfigured()) {
-    setTimeout(() => processSyncQueue(), 2000);
+    setTimeout(() => {
+      processSyncQueue().catch(err => console.error('Initial sync failed:', err));
+    }, 2000);
   }
 }

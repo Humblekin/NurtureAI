@@ -1,0 +1,186 @@
+.page {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(160deg, #f0fdf4 0%, #e6fcf5 30%, #f3f0ff 70%, #fff9e6 100%);
+  padding: var(--space-6);
+}
+
+.container {
+  width: 100%;
+  max-width: 520px;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-6);
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.backBtn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.backBtn:hover {
+  background: var(--color-gray-100);
+  color: var(--text-primary);
+}
+
+.headerCenter {
+  flex: 1;
+}
+
+.headerTitle {
+  font-size: var(--text-base);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.headerSubtitle {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  margin: var(--space-0) 0 0 0;
+}
+
+/* Progress Ring */
+.progressRing {
+  position: relative;
+  width: 40px;
+  height: 40px;
+}
+
+.progressRing svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.progressText {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-xs);
+  font-weight: var(--font-semibold);
+  color: var(--color-primary-600);
+}
+
+/* Progress Bar */
+.progressBar {
+  height: 3px;
+  background: var(--color-gray-200);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: var(--space-4);
+}
+
+.progressFill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-primary-500), var(--color-primary-400));
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* Step Dots */
+.stepDots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
+.stepDot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-gray-100);
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-base);
+}
+
+.stepDotActive {
+  background: var(--color-primary-500);
+  color: white;
+  box-shadow: 0 0 0 3px rgba(32, 201, 151, 0.2);
+}
+
+.stepDotDone {
+  background: var(--color-primary-100);
+  color: var(--color-primary-600);
+}
+
+/* Form Section */
+.formSection {
+  margin-bottom: var(--space-6);
+}
+
+.stepTitle {
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+  margin: 0 0 var(--space-5) 0;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Error */
+.errorMessage {
+  background: var(--color-error-50);
+  color: var(--color-error-700);
+  border: 1px solid var(--color-error-200);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-4);
+  text-align: center;
+}
+
+/* Navigation */
+.nav {
+  display: flex;
+  gap: var(--space-3);
+}
+
+@media (max-width: 480px) {
+  .container {
+    padding: var(--space-4);
+  }
+}
+
+[data-theme="dark"] .page {
+  background: linear-gradient(160deg, #0f1117 0%, #141720 30%, #1a1530 70%, #1a1510 100%);
+}
+
+[data-theme="dark"] .container {
+  background: rgba(30, 33, 48, 0.7);
+  border-color: rgba(255, 255, 255, 0.08);
+}

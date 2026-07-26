@@ -1,12 +1,15 @@
-import { useEffect } from 'react';
-import { Heart, Calendar, Baby, MessageCircle, AlertTriangle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Heart, Calendar, Baby, MessageCircle, Map } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import useAuthStore from '../../stores/authStore';
+import useMotherStore from '../../stores/motherStore';
 import usePregnancyStore from '../../stores/pregnancyStore';
 import useChildStore from '../../stores/childStore';
-import { Card, CardHeader, CardBody } from '../../components/ui/Card';
+import { Card, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import { Link } from 'react-router-dom';
+import PregnancyChoiceModal from '../pregnancies/PregnancyChoiceModal';
 
 function calculateWeek(lastMenstrualDate) {
   if (!lastMenstrualDate) return null;
@@ -46,18 +49,25 @@ function hasVaccineDue(childId, vaccinations) {
 
 export const MotherDashboard = () => {
   const { profile } = useAuthStore();
+  const { fetchMotherByProfileId } = useMotherStore();
   const { activePregnancy, antenatalVisits, fetchPregnanciesByMotherId } = usePregnancyStore();
   const { children, vaccinations, fetchChildrenByMotherId } = useChildStore();
+  const navigate = useNavigate();
+  const [showPregnancyChoice, setShowPregnancyChoice] = useState(false);
 
   useEffect(() => {
     if (profile?.id) {
-      fetchPregnanciesByMotherId(profile.id);
-      fetchChildrenByMotherId(profile.id);
+      fetchMotherByProfileId(profile.id).then((mother) => {
+        if (mother) {
+          fetchPregnanciesByMotherId(mother.id);
+          fetchChildrenByMotherId(mother.id);
+        }
+      });
     }
-  }, [profile?.id, fetchPregnanciesByMotherId, fetchChildrenByMotherId]);
+  }, [profile?.id, fetchMotherByProfileId, fetchPregnanciesByMotherId, fetchChildrenByMotherId]);
 
-  const pregnancyWeek = activePregnancy?.last_menstrual_period
-    ? calculateWeek(activePregnancy.last_menstrual_period)
+  const pregnancyWeek = activePregnancy?.lmp
+    ? calculateWeek(activePregnancy.lmp)
     : null;
   const trimester = getTrimester(pregnancyWeek);
   const riskLevel = activePregnancy?.risk_level || 'low';
@@ -74,7 +84,9 @@ export const MotherDashboard = () => {
     <div className="page-content fade-in">
       <div className="flex-between" style={{ marginBottom: 'var(--space-6)' }}>
         <div>
-          <h1 className="heading-2">Hello, {profile?.full_name?.split(' ')[0] || 'Mother'}</h1>
+          <h1 className="heading-2">
+            How am I and my baby doing today, {profile?.full_name?.split(' ')[0] || 'Mother'}?
+          </h1>
           <p className="body-lg" style={{ color: 'var(--text-secondary)' }}>
             Here is your health summary for today.
           </p>
@@ -114,9 +126,9 @@ export const MotherDashboard = () => {
             <CardBody className="flex-col gap-4 items-center" style={{ color: 'var(--text-secondary)' }}>
               <Heart size={24} style={{ opacity: 0.5 }} />
               <span className="font-medium">No Active Pregnancy</span>
-              <Link to="/mother/pregnancy">
-                <Button size="sm" variant="outline">Register Pregnancy</Button>
-              </Link>
+              <Button size="sm" variant="outline" onClick={() => setShowPregnancyChoice(true)}>
+                Register Pregnancy
+              </Button>
             </CardBody>
           </Card>
         )}
@@ -169,6 +181,27 @@ export const MotherDashboard = () => {
         </Card>
       </div>
 
+      <Link to="/mother/timeline" style={{ textDecoration: 'none', display: 'block', marginBottom: 'var(--space-6)' }}>
+        <Card variant="accent" hoverable clickable>
+          <CardBody className="flex gap-4 items-center">
+            <div style={{
+              width: 56, height: 56, borderRadius: 'var(--radius-xl)',
+              background: 'linear-gradient(135deg, var(--color-primary-100), var(--color-accent-100))',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            }}>
+              <Map size={28} style={{ color: 'var(--color-primary-600)' }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <h3 className="heading-4" style={{ marginBottom: 'var(--space-1)' }}>My Health Journey</h3>
+              <p className="body-sm" style={{ color: 'var(--text-secondary)' }}>
+                View your complete pregnancy and child health timeline with milestones, visits, and AI insights.
+              </p>
+            </div>
+            <Badge variant="primary" solid size="sm">View</Badge>
+          </CardBody>
+        </Card>
+      </Link>
+
       <h2 className="heading-3" style={{ marginBottom: 'var(--space-4)' }}>My Children</h2>
       <div className="grid grid-2">
         {children?.length > 0 ? (
@@ -184,9 +217,9 @@ export const MotherDashboard = () => {
                     <Baby size={24} />
                   </div>
                   <div style={{ flex: 1 }}>
-                    <h3 className="heading-5">{child.name || 'Unnamed Child'}</h3>
+                    <h3 className="heading-5">{child.full_name || 'Unnamed Child'}</h3>
                     <p className="body-sm" style={{ color: 'var(--text-secondary)' }}>
-                      {calculateAge(child.date_of_birth)} • {getSexLabel(child.sex)}
+                      {calculateAge(child.date_of_birth)} • {getSexLabel(child.gender)}
                     </p>
                   </div>
                   <div>
@@ -217,6 +250,19 @@ export const MotherDashboard = () => {
           </Card>
         </Link>
       </div>
+
+      <PregnancyChoiceModal
+        isOpen={showPregnancyChoice}
+        onClose={() => setShowPregnancyChoice(false)}
+        onSelectForm={() => {
+          setShowPregnancyChoice(false);
+          navigate('/mother/pregnancy/new');
+        }}
+        onSelectAmina={() => {
+          setShowPregnancyChoice(false);
+          navigate('/mother/pregnancy/amina');
+        }}
+      />
     </div>
   );
 };

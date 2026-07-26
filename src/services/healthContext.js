@@ -1,4 +1,5 @@
 import db from '../lib/db';
+import { GHANA_EPI_SCHEDULE, findOverdueVaccine, findNextDueVaccine } from '../constants/vaccinationSchedule';
 
 /**
  * NurtureAI — Health Context Service
@@ -14,7 +15,7 @@ import db from '../lib/db';
 /**
  * Calculate pregnancy week from a start date (LMP or registration date).
  */
-function getPregnancyWeek(createdAt, edd) {
+function getPregnancyWeek(createdAt) {
   if (!createdAt) return null;
   const start = new Date(createdAt);
   const now = new Date();
@@ -22,21 +23,6 @@ function getPregnancyWeek(createdAt, edd) {
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
   const week = Math.floor(diffDays / 7);
   return Math.min(week, 42);
-}
-
-/**
- * Calculate age from date of birth.
- */
-function getAgeYears(dob) {
-  if (!dob) return null;
-  const birth = new Date(dob);
-  const now = new Date();
-  let age = now.getFullYear() - birth.getFullYear();
-  const monthDiff = now.getMonth() - birth.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birth.getDate())) {
-    age--;
-  }
-  return age;
 }
 
 /**
@@ -76,7 +62,8 @@ function fmt(dateStr) {
 
 /**
  * Build health context for a MOTHER user.
- * This is the richest context — includes pregnancy, children, vaccinations, growth, visits.
+ * This is the richest context — includes pregnancy, children, vaccinations, growth, visits,
+ * milestones, conversation history, and proactive health alerts.
  */
 async function buildMotherContext(profileId) {
   const context = { role: 'mother' };
@@ -92,6 +79,8 @@ async function buildMotherContext(profileId) {
     risk_level: mother.risk_level || 'low',
     phone: mother.phone || 'Not recorded',
     assigned_worker_id: mother.assigned_worker_id || null,
+    blood_group: mother.blood_group || 'Not recorded',
+    medical_history: mother.medical_history || 'None recorded',
     registered: fmt(mother.created_at),
   };
 
@@ -104,32 +93,51 @@ async function buildMotherContext(profileId) {
   const activePregnancy = pregnancies.find(p => p.status === 'active');
 
   if (activePregnancy) {
-    const week = getPregnancyWeek(activePregnancy.created_at, activePregnancy.edd);
+    const week = getPregnancyWeek(activePregnancy.lmp || activePregnancy.created_at);
     const ancVisits = await db.antenatal_visits
       .where('pregnancy_id').equals(activePregnancy.id)
       .filter(v => !v.deleted_at)
       .toArray();
 
     const sortedVisits = ancVisits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
+    const lastVisit = sortedVisits[0];
+    const daysSinceLastVisit = lastVisit ? daysSince(lastVisit.visit_date) : null;
+
+    // Calculate ANC adherence (WHO recommends at least 4 visits)
+    const recommendedAncCount = week <= 28 ? Math.ceil(week / 12) : Math.ceil(28 / 12) + Math.ceil((week - 28) / 6);
+    const ancAdherence = ancVisits.length > 0 ? Math.min(100, Math.round((ancVisits.length / Math.max(recommendedAncCount, 1)) * 100)) : 0;
 
     context.pregnancy = {
       status: 'active',
       week: week,
+      trimester: week <= 13 ? 1 : week <= 27 ? 2 : 3,
       edd: activePregnancy.edd ? fmt(activePregnancy.edd) : 'Unknown',
       risk_level: activePregnancy.risk_level || 'low',
       complications: activePregnancy.complications || 'None reported',
       blood_group: activePregnancy.blood_group || 'Not recorded',
+      gravida: activePregnancy.gravida || null,
+      para: activePregnancy.para || null,
       anc_visit_count: ancVisits.length,
-      last_anc_date: sortedVisits.length > 0 ? fmt(sortedVisits[0].visit_date) : 'No visits recorded',
-      last_anc_risk: sortedVisits.length > 0 ? sortedVisits[0].assessed_risk_level || 'Not assessed' : 'N/A',
+      anc_adherence_percent: ancAdherence,
+      recommended_anc_count: recommendedAncCount,
+      last_anc_date: lastVisit ? fmt(lastVisit.visit_date) : 'No visits recorded',
+      days_since_last_anc: daysSinceLastVisit,
+      last_anc_risk: lastVisit?.assessed_risk_level || 'Not assessed',
       anc_details: sortedVisits.slice(0, 5).map(v => ({
         date: fmt(v.visit_date),
         visit_number: v.visit_number,
         risk: v.assessed_risk_level || 'Not assessed',
         weight: v.weight_kg || 'N/A',
         blood_pressure: v.blood_pressure || 'N/A',
+        fundal_height: v.fundal_height_cm || 'N/A',
+        fetal_heart_rate: v.fetal_heart_rate || 'N/A',
         notes: v.clinical_notes || v.notes || null,
       })),
+      // Proactive alerts
+      overdue_anc: daysSinceLastVisit > 30 && week <= 28,
+      urgent_anc: daysSinceLastVisit > 14 && week > 28,
+      approaching_due_date: week >= 38,
+      past_due_date: week >= 40,
     };
   } else {
     context.pregnancy = { status: 'none active' };
@@ -142,6 +150,7 @@ async function buildMotherContext(profileId) {
       status: p.status,
       outcome: p.outcome || 'Not recorded',
       delivery_date: p.delivery_date ? fmt(p.delivery_date) : 'N/A',
+      complications: p.complications || null,
     }));
   }
 
@@ -155,7 +164,7 @@ async function buildMotherContext(profileId) {
     context.children = [];
 
     for (const child of children) {
-      const ageMonths = getChildAgeMonths(child.birth_date);
+      const ageMonths = getChildAgeMonths(child.date_of_birth || child.birth_date);
       const childVax = await db.vaccinations
         .where('child_id').equals(child.id)
         .filter(v => !v.deleted_at)
@@ -164,11 +173,25 @@ async function buildMotherContext(profileId) {
         .where('child_id').equals(child.id)
         .filter(g => !g.deleted_at)
         .toArray();
+      const childMilestones = await db.milestones
+        .where('child_id').equals(child.id)
+        .filter(m => !m.deleted_at)
+        .toArray();
 
       const sortedGrowth = childGrowth.sort((a, b) => new Date(a.recorded_date) - new Date(b.recorded_date));
       const latestGrowth = sortedGrowth.length > 0 ? sortedGrowth[sortedGrowth.length - 1] : null;
       const latestWeight = latestGrowth?.weight_kg || null;
       const latestHeight = latestGrowth?.height_cm || null;
+
+      // Calculate days since last growth check
+      const daysSinceGrowth = latestGrowth ? daysSince(latestGrowth.recorded_date) : null;
+      const maxGrowthDays = ageMonths <= 12 ? 30 : 90;
+      const growthOverdue = daysSinceGrowth !== null ? daysSinceGrowth > maxGrowthDays : ageMonths > 1;
+
+      // Check vaccination status against Ghana EPI schedule
+      const vaxNames = new Set(childVax.map(v => v.vaccine_name));
+      const overdueVax = findOverdueVaccine(ageMonths, vaxNames);
+      const nextDueVax = findNextDueVaccine(ageMonths, vaxNames);
 
       context.children.push({
         name: child.full_name,
@@ -183,8 +206,13 @@ async function buildMotherContext(profileId) {
         })),
         vaccination_count: childVax.length,
         growth_records_count: childGrowth.length,
-        last_growth_check: sortedGrowth.length > 0 ? fmt(sortedGrowth[sortedGrowth.length - 1].recorded_date) : 'No records',
-        days_since_growth_check: sortedGrowth.length > 0 ? daysSince(sortedGrowth[sortedGrowth.length - 1].recorded_date) : null,
+        last_growth_check: latestGrowth ? fmt(latestGrowth.recorded_date) : 'No records',
+        days_since_growth_check: daysSinceGrowth,
+        growth_overdue: growthOverdue,
+        overdue_vaccination: overdueVax ? overdueVax.description : null,
+        next_due_vaccination: nextDueVax ? `${nextDueVax.description} (at ${nextDueVax.ageMonths} months)` : null,
+        milestones_achieved: childMilestones.length,
+        feeding_method: child.feeding_method || 'Not recorded',
       });
     }
   }
@@ -197,11 +225,15 @@ async function buildMotherContext(profileId) {
 
   if (visits.length > 0) {
     const sortedVisits = visits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
+    const lastVisit = sortedVisits[0];
+    const daysSinceVisit = lastVisit ? daysSince(lastVisit.visit_date) : null;
+
     context.visit_history = {
       total: visits.length,
-      last_visit_date: fmt(sortedVisits[0].visit_date),
-      last_visit_type: sortedVisits[0].visit_type || 'Not specified',
-      last_visit_notes: sortedVisits[0].notes || sortedVisits[0].findings || null,
+      last_visit_date: fmt(lastVisit.visit_date),
+      last_visit_type: lastVisit.visit_type || 'Not specified',
+      days_since_last_visit: daysSinceVisit,
+      last_visit_notes: lastVisit.notes || lastVisit.findings || null,
       recent_visits: sortedVisits.slice(0, 3).map(v => ({
         date: fmt(v.visit_date),
         type: v.visit_type,
@@ -222,6 +254,7 @@ async function buildMotherContext(profileId) {
       status: r.status,
       reason: r.reason || r.notes || 'Not specified',
       date: fmt(r.created_at),
+      days_pending: daysSince(r.created_at),
     }));
   }
 
@@ -235,6 +268,59 @@ async function buildMotherContext(profileId) {
         facility_id: workerProfile.facility_id,
       };
     }
+  }
+
+  // 7. Recent AI conversation summaries (long-term memory)
+  const conversations = await db.ai_conversations
+    .where('user_id').equals(profileId)
+    .toArray();
+
+  if (conversations.length > 0) {
+    const sortedConversations = conversations
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    context.conversation_history = sortedConversations.slice(0, 5).map(c => ({
+      summary: c.summary || c.last_message || 'Previous conversation',
+      date: fmt(c.created_at),
+      topics: c.topics || [],
+    }));
+
+    context.total_conversations = conversations.length;
+    context.last_conversation_date = fmt(sortedConversations[0].created_at);
+  }
+
+  // 8. Generate proactive health alerts
+  const alerts = [];
+  if (context.pregnancy?.status === 'active') {
+    if (context.pregnancy.overdue_anc) {
+      alerts.push(`ANC VISIT OVERDUE: Last visit was ${context.pregnancy.days_since_last_anc} days ago (pregnancy week ${context.pregnancy.week}).`);
+    }
+    if (context.pregnancy.urgent_anc) {
+      alerts.push(`URGENT ANC NEEDED: Third trimester requires more frequent visits. Last ANC was ${context.pregnancy.days_since_last_anc} days ago.`);
+    }
+    if (context.pregnancy.approaching_due_date) {
+      alerts.push(`APPROACHING DUE DATE: Week ${context.pregnancy.week}. Delivery preparation discussion recommended.`);
+    }
+    if (context.pregnancy.past_due_date) {
+      alerts.push(`PAST DUE DATE: Week ${context.pregnancy.week}. Immediate medical consultation required.`);
+    }
+  }
+  if (context.children) {
+    for (const child of context.children) {
+      if (child.overdue_vaccination) {
+        alerts.push(`VACCINATION OVERDUE: ${child.name} (age ${child.age_months}mo) — ${child.overdue_vaccination}.`);
+      }
+      if (child.growth_overdue) {
+        alerts.push(`GROWTH CHECK OVERDUE: ${child.name} — last check was ${child.days_since_growth_check} days ago.`);
+      }
+    }
+  }
+  if (context.mother?.risk_level === 'high' || context.mother?.risk_level === 'critical') {
+    alerts.push(`HIGH RISK MOTHER: ${context.mother.name} is flagged as ${context.mother.risk_level} risk. Ensure regular follow-up.`);
+  }
+
+  if (alerts.length > 0) {
+    context.proactive_alerts = alerts;
   }
 
   return context;
@@ -400,7 +486,7 @@ async function buildOverviewContext(profileId, role) {
           return {
             mother_name: mother?.full_name || 'Unknown',
             risk: p.risk_level,
-            pregnancy_week: getPregnancyWeek(p.created_at, p.edd),
+            pregnancy_week: getPregnancyWeek(p.created_at),
           };
         })
     );
@@ -455,22 +541,31 @@ function formatContextForAI(ctx) {
       lines.push(`Name: ${ctx.mother.name}`);
       lines.push(`Community: ${ctx.mother.community}`);
       lines.push(`Risk Level: ${ctx.mother.risk_level}`);
+      lines.push(`Blood Group: ${ctx.mother.blood_group}`);
+      lines.push(`Medical History: ${ctx.mother.medical_history}`);
       lines.push(`Registered: ${ctx.mother.registered}`);
     }
 
     if (ctx.pregnancy?.status === 'active') {
       lines.push(`\n[CURRENT PREGNANCY]`);
-      lines.push(`Status: Active — Week ${ctx.pregnancy.week || 'unknown'}`);
+      lines.push(`Status: Active — Week ${ctx.pregnancy.week || 'unknown'} (Trimester ${ctx.pregnancy.trimester || '?'})`);
       lines.push(`Due Date: ${ctx.pregnancy.edd}`);
       lines.push(`Risk Level: ${ctx.pregnancy.risk_level}`);
       lines.push(`Blood Group: ${ctx.pregnancy.blood_group}`);
+      lines.push(`Gravida: ${ctx.pregnancy.gravida || 'N/A'} | Para: ${ctx.pregnancy.para || 'N/A'}`);
       lines.push(`Complications: ${ctx.pregnancy.complications}`);
-      lines.push(`ANC Visits Completed: ${ctx.pregnancy.anc_visit_count}`);
-      lines.push(`Last ANC Visit: ${ctx.pregnancy.last_anc_date} (Risk: ${ctx.pregnancy.last_anc_risk})`);
+      lines.push(`ANC Visits Completed: ${ctx.pregnancy.anc_visit_count} (Adherence: ${ctx.pregnancy.anc_adherence_percent}%)`);
+      lines.push(`Recommended ANC Count: ${ctx.pregnancy.recommended_anc_count}`);
+      lines.push(`Last ANC Visit: ${ctx.pregnancy.last_anc_date} (${ctx.pregnancy.days_since_last_anc != null ? ctx.pregnancy.days_since_last_anc + ' days ago' : 'N/A'})`);
+      lines.push(`Last ANC Risk Assessment: ${ctx.pregnancy.last_anc_risk}`);
+      if (ctx.pregnancy.overdue_anc) lines.push(`*** ALERT: ANC VISIT IS OVERDUE ***`);
+      if (ctx.pregnancy.urgent_anc) lines.push(`*** ALERT: URGENT — THIRD TRIMESTER ANC NEEDED ***`);
+      if (ctx.pregnancy.approaching_due_date) lines.push(`*** ALERT: APPROACHING DUE DATE ***`);
+      if (ctx.pregnancy.past_due_date) lines.push(`*** ALERT: PAST DUE DATE — IMMEDIATE CONSULTATION NEEDED ***`);
       if (ctx.pregnancy.anc_details?.length > 0) {
         lines.push(`Recent ANC Details:`);
         ctx.pregnancy.anc_details.forEach(v => {
-          lines.push(`  - ${v.date} (Visit #${v.visit_number}): Risk=${v.risk}, Weight=${v.weight}kg, BP=${v.blood_pressure}${v.notes ? ', Notes: ' + v.notes : ''}`);
+          lines.push(`  - ${v.date} (Visit #${v.visit_number}): Risk=${v.risk}, Weight=${v.weight}kg, BP=${v.blood_pressure}, Fundal Height=${v.fundal_height}, FHR=${v.fetal_heart_rate}${v.notes ? ', Notes: ' + v.notes : ''}`);
         });
       }
     } else {
@@ -480,7 +575,7 @@ function formatContextForAI(ctx) {
     if (ctx.pregnancy_history?.length > 0) {
       lines.push(`\n[PREGNANCY HISTORY]`);
       ctx.pregnancy_history.forEach(p => {
-        lines.push(`  - ${p.outcome || p.status} (${p.delivery_date})`);
+        lines.push(`  - ${p.outcome || p.status} (${p.delivery_date})${p.complications ? ' — Complications: ' + p.complications : ''}`);
       });
     }
 
@@ -491,28 +586,48 @@ function formatContextForAI(ctx) {
         lines.push(`    Birth Weight: ${c.birth_weight}kg`);
         if (c.current_weight_kg) lines.push(`    Current Weight: ${c.current_weight_kg}kg`);
         if (c.current_height_cm) lines.push(`    Height: ${c.current_height_cm}cm`);
-        lines.push(`    Vaccinations Received: ${c.vaccination_count} (${c.vaccinations_received.map(v => v.vaccine).join(', ') || 'None recorded'})`);
+        lines.push(`    Feeding Method: ${c.feeding_method}`);
+        lines.push(`    Vaccinations: ${c.vaccination_count} received (${c.vaccinations_received.map(v => v.vaccine).join(', ') || 'None recorded'})`);
+        if (c.overdue_vaccination) lines.push(`    *** VACCINATION OVERDUE: ${c.overdue_vaccination} ***`);
+        if (c.next_due_vaccination) lines.push(`    Next Due: ${c.next_due_vaccination}`);
         lines.push(`    Growth Records: ${c.growth_records_count} entries, Last Check: ${c.last_growth_check}${c.days_since_growth_check != null ? ' (' + c.days_since_growth_check + ' days ago)' : ''}`);
+        if (c.growth_overdue) lines.push(`    *** GROWTH CHECK OVERDUE ***`);
+        lines.push(`    Milestones Achieved: ${c.milestones_achieved}`);
       });
     }
 
     if (ctx.visit_history) {
       lines.push(`\n[VISIT HISTORY]`);
       lines.push(`Total Visits: ${ctx.visit_history.total}`);
-      lines.push(`Last Visit: ${ctx.visit_history.last_visit_date} (${ctx.visit_history.last_visit_type})`);
+      lines.push(`Last Visit: ${ctx.visit_history.last_visit_date} (${ctx.visit_history.last_visit_type}) — ${ctx.visit_history.days_since_last_visit != null ? ctx.visit_history.days_since_last_visit + ' days ago' : 'N/A'}`);
       if (ctx.visit_history.last_visit_notes) lines.push(`  Notes: ${ctx.visit_history.last_visit_notes}`);
     }
 
     if (ctx.referrals?.length > 0) {
       lines.push(`\n[REFERRALS]`);
       ctx.referrals.forEach(r => {
-        lines.push(`  - ${r.date}: ${r.urgency} — ${r.status} — ${r.reason}`);
+        lines.push(`  - ${r.date}: ${r.urgency} — ${r.status} — ${r.reason} (${r.days_pending != null ? r.days_pending + ' days pending' : ''})`);
       });
     }
 
     if (ctx.assigned_worker) {
       lines.push(`\n[ASSIGNED HEALTHCARE WORKER]`);
-      lines.push(`${ctx.assigned_worker.name} (${ctx.assigned_worker.role})`);
+      lines.push(`${ctx.assigned_worker.name} (${ctx.assigned_worker.role}, Facility: ${ctx.assigned_worker.facility_id || 'N/A'})`);
+    }
+
+    if (ctx.conversation_history?.length > 0) {
+      lines.push(`\n[PREVIOUS CONVERSATIONS] (You remember these)`);
+      ctx.conversation_history.forEach(c => {
+        lines.push(`  - ${c.date}: ${c.summary}${c.topics?.length > 0 ? ' [Topics: ' + c.topics.join(', ') + ']' : ''}`);
+      });
+      lines.push(`Total conversations: ${ctx.total_conversations}, Last: ${ctx.last_conversation_date}`);
+    }
+
+    if (ctx.proactive_alerts?.length > 0) {
+      lines.push(`\n[PROACTIVE HEALTH ALERTS — ADDRESS THESE NATURALLY]`);
+      ctx.proactive_alerts.forEach(a => {
+        lines.push(`  - ${a}`);
+      });
     }
   }
 

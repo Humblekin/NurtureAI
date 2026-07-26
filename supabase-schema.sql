@@ -247,6 +247,20 @@ CREATE TABLE IF NOT EXISTS ai_conversations (
 );
 
 -- ============================================
+-- 14. NOTIFICATIONS
+-- ============================================
+CREATE TABLE IF NOT EXISTS notifications (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  type TEXT NOT NULL,
+  priority TEXT DEFAULT 'low' CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
+  title TEXT NOT NULL,
+  message TEXT,
+  read BOOLEAN DEFAULT false,
+  patient_id UUID NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- ============================================
 -- INDEXES (safe to re-run)
 -- ============================================
 CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
@@ -262,6 +276,7 @@ CREATE INDEX IF NOT EXISTS idx_growth_records_child ON growth_records(child_id);
 CREATE INDEX IF NOT EXISTS idx_visits_worker ON visits(worker_id);
 CREATE INDEX IF NOT EXISTS idx_visits_patient ON visits(patient_id);
 CREATE INDEX IF NOT EXISTS idx_referrals_status ON referrals(status);
+CREATE INDEX IF NOT EXISTS idx_notifications_patient ON notifications(patient_id);
 
 -- ============================================
 -- ROW LEVEL SECURITY (RLS)
@@ -286,6 +301,7 @@ ALTER TABLE growth_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE milestones ENABLE ROW LEVEL SECURITY;
 ALTER TABLE visits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE referrals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE facilities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE districts ENABLE ROW LEVEL SECURITY;
@@ -359,6 +375,7 @@ END $$;
 
 -- Profiles
 CREATE POLICY "Profiles: public read" ON profiles FOR SELECT USING (true);
+CREATE POLICY "Profiles: insert own" ON profiles FOR INSERT WITH CHECK (auth.uid() = id);
 CREATE POLICY "Profiles: update own" ON profiles FOR UPDATE USING (auth.uid() = id);
 
 -- Mothers
@@ -368,8 +385,12 @@ CREATE POLICY "Mothers: mothers read own" ON mothers
   FOR SELECT USING (profile_id = auth.uid());
 CREATE POLICY "Mothers: insert for health workers" ON mothers
   FOR INSERT WITH CHECK (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "Mothers: mothers insert own" ON mothers
+  FOR INSERT WITH CHECK (profile_id = auth.uid());
 CREATE POLICY "Mothers: update for health workers" ON mothers
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "Mothers: mothers update own" ON mothers
+  FOR UPDATE USING (profile_id = auth.uid());
 CREATE POLICY "Mothers: delete for admin" ON mothers
   FOR DELETE USING (public.user_role() = 'admin');
 
@@ -382,8 +403,16 @@ CREATE POLICY "Pregnancies: read access" ON pregnancies
   );
 CREATE POLICY "Pregnancies: insert for health workers" ON pregnancies
   FOR INSERT WITH CHECK (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "Pregnancies: mothers insert own" ON pregnancies
+  FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM mothers WHERE id = mother_id AND profile_id = auth.uid())
+  );
 CREATE POLICY "Pregnancies: update for health workers" ON pregnancies
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "Pregnancies: mothers update own" ON pregnancies
+  FOR UPDATE USING (
+    EXISTS (SELECT 1 FROM mothers WHERE id = mother_id AND profile_id = auth.uid())
+  );
 CREATE POLICY "Pregnancies: delete for admin" ON pregnancies
   FOR DELETE USING (public.user_role() = 'admin');
 
@@ -398,8 +427,20 @@ CREATE POLICY "ANV: read access" ON antenatal_visits
   );
 CREATE POLICY "ANV: insert for health workers" ON antenatal_visits
   FOR INSERT WITH CHECK (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "ANV: mothers insert own" ON antenatal_visits
+  FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM pregnancies p
+      JOIN mothers m ON m.id = p.mother_id
+      WHERE p.id = pregnancy_id AND m.profile_id = auth.uid())
+  );
 CREATE POLICY "ANV: update for health workers" ON antenatal_visits
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "ANV: mothers update own" ON antenatal_visits
+  FOR UPDATE USING (
+    EXISTS (SELECT 1 FROM pregnancies p
+      JOIN mothers m ON m.id = p.mother_id
+      WHERE p.id = pregnancy_id AND m.profile_id = auth.uid())
+  );
 CREATE POLICY "ANV: delete for health workers" ON antenatal_visits
   FOR DELETE USING (public.user_role() IN ('nurse', 'doctor', 'admin'));
 
@@ -412,8 +453,16 @@ CREATE POLICY "Children: mothers read own" ON children
   );
 CREATE POLICY "Children: insert for health workers" ON children
   FOR INSERT WITH CHECK (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "Children: mothers insert own" ON children
+  FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM mothers WHERE id = mother_id AND profile_id = auth.uid())
+  );
 CREATE POLICY "Children: update for health workers" ON children
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "Children: mothers update own" ON children
+  FOR UPDATE USING (
+    EXISTS (SELECT 1 FROM mothers WHERE id = mother_id AND profile_id = auth.uid())
+  );
 CREATE POLICY "Children: delete for health workers" ON children
   FOR DELETE USING (public.user_role() IN ('nurse', 'doctor', 'admin'));
 
@@ -428,8 +477,20 @@ CREATE POLICY "Vax: read access" ON vaccinations
   );
 CREATE POLICY "Vax: insert for health workers" ON vaccinations
   FOR INSERT WITH CHECK (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "Vax: mothers insert own" ON vaccinations
+  FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM children c
+      JOIN mothers m ON m.id = c.mother_id
+      WHERE c.id = child_id AND m.profile_id = auth.uid())
+  );
 CREATE POLICY "Vax: update for health workers" ON vaccinations
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "Vax: mothers update own" ON vaccinations
+  FOR UPDATE USING (
+    EXISTS (SELECT 1 FROM children c
+      JOIN mothers m ON m.id = c.mother_id
+      WHERE c.id = child_id AND m.profile_id = auth.uid())
+  );
 CREATE POLICY "Vax: delete for health workers" ON vaccinations
   FOR DELETE USING (public.user_role() IN ('nurse', 'doctor', 'admin'));
 
@@ -444,8 +505,20 @@ CREATE POLICY "Growth: read access" ON growth_records
   );
 CREATE POLICY "Growth: insert for health workers" ON growth_records
   FOR INSERT WITH CHECK (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "Growth: mothers insert own" ON growth_records
+  FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM children c
+      JOIN mothers m ON m.id = c.mother_id
+      WHERE c.id = child_id AND m.profile_id = auth.uid())
+  );
 CREATE POLICY "Growth: update for health workers" ON growth_records
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "Growth: mothers update own" ON growth_records
+  FOR UPDATE USING (
+    EXISTS (SELECT 1 FROM children c
+      JOIN mothers m ON m.id = c.mother_id
+      WHERE c.id = child_id AND m.profile_id = auth.uid())
+  );
 CREATE POLICY "Growth: delete for health workers" ON growth_records
   FOR DELETE USING (public.user_role() IN ('nurse', 'doctor', 'admin'));
 
@@ -460,18 +533,30 @@ CREATE POLICY "Milestones: read access" ON milestones
   );
 CREATE POLICY "Milestones: insert for health workers" ON milestones
   FOR INSERT WITH CHECK (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "Milestones: mothers insert own" ON milestones
+  FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM children c
+      JOIN mothers m ON m.id = c.mother_id
+      WHERE c.id = child_id AND m.profile_id = auth.uid())
+  );
 CREATE POLICY "Milestones: update for health workers" ON milestones
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
+CREATE POLICY "Milestones: mothers update own" ON milestones
+  FOR UPDATE USING (
+    EXISTS (SELECT 1 FROM children c
+      JOIN mothers m ON m.id = c.mother_id
+      WHERE c.id = child_id AND m.profile_id = auth.uid())
+  );
 CREATE POLICY "Milestones: delete for admin" ON milestones
   FOR DELETE USING (public.user_role() = 'admin');
 
 -- Visits
 CREATE POLICY "Visits: read own" ON visits FOR SELECT
-  USING (worker_id = auth.uid());
+  USING (worker_id = auth.uid() OR patient_id = auth.uid());
 CREATE POLICY "Visits: admin read all" ON visits FOR SELECT
   USING (public.user_role() IN ('admin', 'district_officer'));
 CREATE POLICY "Visits: insert own" ON visits FOR INSERT
-  WITH CHECK (worker_id = auth.uid());
+  WITH CHECK (worker_id = auth.uid() OR public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
 CREATE POLICY "Visits: update own" ON visits FOR UPDATE
   USING (worker_id = auth.uid());
 CREATE POLICY "Visits: admin update all" ON visits FOR UPDATE
@@ -483,11 +568,19 @@ CREATE POLICY "Referrals: read access" ON referrals
     from_worker_id = auth.uid() OR public.user_role() IN ('admin', 'nurse', 'doctor')
   );
 CREATE POLICY "Referrals: insert for health workers" ON referrals
-  FOR INSERT WITH CHECK (from_worker_id = auth.uid());
+  FOR INSERT WITH CHECK (from_worker_id = auth.uid() OR public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
 CREATE POLICY "Referrals: update for health workers" ON referrals
   FOR UPDATE USING (public.user_role() IN ('nurse', 'doctor', 'admin'));
 CREATE POLICY "Referrals: delete for admin" ON referrals
   FOR DELETE USING (public.user_role() = 'admin');
+
+-- Notifications
+CREATE POLICY "Notifications: mothers read own" ON notifications
+  FOR SELECT USING (patient_id = auth.uid());
+CREATE POLICY "Notifications: mothers insert own" ON notifications
+  FOR INSERT WITH CHECK (patient_id = auth.uid());
+CREATE POLICY "Notifications: mothers update own" ON notifications
+  FOR UPDATE USING (patient_id = auth.uid());
 
 -- AI Conversations
 CREATE POLICY "AI: read own" ON ai_conversations
@@ -554,3 +647,4 @@ CREATE TRIGGER update_facilities_updated_at BEFORE UPDATE ON facilities FOR EACH
 CREATE TRIGGER update_districts_updated_at BEFORE UPDATE ON districts FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_milestones_updated_at BEFORE UPDATE ON milestones FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_ai_conversations_updated_at BEFORE UPDATE ON ai_conversations FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER update_notifications_updated_at BEFORE UPDATE ON notifications FOR EACH ROW EXECUTE FUNCTION update_updated_at();

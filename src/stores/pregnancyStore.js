@@ -219,6 +219,17 @@ const usePregnancyStore = create((set, get) => ({
       return [];
     }
   },
+
+  /**
+   * Reset store state — called on logout to prevent data leaking between users.
+   */
+  reset: () => set({
+    activePregnancy: null,
+    pregnancyHistory: [],
+    antenatalVisits: [],
+    isLoading: false,
+    error: null,
+  }),
 }));
 
 export default usePregnancyStore;

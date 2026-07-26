@@ -34,11 +34,12 @@ export const MotherProfile = () => {
 
   useEffect(() => {
     if (id) {
-      // id from router is actually the generic id right now since we haven't linked auth to profile perfectly in demo
-      // but let's assume it fetches correctly for the demo
-      fetchMotherByProfileId(id);
-      fetchPregnanciesByMotherId(id);
-      fetchChildrenByMotherId(id);
+      fetchMotherByProfileId(id).then((mother) => {
+        if (mother) {
+          fetchPregnanciesByMotherId(mother.id);
+          fetchChildrenByMotherId(mother.id);
+        }
+      });
     }
   }, [id, fetchMotherByProfileId, fetchPregnanciesByMotherId, fetchChildrenByMotherId]);
 

@@ -305,6 +305,18 @@ const useChildStore = create((set, get) => ({
       return [];
     }
   },
+
+  /**
+   * Reset store state — called on logout to prevent data leaking between users.
+   */
+  reset: () => set({
+    children: [],
+    currentChild: null,
+    vaccinations: {},
+    growthRecords: {},
+    isLoading: false,
+    error: null,
+  }),
 }));
 
 export default useChildStore;

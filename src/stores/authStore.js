@@ -2,6 +2,13 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import supabase, { isSupabaseConfigured } from '../lib/supabase';
 import db from '../lib/db';
+import { seedDemoForRole } from '../lib/demoData';
+import useMotherStore from './motherStore';
+import usePregnancyStore from './pregnancyStore';
+import useChildStore from './childStore';
+import useTimelineStore from './timelineStore';
+import useNotificationStore from './notificationStore';
+import useOnboardingStore from './onboardingStore';
 
 /**
  * NurtureAI — Auth Store
@@ -63,6 +70,8 @@ const useAuthStore = create(
               isAuthenticated: true,
               isLoading: false,
             });
+            // Seed demo data if database is empty
+            await seedDemoForRole(cachedProfile.id, cachedProfile.role);
           } else {
             set({ isLoading: false });
           }
@@ -90,6 +99,8 @@ const useAuthStore = create(
             if (!profileError && profile) {
               set({ profile });
               await db.profiles.put({ ...profile, synced_at: new Date().toISOString() });
+              // Seed demo data if database is empty (even with Supabase configured)
+              await seedDemoForRole(profile.id, profile.role);
             } else {
               console.error('Profile fetch error:', profileError);
             }
@@ -113,6 +124,14 @@ const useAuthStore = create(
                 set({ user: session.user, session, isAuthenticated: true });
               }
             } else if (event === 'SIGNED_OUT') {
+              // Clear ALL data stores to prevent data leaking between users
+              useMotherStore.getState().reset();
+              usePregnancyStore.getState().reset();
+              useChildStore.getState().reset();
+              useTimelineStore.getState().reset();
+              useNotificationStore.getState().reset();
+              useOnboardingStore.getState().reset();
+
               set({
                 user: null,
                 profile: null,
@@ -137,10 +156,11 @@ const useAuthStore = create(
           const demoProfile = {
             id: 'demo-user',
             email,
-            role: 'chw',
-            full_name: 'Demo User',
-            phone: '+233000000000',
-            community: 'Demo Community',
+            role: 'mother',
+            full_name: 'Fatima Abdulai',
+            phone: '+233241234567',
+            community: 'Tamale South',
+            region: 'Northern',
           };
           set({
             user: { id: 'demo-user', email },
@@ -149,6 +169,7 @@ const useAuthStore = create(
             isLoading: false,
           });
           await db.profiles.put(demoProfile);
+          await seedDemoForRole(demoProfile.id, demoProfile.role);
           return { success: true };
         }
 
@@ -176,6 +197,8 @@ const useAuthStore = create(
           if (!profileError && profile) {
             set({ profile });
             await db.profiles.put({ ...profile, synced_at: new Date().toISOString() });
+            // Seed demo data if database is empty
+            await seedDemoForRole(profile.id, profile.role);
           }
 
           set({ isLoading: false });
@@ -205,6 +228,7 @@ const useAuthStore = create(
             isLoading: false,
           });
           await db.profiles.put(demoProfile);
+          await seedDemoForRole(demoProfile.id, demoProfile.role || 'mother');
           return { success: true };
         }
 
@@ -246,6 +270,15 @@ const useAuthStore = create(
         if (isSupabaseConfigured()) {
           await supabase.auth.signOut();
         }
+
+        // Clear ALL data stores to prevent data leaking between users
+        useMotherStore.getState().reset();
+        usePregnancyStore.getState().reset();
+        useChildStore.getState().reset();
+        useTimelineStore.getState().reset();
+        useNotificationStore.getState().reset();
+        useOnboardingStore.getState().reset();
+
         set({
           user: null,
           profile: null,

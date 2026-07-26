@@ -121,6 +121,7 @@
 
   /* ---- Border Colors (Light Mode) ---- */
   --border-default: var(--color-neutral-200);
+  --border-color: var(--color-neutral-200);
   --border-strong: var(--color-neutral-300);
   --border-focus: var(--color-primary-500);
   --border-error: var(--color-danger-500);
@@ -254,6 +255,7 @@
   --text-link-hover: var(--color-primary-300);
 
   --border-default: #2c3040;
+  --border-color: #2c3040;
   --border-strong: #3d4255;
   --border-focus: var(--color-primary-400);
 

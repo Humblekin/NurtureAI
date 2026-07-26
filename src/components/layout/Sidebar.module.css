@@ -10,6 +10,7 @@
   position: sticky;
   top: var(--header-height);
   flex-shrink: 0;
+  overflow: hidden;
 }
 
 .collapsed {
@@ -21,6 +22,64 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-neutral-300) transparent;
+  scroll-behavior: smooth;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0px,
+    black 8px,
+    black calc(100% - 8px),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0px,
+    black 8px,
+    black calc(100% - 8px),
+    transparent 100%
+  );
+}
+
+.navSection::-webkit-scrollbar {
+  width: 5px;
+}
+
+.navSection::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.navSection::-webkit-scrollbar-thumb {
+  background-color: var(--color-neutral-300);
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  background-clip: content-box;
+  transition: background-color 0.2s ease;
+}
+
+.navSection::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-neutral-400);
+  width: 6px;
+}
+
+.navSection::-webkit-scrollbar-thumb:active {
+  background-color: var(--color-neutral-500);
+}
+
+[data-theme="dark"] .navSection {
+  scrollbar-color: var(--color-neutral-600) transparent;
+}
+
+[data-theme="dark"] .navSection::-webkit-scrollbar-thumb {
+  background-color: var(--color-neutral-600);
+}
+
+[data-theme="dark"] .navSection::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-neutral-500);
 }
 
 .sectionTitle {
@@ -77,7 +136,7 @@
 }
 
 .spacer {
-  flex: 1;
+  display: none;
 }
 
 .collapseBtn {
@@ -94,6 +153,7 @@
   cursor: pointer;
   transition: all var(--transition-fast);
   min-height: 44px;
+  flex-shrink: 0;
 }
 
 .collapseBtn:hover {

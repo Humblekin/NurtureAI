@@ -3,7 +3,7 @@ import {
   Home, Users, Baby, Calendar, Activity, Heart,
   FileText, Settings, HeartPulse, Stethoscope, MessageCircle, 
   ChevronLeft, ChevronRight, Archive, Building2, ClipboardList,
-  User
+  User, Map
 } from 'lucide-react';
 import useAuthStore, { ROLES } from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
@@ -14,6 +14,7 @@ const getNavConfig = (role) => {
     case ROLES.MOTHER:
       return [
         { name: 'Home', path: '/mother/dashboard', icon: Home },
+        { name: 'Health Journey', path: '/mother/timeline', icon: Map },
         { name: 'My Pregnancy', path: '/mother/pregnancy', icon: Heart },
         { name: 'My Children', path: '/mother/children', icon: Baby },
         { name: 'Appointments', path: '/mother/appointments', icon: Calendar },

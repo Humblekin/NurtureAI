@@ -1,36 +1,24 @@
 import db from '../lib/db';
+import { GHANA_EPI_SCHEDULE, findOverdueVaccine } from '../constants/vaccinationSchedule';
 
 /**
  * NurtureAI — Reminder Engine
- * 
+ *
+ * Proactive healthcare intelligence system.
  * Checks healthcare data for missed appointments, overdue vaccinations,
- * growth monitoring gaps, and inactive users. Generates notifications
- * that appear in the app.
- * 
+ * growth monitoring gaps, nutrition gaps, supplement tracking, and
+ * inactive users. Generates personalized notifications that appear
+ * in the app and can trigger voice reminders.
+ *
  * Runs on app open and can be triggered periodically.
  */
 
 const CHILD_AGE_LIMIT_MONTHS = 60; // 5 years
 
 /**
- * Ghana EPI vaccination schedule (simplified).
- * Maps age in months to recommended vaccines.
- */
-const VACCINATION_SCHEDULE = [
-  { ageMonths: 0, vaccine: 'BCG', description: 'BCG (at birth)' },
-  { ageMonths: 0, vaccine: 'OPV-0', description: 'OPV-0 (at birth)' },
-  { ageMonths: 6, vaccine: 'OPV-1', description: 'OPV-1, Pentavalent-1, PCV-1, Rotavirus-1' },
-  { ageMonths: 7, vaccine: 'OPV-2', description: 'OPV-2, Pentavalent-2, PCV-2, Rotavirus-2' },
-  { ageMonths: 8, vaccine: 'OPV-3', description: 'OPV-3, Pentavalent-3, PCV-3, Rotavirus-3' },
-  { ageMonths: 9, vaccine: 'IPV', description: 'IPV booster' },
-  { ageMonths: 12, vaccine: 'Measles-1', description: 'Measles-Rubella-1, Yellow Fever' },
-  { ageMonths: 15, vaccine: 'Measles-2', description: 'Measles-Rubella-2, Meningitis A' },
-  { ageMonths: 18, vaccine: 'DPT-Booster', description: 'DPT booster, OPV booster' },
-];
-
-/**
  * Check for mothers with active pregnancies that have missed ANC visits.
  * Recommended: at least 4 ANC visits, monthly in first 2 trimesters, twice in 3rd.
+ * Personalizes messages with the mother's name, pregnancy week, and specific timing.
  */
 async function checkMissedANC(profileId) {
   const notifications = [];
@@ -50,8 +38,8 @@ async function checkMissedANC(profileId) {
     .filter(v => !v.deleted_at)
     .toArray();
 
-  // Calculate pregnancy week
-  const start = new Date(activePregnancy.created_at);
+  // Calculate pregnancy week from LMP (preferred) or created_at (fallback)
+  const start = new Date(activePregnancy.lmp || activePregnancy.created_at);
   const now = new Date();
   const weeksPregnant = Math.floor((now - start) / (1000 * 60 * 60 * 24 * 7));
 
@@ -62,20 +50,39 @@ async function checkMissedANC(profileId) {
     ? Math.floor((now - new Date(lastVisit.visit_date)) / (1000 * 60 * 60 * 24))
     : Infinity;
 
+  // WHO recommends: at least 8 contacts in pregnancy (or 4 minimum)
+  const expectedVisitCount = weeksPregnant <= 28
+    ? Math.ceil(weeksPregnant / 12)
+    : Math.ceil(28 / 12) + Math.ceil((weeksPregnant - 28) / 6);
+  const _missedVisits = Math.max(0, expectedVisitCount - ancVisits.length);
+
   if (daysSinceLastVisit > 30 && weeksPregnant <= 28) {
     notifications.push({
       type: 'missed_anc',
       priority: 'high',
       title: 'ANC Visit Overdue',
-      message: `Your last antenatal visit was ${daysSinceLastVisit} days ago. Regular check-ups are essential for monitoring your health and your baby's development.`,
+      message: `${mother.full_name}, your last antenatal visit was ${daysSinceLastVisit} days ago. You are now ${weeksPregnant} weeks pregnant. Regular check-ups help monitor your health and your baby's development. Please visit your health facility this week.`,
       patient_id: mother.id,
+      voice_message: `Hello ${mother.full_name}. You are now ${weeksPregnant} weeks pregnant. Your last antenatal visit was ${daysSinceLastVisit} days ago. Please visit your health facility for your next check-up.`,
     });
   } else if (daysSinceLastVisit > 14 && weeksPregnant > 28) {
     notifications.push({
       type: 'missed_anc',
-      priority: 'high',
-      title: 'ANC Visit Due',
-      message: `In your third trimester, visits should be more frequent. Your last ANC was ${daysSinceLastVisit} days ago.`,
+      priority: 'critical',
+      title: 'ANC Visit Urgently Needed',
+      message: `${mother.full_name}, in your third trimester (week ${weeksPregnant}), visits should be more frequent — at least every two weeks. Your last ANC was ${daysSinceLastVisit} days ago. Please schedule your next visit soon.`,
+      patient_id: mother.id,
+      voice_message: `${mother.full_name}, you are in your third trimester at week ${weeksPregnant}. Your last antenatal visit was ${daysSinceLastVisit} days ago. Third trimester visits should be more frequent. Please visit your health facility soon.`,
+    });
+  }
+
+  // Check if ANC count is below recommended
+  if (ancVisits.length < 4 && weeksPregnant >= 20) {
+    notifications.push({
+      type: 'insufficient_anc',
+      priority: 'medium',
+      title: 'More ANC Visits Recommended',
+      message: `${mother.full_name}, you have completed ${ancVisits.length} ANC visit${ancVisits.length !== 1 ? 's' : ''} so far. WHO recommends at least 4 visits during pregnancy. You're doing well — keep it up!`,
       patient_id: mother.id,
     });
   }
@@ -87,9 +94,12 @@ async function checkMissedANC(profileId) {
       priority: 'critical',
       title: weeksPregnant >= 42 ? 'Pregnancy Past Due' : 'Approaching Due Date',
       message: weeksPregnant >= 42
-        ? 'You are past 42 weeks. Please contact your healthcare provider immediately.'
-        : `You are at week ${weeksPregnant}. Please discuss your delivery plan with your healthcare provider.`,
+        ? `${mother.full_name}, you are past 42 weeks. Please contact your healthcare provider immediately for assessment.`
+        : `${mother.full_name}, you are at week ${weeksPregnant} — very close to your due date. Please discuss your delivery plan with your healthcare provider.`,
       patient_id: mother.id,
+      voice_message: weeksPregnant >= 42
+        ? `${mother.full_name}, you are past your due date at ${weeksPregnant} weeks. Please contact your healthcare provider immediately.`
+        : `${mother.full_name}, you are at week ${weeksPregnant}. Please discuss your delivery plan with your healthcare provider.`,
     });
   }
 
@@ -98,11 +108,11 @@ async function checkMissedANC(profileId) {
 
 /**
  * Check for children with overdue vaccinations.
+ * Uses the child's name and specific vaccine information for personalization.
  */
 async function checkOverdueVaccinations(profileId) {
   const notifications = [];
 
-  // Get children based on role
   let children = [];
   if (profileId) {
     const mother = await db.mothers.where('profile_id').equals(profileId).first();
@@ -112,12 +122,11 @@ async function checkOverdueVaccinations(profileId) {
         .filter(c => !c.deleted_at)
         .toArray();
     }
-  } else {
-    children = await db.children.filter(c => !c.deleted_at).toArray();
   }
+  // If no profileId, return empty — never load all children globally
 
   for (const child of children) {
-    const ageMonths = getChildAgeMonths(child.birth_date);
+    const ageMonths = getChildAgeMonths(child.date_of_birth || child.birth_date);
     if (ageMonths === null || ageMonths > CHILD_AGE_LIMIT_MONTHS) continue;
 
     const vaccinations = await db.vaccinations
@@ -128,7 +137,7 @@ async function checkOverdueVaccinations(profileId) {
     const vaxNames = new Set(vaccinations.map(v => v.vaccine_name));
 
     // Check which vaccines should have been given by now
-    for (const schedule of VACCINATION_SCHEDULE) {
+    for (const schedule of GHANA_EPI_SCHEDULE) {
       if (ageMonths >= schedule.ageMonths + 1 && !vaxNames.has(schedule.vaccine)) {
         // Only notify for overdue vaccines (past the scheduled age + 1 month grace)
         const overdueMonths = ageMonths - schedule.ageMonths;
@@ -137,9 +146,10 @@ async function checkOverdueVaccinations(profileId) {
             type: 'missed_vaccination',
             priority: overdueMonths > 3 ? 'high' : 'medium',
             title: 'Vaccination Overdue',
-            message: `${child.full_name} (age ${ageMonths}mo) is due for ${schedule.description}. Please visit your nearest health facility.`,
+            message: `${child.full_name} (age ${ageMonths} months) is due for ${schedule.description}. Vaccination protects your child from serious diseases. Please visit your nearest health facility.`,
             patient_id: child.id,
             child_name: child.full_name,
+            voice_message: `${child.full_name} is ${ageMonths} months old and is due for ${schedule.description}. Please visit your health facility to keep your child protected.`,
           });
           break; // One notification per child is enough
         }
@@ -169,7 +179,7 @@ async function checkOverdueGrowthMonitoring(profileId) {
   }
 
   for (const child of children) {
-    const ageMonths = getChildAgeMonths(child.birth_date);
+    const ageMonths = getChildAgeMonths(child.date_of_birth || child.birth_date);
     if (ageMonths === null) continue;
 
     const growthRecords = await db.growth_records
@@ -182,9 +192,10 @@ async function checkOverdueGrowthMonitoring(profileId) {
         type: 'growth_monitoring_due',
         priority: 'medium',
         title: 'Growth Check Needed',
-        message: `${child.full_name} has no growth records. Regular weight and height monitoring is important.`,
+        message: `${child.full_name} has no growth records. Regular weight and height monitoring helps ensure your child is growing well. Please visit your nearest health facility.`,
         patient_id: child.id,
         child_name: child.full_name,
+        voice_message: `${child.full_name} has no growth records yet. Regular weight and height monitoring is important for your child's health.`,
       });
       continue;
     }
@@ -200,9 +211,10 @@ async function checkOverdueGrowthMonitoring(profileId) {
         type: 'growth_monitoring_due',
         priority: daysSince > maxDays * 2 ? 'high' : 'medium',
         title: 'Growth Check Overdue',
-        message: `${child.full_name}'s last growth check was ${daysSince} days ago. Regular monitoring helps detect growth problems early.`,
+        message: `${child.full_name}'s last growth check was ${daysSince} days ago. Regular monitoring helps detect growth problems early. Please schedule a visit.`,
         patient_id: child.id,
         child_name: child.full_name,
+        voice_message: `${child.full_name}'s last growth check was ${daysSince} days ago. Regular monitoring helps catch any concerns early.`,
       });
     }
   }
@@ -211,12 +223,59 @@ async function checkOverdueGrowthMonitoring(profileId) {
 }
 
 /**
- * Check for inactive mothers (no login activity for several days).
+ * Check for mothers with no recent nutrition logs.
+ * Encourages regular nutrition tracking.
  */
-async function checkInactiveMothers() {
+async function checkNutritionTracking(profileId) {
   const notifications = [];
 
-  const mothers = await db.mothers.filter(m => !m.deleted_at).toArray();
+  const mother = await db.mothers.where('profile_id').equals(profileId).first();
+  if (!mother) return notifications;
+
+  // Check for nutrition-related activities in recent visits
+  const recentVisits = await db.visits
+    .where('patient_id').equals(mother.id)
+    .filter(v => !v.deleted_at)
+    .toArray();
+
+  const sortedVisits = recentVisits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
+  const lastVisit = sortedVisits[0];
+
+  const daysSinceActivity = lastVisit
+    ? Math.floor((new Date() - new Date(lastVisit.visit_date)) / (1000 * 60 * 60 * 24))
+    : 999;
+
+  // If no activity in 7 days, suggest logging nutrition
+  if (daysSinceActivity > 7) {
+    notifications.push({
+      type: 'nutrition_reminder',
+      priority: 'low',
+      title: 'Health Tracking Reminder',
+      message: `${mother.full_name}, it's been a while since you logged your health information. Regular tracking helps Amina provide better support for you and your baby.`,
+      patient_id: mother.id,
+    });
+  }
+
+  return notifications;
+}
+
+/**
+ * Check for inactive mothers (no login activity for several days).
+ * @param {Object} [scope] - Optional scope filter.
+ * @param {string} [scope.facilityId] - Only check mothers at this facility.
+ * @param {string} [scope.assignedWorkerId] - Only check mothers assigned to this worker.
+ */
+async function checkInactiveMothers(scope = {}) {
+  const notifications = [];
+
+  let query = db.mothers.filter(m => !m.deleted_at);
+  if (scope.facilityId) {
+    query = query.filter(m => m.facility_id === scope.facilityId);
+  }
+  if (scope.assignedWorkerId) {
+    query = query.filter(m => m.assigned_worker_id === scope.assignedWorkerId);
+  }
+  const mothers = await query.toArray();
 
   for (const mother of mothers) {
     // Check if there are any recent visits or activity
@@ -293,6 +352,70 @@ async function checkPendingReferrals(profileId, facilityId) {
 }
 
 /**
+ * Generate Amina's proactive voice greeting based on health context.
+ * Called when the mother opens the app — Amina speaks a personalized greeting.
+ */
+export async function generateAminaGreeting(profile) {
+  if (!profile || profile.role !== 'mother') return null;
+
+  const mother = await db.mothers.where('profile_id').equals(profile.id).first();
+  if (!mother) return null;
+
+  const activePregnancy = await db.pregnancies
+    .where('mother_id').equals(mother.id)
+    .filter(p => !p.deleted_at && p.status === 'active')
+    .first();
+
+  const children = await db.children
+    .where('mother_id').equals(mother.id)
+    .filter(c => !c.deleted_at)
+    .toArray();
+
+  const now = new Date();
+  const hour = now.getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+  let voiceGreeting = `${greeting}, ${mother.full_name}. `;
+
+  if (activePregnancy) {
+    const week = Math.floor((now - new Date(activePregnancy.lmp || activePregnancy.created_at)) / (1000 * 60 * 60 * 24 * 7));
+    voiceGreeting += `You are now ${week} weeks pregnant. `;
+
+    // Check for upcoming ANC
+    const ancVisits = await db.antenatal_visits
+      .where('pregnancy_id').equals(activePregnancy.id)
+      .filter(v => !v.deleted_at)
+      .toArray();
+
+    const sortedVisits = ancVisits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
+    const lastVisit = sortedVisits[0];
+    const daysSinceVisit = lastVisit
+      ? Math.floor((now - new Date(lastVisit.visit_date)) / (1000 * 60 * 60 * 24))
+      : Infinity;
+
+    if (daysSinceVisit > 28) {
+      voiceGreeting += `It's been ${daysSinceVisit} days since your last antenatal visit. Remember to schedule your next check-up. `;
+    }
+  }
+
+  if (children.length > 0) {
+    const youngest = children.reduce((a, b) =>
+      new Date(a.date_of_birth || a.birth_date) > new Date(b.date_of_birth || b.birth_date) ? a : b
+    );
+    voiceGreeting += `How is ${youngest.full_name} doing today? `;
+  }
+
+  voiceGreeting += `I'm here to help with any health questions you have.`;
+
+  return {
+    text: voiceGreeting,
+    mother_name: mother.full_name,
+    pregnancy_week: activePregnancy ? Math.floor((now - new Date(activePregnancy.lmp || activePregnancy.created_at)) / (1000 * 60 * 60 * 24 * 7)) : null,
+    children_count: children.length,
+  };
+}
+
+/**
  * Main reminder engine — runs all checks and stores notifications.
  */
 export async function runReminderEngine(profile) {
@@ -306,16 +429,17 @@ export async function runReminderEngine(profile) {
       const anc = await checkMissedANC(profile.id);
       const vax = await checkOverdueVaccinations(profile.id);
       const growth = await checkOverdueGrowthMonitoring(profile.id);
-      allNotifications.push(...anc, ...vax, ...growth);
+      const nutrition = await checkNutritionTracking(profile.id);
+      allNotifications.push(...anc, ...vax, ...growth, ...nutrition);
     } else if (profile.role === 'chw') {
-      const inactive = await checkInactiveMothers();
+      const inactive = await checkInactiveMothers({ assignedWorkerId: profile.id });
       const pendingRef = await checkPendingReferrals(profile.id, null);
       allNotifications.push(...inactive, ...pendingRef);
     } else if (profile.role === 'nurse' || profile.role === 'doctor') {
       const pendingRef = await checkPendingReferrals(profile.id, profile.facility_id);
       allNotifications.push(...pendingRef);
     } else if (profile.role === 'admin' || profile.role === 'district_officer') {
-      const inactive = await checkInactiveMothers();
+      const inactive = await checkInactiveMothers({ facilityId: profile.facility_id });
       const pendingRef = await checkPendingReferrals();
       allNotifications.push(...inactive, ...pendingRef);
     }
@@ -325,6 +449,7 @@ export async function runReminderEngine(profile) {
       await db.notifications.bulkPut(allNotifications.map((n, i) => ({
         ...n,
         id: `reminder-${profile.id}-${Date.now()}-${i}`,
+        user_id: profile.id,
         created_at: new Date().toISOString(),
         read: false,
       })));
@@ -337,13 +462,17 @@ export async function runReminderEngine(profile) {
 }
 
 /**
- * Fetch unread notifications for a user.
+ * Fetch unread notifications for a specific user.
+ * @param {string} userId - The profile ID to filter notifications for.
  */
-export async function getUnreadNotifications() {
+export async function getUnreadNotifications(userId) {
   try {
-    return await db.notifications
-      .filter(n => !n.read)
-      .toArray();
+    if (userId) {
+      return await db.notifications
+        .filter(n => !n.read && n.user_id === userId)
+        .toArray();
+    }
+    return await db.notifications.filter(n => !n.read).toArray();
   } catch {
     return [];
   }
@@ -361,11 +490,17 @@ export async function markNotificationRead(id) {
 }
 
 /**
- * Mark all notifications as read.
+ * Mark all notifications as read for a specific user.
+ * @param {string} userId - The profile ID to filter notifications for.
  */
-export async function markAllRead() {
+export async function markAllRead(userId) {
   try {
-    const unread = await db.notifications.filter(n => !n.read).toArray();
+    let unread;
+    if (userId) {
+      unread = await db.notifications.filter(n => !n.read && n.user_id === userId).toArray();
+    } else {
+      unread = await db.notifications.filter(n => !n.read).toArray();
+    }
     await Promise.all(unread.map(n => db.notifications.update(n.id, { read: true })));
   } catch (error) {
     console.error('Failed to mark all notifications read:', error);

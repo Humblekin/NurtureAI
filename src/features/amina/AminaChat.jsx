@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Send, Mic, MicOff, Volume2, VolumeX, Trash2, User, Globe, MessageSquare, Phone, PhoneOff, Pause, Play, Bell, BellOff } from 'lucide-react';
+import { Send, Mic, MicOff, Volume2, VolumeX, Trash2, User, Globe, MessageSquare, Phone, PhoneOff, Pause, Play, Bell, BellOff, Heart, Baby, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useVoiceConversation, VOICE_STATES, useSpeechRecognition, useSpeechSynthesis } from '../../hooks/useAminaChat';
 import { isAiConfigured, chatCompletion } from '../../lib/groq';
+import { isDeepgramConfigured, speak as deepgramSpeak } from '../../services/deepgram';
 import useAuthStore from '../../stores/authStore';
 import { buildHealthContext } from '../../services/healthContext';
-import { runReminderEngine } from '../../services/reminderEngine';
+import { runReminderEngine, generateAminaGreeting } from '../../services/reminderEngine';
 import useNotificationStore from '../../stores/notificationStore';
 import Button from '../../components/ui/Button';
 import AminaAvatar from './avatar/AminaAvatar';
@@ -53,12 +54,14 @@ const TypingIndicator = () => (
 );
 
 // ============================================================
-// VOICE MODE — Real-time conversational experience
+// VOICE MODE — Real-time conversational experience (Deepgram)
 // ============================================================
 const VoiceMode = ({ voice, onSwitchToChat }) => {
   const {
     voiceState, messages, transcript, isListening,
-    error, language, micPermission, togglePause, clearChat, switchLanguage,
+    error, language, micPermission, micReady,
+    startConversation, retryMicPermission,
+    togglePause, clearChat, switchLanguage,
   } = voice;
 
   const avatarState = useMemo(() => {
@@ -69,7 +72,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
       case VOICE_STATES.GREETING: return 'greeting';
       case VOICE_STATES.PAUSED: return 'paused';
       case VOICE_STATES.ERROR: return 'error';
-      case VOICE_STATES.INITIALIZING: return 'initializing';
+      case VOICE_STATES.IDLE: return 'idle';
       default: return 'idle';
     }
   }, [voiceState]);
@@ -85,7 +88,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
 
   const statusText = useMemo(() => {
     switch (voiceState) {
-      case VOICE_STATES.INITIALIZING: return 'Starting up...';
+      case VOICE_STATES.IDLE: return micReady ? 'Your Healthcare Companion' : 'Tap to start';
       case VOICE_STATES.GREETING: return 'Speaking...';
       case VOICE_STATES.LISTENING: return isListening ? 'Listening to you...' : 'Starting to listen...';
       case VOICE_STATES.PROCESSING: return 'Thinking...';
@@ -94,9 +97,11 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
       case VOICE_STATES.ERROR: return 'Error occurred';
       default: return 'Your Healthcare Companion';
     }
-  }, [voiceState, isListening]);
+  }, [voiceState, isListening, micReady]);
 
   const aiConfigured = isAiConfigured();
+  const deepgramConfigured = isDeepgramConfigured();
+  const conversationActive = voiceState !== VOICE_STATES.IDLE || micReady;
 
   return (
     <div className={styles.voicePage}>
@@ -119,16 +124,27 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
 
       {!aiConfigured && (
         <div className={styles.warningBanner}>
-          AI is not configured. Set VITE_OPENROUTER_API_KEY in your .env file to enable Amina.
+          AI is not configured. Set VITE_GROQ_API_KEY in your .env file to enable Amina.
         </div>
       )}
 
-      {/* Mic permission denied — dedicated screen */}
-      {micPermission === 'denied' && (
+      {!deepgramConfigured && (
+        <div className={styles.warningBanner}>
+          <p><strong>Voice unavailable:</strong> Set VITE_DEEPGRAM_API_KEY in your .env file to enable voice features.</p>
+          <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'center' }}>
+            <Button size="sm" variant="outline" onClick={onSwitchToChat}>
+              <MessageSquare size={14} /> Use Chat Instead
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Mic permission denied — show after user tried to start */}
+      {micPermission === 'denied' && conversationActive && (
         <div className={styles.permissionDeniedOverlay}>
           <div className={styles.permissionDeniedCard}>
             <MicOff size={48} style={{ color: 'var(--color-danger-500)', marginBottom: 'var(--space-3)' }} />
-            <h3>Microphone Access Needed</h3>
+            <h3>Microphone Access Blocked</h3>
             <p>Your browser has blocked microphone access for this site.</p>
             <div className={styles.permissionSteps}>
               <p><strong>To enable voice chat:</strong></p>
@@ -138,11 +154,13 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
                 <li><strong>Firefox:</strong> Click the mic icon in the address bar → Allow</li>
                 <li><strong>Edge:</strong> Click the lock icon in the address bar → Microphone → Allow</li>
               </ul>
-              <p>After enabling, click <strong>Retry</strong> below.</p>
+              <p>After enabling, click <strong>Retry Voice</strong> below.</p>
             </div>
             <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'center' }}>
-              <Button size="sm" variant="outline" onClick={clearChat}>Retry</Button>
-              <Button size="sm" onClick={onSwitchToChat}>
+              <Button size="sm" onClick={retryMicPermission}>
+                <Mic size={14} /> Retry Voice
+              </Button>
+              <Button size="sm" variant="outline" onClick={onSwitchToChat}>
                 <MessageSquare size={14} /> Use Chat Instead
               </Button>
             </div>
@@ -203,6 +221,32 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Start button — shown when mic is not ready and no active conversation */}
+        {!micReady && !conversationActive && deepgramConfigured && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-3)', marginTop: 'var(--space-4)' }}
+          >
+            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', textAlign: 'center', maxWidth: '280px' }}>
+              Amina needs microphone access to listen and respond to you.
+            </p>
+            <Button onClick={startConversation} size="lg">
+              <Mic size={18} /> Start Talking with Amina
+            </Button>
+            <button
+              onClick={onSwitchToChat}
+              style={{
+                background: 'none', border: 'none', color: 'var(--text-tertiary)',
+                fontSize: '13px', cursor: 'pointer', textDecoration: 'underline',
+              }}
+            >
+              Use text chat instead
+            </button>
+          </motion.div>
+        )}
       </div>
 
       {/* Error */}
@@ -210,8 +254,8 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
         <div className={styles.errorBanner}>
           <p>{error}</p>
           <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'center' }}>
-            <Button size="sm" variant="outline" onClick={clearChat}>
-              Retry
+            <Button size="sm" onClick={retryMicPermission}>
+              <Mic size={14} /> Retry Voice
             </Button>
             <Button size="sm" variant="outline" onClick={onSwitchToChat}>
               <MessageSquare size={14} /> Use Chat Instead
@@ -220,17 +264,19 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
         </div>
       )}
 
-      {/* Bottom controls */}
-      <div className={styles.voiceControls}>
-        {micPermission !== 'denied' && (
-          <button className={`${styles.controlBtn} ${styles.pauseBtn}`} onClick={togglePause} title={voiceState === VOICE_STATES.PAUSED ? 'Resume' : 'Pause'}>
-            {voiceState === VOICE_STATES.PAUSED ? <Play size={20} /> : <Pause size={20} />}
+      {/* Bottom controls — only show when conversation is active */}
+      {conversationActive && (
+        <div className={styles.voiceControls}>
+          {micPermission !== 'denied' && (
+            <button className={`${styles.controlBtn} ${styles.pauseBtn}`} onClick={togglePause} title={voiceState === VOICE_STATES.PAUSED ? 'Resume' : 'Pause'}>
+              {voiceState === VOICE_STATES.PAUSED ? <Play size={20} /> : <Pause size={20} />}
+            </button>
+          )}
+          <button className={`${styles.controlBtn} ${styles.endCallBtn}`} onClick={clearChat} title="End conversation">
+            <PhoneOff size={22} />
           </button>
-        )}
-        <button className={`${styles.controlBtn} ${styles.endCallBtn}`} onClick={clearChat} title="End conversation">
-          <PhoneOff size={22} />
-        </button>
-      </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -239,7 +285,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
 // CHAT MODE — Text-based conversation (manual)
 // ================================================= */
 const ChatMode = ({ onSwitchToVoice }) => {
-  const { messages, isLoading, error, sendMessage, clearChat, language, switchLanguage } = useAminaChatChatMode();
+  const { messages, isLoading, error, sendMessage, clearChat, language, switchLanguage, greeting } = useAminaChatChatMode();
   const { isListening, transcript, isSupported: sttSupported, error: sttError, startListening, stopListening, setTranscript } = useSpeechRecognition(language);
   const { isSpeaking, isSupported: ttsSupported, speak } = useSpeechSynthesis(language);
   const [input, setInput] = useState('');
@@ -274,13 +320,26 @@ const ChatMode = ({ onSwitchToVoice }) => {
     }
   };
 
+  // Quick action suggestions based on health context
+  const quickActions = useMemo(() => {
+    if (!greeting) return [];
+    const actions = [];
+    if (greeting.pregnancy_week) {
+      actions.push({ label: 'How is my baby developing?', icon: Heart });
+      actions.push({ label: 'What should I eat this week?', icon: Baby });
+    }
+    actions.push({ label: 'Check vaccination schedule', icon: Baby });
+    actions.push({ label: 'Any health reminders?', icon: AlertTriangle });
+    return actions.slice(0, 3);
+  }, [greeting]);
+
   return (
     <div className={styles.chatPage}>
       <div className={styles.header}>
         <div className={styles.headerLeft}>
           <div>
             <h2 className={styles.headerTitle}>Chat with Amina</h2>
-            <p className={styles.headerSubtitle}>Ask anything about maternal & child health</p>
+            <p className={styles.headerSubtitle}>Your personalized maternal & child healthcare companion</p>
           </div>
         </div>
         <div className={styles.headerActions}>
@@ -306,6 +365,23 @@ const ChatMode = ({ onSwitchToVoice }) => {
         <div className={styles.messagesInner}>
           {messages.map((msg, i) => <MessageBubble key={i} message={msg} />)}
           {isLoading && <TypingIndicator />}
+
+          {/* Quick action suggestions */}
+          {!isLoading && messages.length <= 2 && quickActions.length > 0 && (
+            <div className={styles.quickActions}>
+              {quickActions.map((action, i) => (
+                <button
+                  key={i}
+                  className={styles.quickActionBtn}
+                  onClick={() => sendMessage(action.label)}
+                >
+                  <action.icon size={14} />
+                  <span>{action.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <div ref={messagesEndRef} />
         </div>
       </div>
@@ -316,7 +392,7 @@ const ChatMode = ({ onSwitchToVoice }) => {
       <form onSubmit={handleSubmit} className={styles.inputArea}>
         <div className={styles.inputWrapper}>
           <input ref={inputRef} type="text" value={input} onChange={(e) => setInput(e.target.value)}
-            placeholder={isListening ? 'Listening...' : 'Ask Amina anything about health...'}
+            placeholder={isListening ? 'Listening...' : 'Ask Amina about pregnancy, child health, nutrition...'}
             className={styles.textInput} disabled={isLoading} />
           {sttSupported && (
             <button type="button" onClick={() => isListening ? stopListening() : startListening()}
@@ -337,26 +413,64 @@ const ChatMode = ({ onSwitchToVoice }) => {
 // ============================================================
 function useAminaChatChatMode() {
   const [language, setLanguage] = useState('en');
-  const welcomeMessages = useMemo(() => ({
-    en: "Hello! I'm Amina, your AI healthcare companion. I'm here to support you with pregnancy, child health, nutrition, breastfeeding, vaccination, and maternal healthcare. How can I help you today?",
-    dag: "Mani n nyɛ Amina. Adaa laafee yuligu lana. Bihi alaafee yulibu lana, bihi laafeehi yulibu lana, abindira alaafee yulibu lana. Yelima wula ka nyen soŋa zaŋkpa n ni kali a binyerishaŋa?",
-  }), []);
-  const [messages, setMessages] = useState([{ role: 'assistant', content: welcomeMessages.en }]);
+  const [greeting, setGreeting] = useState(null);
+  const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const { profile } = useAuthStore();
   const healthContextRef = useRef('');
+  const proactiveContextRef = useRef('');
+  const initializedRef = useRef(false);
 
-  // Fetch health context when profile changes
+  const welcomeMessages = useMemo(() => ({
+    en: "Hello! I'm Amina, your AI healthcare companion. I'm here to support you with pregnancy, child health, nutrition, breastfeeding, vaccination, and maternal healthcare. How can I help you today?",
+    dag: "Mani n nyɛ Amina. Adaa laafee yuligu lana. Bihi alaafee yulibu lana, bihi laafeehi yulibu lana, abindira alaafee yulibu lana. Yelima wula ka nyen soŋa zaŋkpa n ni kali a binyerishaŋa?",
+  }), []);
+
+  // Build health context and generate personalized greeting on mount
   useEffect(() => {
-    if (profile?.id && profile?.role) {
-      buildHealthContext(profile).then(ctx => {
-        healthContextRef.current = ctx;
-      }).catch(err => {
-        console.error('Failed to build health context:', err);
-      });
-    }
-  }, [profile]);
+    if (!profile?.id || !profile?.role || initializedRef.current) return;
+    initializedRef.current = true;
+
+    buildHealthContext(profile).then(ctx => {
+      healthContextRef.current = ctx;
+
+      // Extract proactive alerts
+      if (ctx) {
+        const alertMatch = ctx.match(/\[PROACTIVE HEALTH ALERTS[^\]]*\]\n([\s\S]*?)(?=\n===|\n\n\[|\n$)/);
+        if (alertMatch) {
+          proactiveContextRef.current = alertMatch[1].trim();
+        }
+      }
+
+      // Generate personalized greeting for mothers
+      if (profile.role === 'mother') {
+        generateAminaGreeting(profile).then(greetingData => {
+          if (greetingData) {
+            setGreeting(greetingData);
+            setMessages([{ role: 'assistant', content: greetingData.text }]);
+          } else {
+            setMessages([{ role: 'assistant', content: welcomeMessages.en }]);
+          }
+        }).catch(() => {
+          setMessages([{ role: 'assistant', content: welcomeMessages.en }]);
+        });
+      } else {
+        // For non-mother roles, use default greeting
+        const roleGreeting = profile.role === 'chw'
+          ? `Hello! I'm Amina. I can see you're logged in as a Community Health Worker. How can I help you today?`
+          : profile.role === 'nurse'
+          ? `Hello! I'm Amina. I can see you're logged in as a Nurse. How can I help you today?`
+          : profile.role === 'doctor'
+          ? `Hello! I'm Amina. I can see you're logged in as a Doctor. How can I help you today?`
+          : `Hello! I'm Amina, your healthcare companion. How can I help you today?`;
+        setMessages([{ role: 'assistant', content: roleGreeting }]);
+      }
+    }).catch(err => {
+      console.error('Failed to build health context:', err);
+      setMessages([{ role: 'assistant', content: welcomeMessages.en }]);
+    });
+  }, [profile?.id, profile?.role, welcomeMessages]);
 
   const sendMessage = useCallback(async (content) => {
     if (!content.trim() || isLoading) return;
@@ -374,6 +488,7 @@ function useAminaChatChatMode() {
         userRole: profile?.role || 'mother',
         languageInstruction: langInstruction,
         healthContext: healthContextRef.current,
+        proactiveContext: proactiveContextRef.current,
       });
       setMessages(prev => [...prev, { role: 'assistant', content: response }]);
     } catch {
@@ -384,13 +499,26 @@ function useAminaChatChatMode() {
   }, [messages, isLoading, profile?.role, language]);
 
   const clearChat = useCallback(() => {
-    setMessages([{ role: 'assistant', content: welcomeMessages[language] || welcomeMessages.en }]);
+    // Re-generate personalized greeting on clear
+    if (profile?.role === 'mother') {
+      generateAminaGreeting(profile).then(greetingData => {
+        if (greetingData) {
+          setMessages([{ role: 'assistant', content: greetingData.text }]);
+        } else {
+          setMessages([{ role: 'assistant', content: welcomeMessages[language] || welcomeMessages.en }]);
+        }
+      }).catch(() => {
+        setMessages([{ role: 'assistant', content: welcomeMessages[language] || welcomeMessages.en }]);
+      });
+    } else {
+      setMessages([{ role: 'assistant', content: welcomeMessages[language] || welcomeMessages.en }]);
+    }
     setError(null);
-  }, [language, welcomeMessages]);
+  }, [language, welcomeMessages, profile]);
 
   const switchLanguage = useCallback((lang) => setLanguage(lang), []);
 
-  return { messages, isLoading, error, sendMessage, clearChat, language, switchLanguage };
+  return { messages, isLoading, error, sendMessage, clearChat, language, switchLanguage, greeting };
 }
 
 // ============================================================
@@ -403,12 +531,24 @@ export const AminaChat = () => {
   const { unreadCount, fetchNotifications } = useNotificationStore();
   const [showNotifications, setShowNotifications] = useState(false);
   const { notifications } = useNotificationStore();
+  const [voiceNotificationsEnabled, setVoiceNotificationsEnabled] = useState(true);
+  const hasSpokenRemindersRef = useRef(false);
 
   // Run reminder engine on mount
   useEffect(() => {
     if (profile?.id) {
-      runReminderEngine(profile).then(() => {
-        fetchNotifications();
+      runReminderEngine(profile).then((result) => {
+        fetchNotifications(profile.id);
+        // Auto-speak critical reminders if voice notifications enabled
+        if (voiceNotificationsEnabled && result.length > 0 && !hasSpokenRemindersRef.current) {
+          hasSpokenRemindersRef.current = true;
+          const criticalReminders = result.filter(n => n.priority === 'critical' || n.priority === 'high');
+          if (criticalReminders.length > 0 && criticalReminders[0].voice_message) {
+            if (isDeepgramConfigured()) {
+              deepgramSpeak(criticalReminders[0].voice_message).catch(() => {});
+            }
+          }
+        }
       }).catch(console.error);
     }
   }, [profile?.id]);
@@ -436,11 +576,33 @@ export const AminaChat = () => {
             >
               <div className={styles.notifHeader}>
                 <h4>Health Reminders</h4>
+                <div className={styles.notifActions}>
+                  <button
+                    className={styles.voiceNotifToggle}
+                    onClick={() => setVoiceNotificationsEnabled(!voiceNotificationsEnabled)}
+                    title={voiceNotificationsEnabled ? 'Voice reminders ON' : 'Voice reminders OFF'}
+                  >
+                    {voiceNotificationsEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
+                  </button>
+                </div>
               </div>
               {notifications.map(n => (
                 <div key={n.id} className={`${styles.notifItem} ${styles[`priority_${n.priority}`]}`}>
                   <strong>{n.title}</strong>
                   <p>{n.message}</p>
+                  {n.voice_message && voiceNotificationsEnabled && (
+                    <button
+                      className={styles.speakNotifBtn}
+                      onClick={() => {
+                        if (isDeepgramConfigured()) {
+                          deepgramSpeak(n.voice_message).catch(() => {});
+                        }
+                      }}
+                      title="Listen to this reminder"
+                    >
+                      <Volume2 size={12} />
+                    </button>
+                  )}
                 </div>
               ))}
             </motion.div>

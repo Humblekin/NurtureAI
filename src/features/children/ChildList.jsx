@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, Plus, Baby, Calendar, Trash2 } from 'lucide-react';
 import useChildStore from '../../stores/childStore';
+import useMotherStore from '../../stores/motherStore';
+import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
 import { Card, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
@@ -11,18 +13,29 @@ import EmptyState from '../../components/ui/EmptyState';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
 
 export const ChildList = () => {
-  const { children, fetchAllChildren, softDelete, isLoading, error } = useChildStore();
+  const { children, fetchAllChildren, fetchChildrenByMotherId, softDelete, isLoading, error } = useChildStore();
+  const { profile } = useAuthStore();
+  const { currentMother, fetchMotherByProfileId } = useMotherStore();
   const addToast = useAppStore((state) => state.addToast);
   const [searchTerm, setSearchTerm] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const rolePrefix = profile?.role || 'chw';
 
+  // First, fetch mother record for mothers
   useEffect(() => {
-    fetchAllChildren();
-  }, [fetchAllChildren]);
+    if (profile?.role === 'mother' && profile?.id) {
+      fetchMotherByProfileId(profile.id);
+    }
+  }, [profile?.role, profile?.id, fetchMotherByProfileId]);
 
-  // Ideally, this should fetch all children, not just by mother ID, but our store currently fetches by motherId.
-  // For a CHW view, we would add a `fetchAllChildren` method to the store. 
-  // For the sake of this component, let's assume `children` state is populated correctly.
+  // Then fetch children - scoped by mother for mothers, all for CHW/admin
+  useEffect(() => {
+    if (profile?.role === 'mother' && currentMother?.id) {
+      fetchChildrenByMotherId(currentMother.id);
+    } else if (profile?.role === 'chw' || profile?.role === 'admin') {
+      fetchAllChildren();
+    }
+  }, [profile?.role, currentMother?.id, fetchAllChildren, fetchChildrenByMotherId]);
 
   const filteredChildren = children.filter(child => {
     return child.full_name?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -37,7 +50,7 @@ export const ChildList = () => {
             Monitor growth and vaccination schedules.
           </p>
         </div>
-        <Link to="/children/new">
+        <Link to={`/${rolePrefix}/children/new`}>
           <Button leftIcon={<Plus size={18} />}>Register Child</Button>
         </Link>
       </div>
@@ -64,7 +77,7 @@ export const ChildList = () => {
         <div className="grid grid-4">
           {filteredChildren.map((child) => (
             <div key={child.id} style={{ position: 'relative' }}>
-              <Link to={`/children/${child.id}`} style={{ textDecoration: 'none' }}>
+              <Link to={`/${rolePrefix}/children/${child.id}`} style={{ textDecoration: 'none' }}>
                 <Card hoverable className="h-full flex-col">
                   <CardBody className="flex-col h-full items-center text-center gap-3">
                     <div className="flex-between" style={{ width: '100%' }}>
@@ -103,7 +116,7 @@ export const ChildList = () => {
           title="No children found" 
           description={searchTerm ? "Try adjusting your search." : "No children registered yet."}
           action={!searchTerm && (
-            <Link to="/children/new">
+            <Link to={`/${rolePrefix}/children/new`}>
               <Button variant="outline">Register First Child</Button>
             </Link>
           )}

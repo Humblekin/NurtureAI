@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Heart, Baby, Calendar, Activity, AlertTriangle, ChevronRight, Plus } from 'lucide-react';
+import { Heart, Baby, Calendar, Activity, AlertTriangle, ChevronRight, Plus, FileText, MessageCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import useAuthStore from '../../stores/authStore';
 import useMotherStore from '../../stores/motherStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
@@ -12,6 +13,7 @@ import db from '../../lib/db';
 export const MotherHealth = () => {
   const { profile } = useAuthStore();
   const { currentMother, fetchMotherByProfileId, isLoading } = useMotherStore();
+  const navigate = useNavigate();
   const [pregnancies, setPregnancies] = useState([]);
   const [children, setChildren] = useState([]);
   const [antenatalVisits, setAntenatalVisits] = useState([]);
@@ -31,16 +33,18 @@ export const MotherHealth = () => {
 
   const loadData = async () => {
     try {
-      const [pregData, childData, anvData] = await Promise.all([
+      const [pregData, childData] = await Promise.all([
         db.pregnancies.where('mother_id').equals(currentMother.id).toArray(),
         db.children.where('mother_id').equals(currentMother.id).toArray(),
-        db.antenatal_visits.toArray(),
       ]);
       setPregnancies(pregData);
       setChildren(childData);
-      // Filter antenatal visits for this mother's pregnancies
+      // Scope antenatal visits to this mother's pregnancies only
       const pregIds = pregData.map(p => p.id);
-      setAntenatalVisits(anvData.filter(v => pregIds.includes(v.pregnancy_id)));
+      const anvData = pregIds.length > 0
+        ? await db.antenatal_visits.where('pregnancy_id').anyOf(pregIds).toArray()
+        : [];
+      setAntenatalVisits(anvData);
     } catch (err) {
       console.error('Failed to load health data:', err);
     }
@@ -57,10 +61,33 @@ export const MotherHealth = () => {
   if (!currentMother) {
     return (
       <div className="page-content fade-in">
-        <EmptyState
-          title="No health records found"
-          description="Your health profile hasn't been set up yet. A health worker will register your information."
-        />
+        <div style={{ marginBottom: 'var(--space-6)' }}>
+          <h1 className="heading-2">My Health</h1>
+          <p className="body-md" style={{ color: 'var(--text-secondary)' }}>
+            Track your pregnancy, children, and health visits.
+          </p>
+        </div>
+        <Card variant="elevated" style={{ borderStyle: 'dashed' }}>
+          <CardBody className="flex-col gap-4 items-center" style={{ padding: 'var(--space-8)', textAlign: 'center' }}>
+            <Heart size={32} style={{ color: 'var(--text-tertiary)' }} />
+            <div>
+              <h3 className="heading-4" style={{ marginBottom: 'var(--space-2)' }}>Set up your health profile</h3>
+              <p className="body-sm" style={{ color: 'var(--text-secondary)', maxWidth: 400, margin: '0 auto' }}>
+                Your health profile hasn&apos;t been set up yet. Complete your profile so Amina can support you throughout your pregnancy journey.
+              </p>
+            </div>
+            <div className="flex gap-3" style={{ marginTop: 'var(--space-2)' }}>
+              <Button onClick={() => navigate('/mother/welcome')}>
+                <FileText size={16} style={{ marginRight: 'var(--space-2)' }} />
+                Set Up Profile
+              </Button>
+              <Button variant="secondary" onClick={() => navigate('/shared/amina')}>
+                <MessageCircle size={16} style={{ marginRight: 'var(--space-2)' }} />
+                Chat with Amina
+              </Button>
+            </div>
+          </CardBody>
+        </Card>
       </div>
     );
   }

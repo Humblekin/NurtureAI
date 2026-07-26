@@ -25,11 +25,18 @@ import ReferralForm from '../features/referrals/ReferralForm';
 import AminaChat from '../features/amina/AminaChat';
 import SettingsPage from '../features/settings/SettingsPage';
 import MotherHealth from '../features/health/MotherHealth';
+import PregnancyFormPage from '../features/pregnancies/PregnancyFormPage';
 import AppointmentList from '../features/health/AppointmentList';
+import HealthJourneyPage from '../features/timeline/HealthJourneyPage';
 import ReportsPage from '../features/reports/ReportsPage';
 import AdminUsers from '../features/admin/AdminUsers';
 import AdminFacilities from '../features/admin/AdminFacilities';
 import AdminArchive from '../features/admin/AdminArchive';
+import OnboardingFlow from '../features/amina/OnboardingFlow';
+import MotherWelcome from '../features/amina/MotherWelcome';
+import OnboardingForm from '../features/amina/OnboardingForm';
+import PregnancyAminaFlow from '../features/pregnancies/PregnancyAminaFlow';
+import PregnancyRegister from '../features/pregnancies/PregnancyRegister';
 
 const A = AuthGuard;
 
@@ -42,12 +49,40 @@ export const router = createBrowserRouter([
 
       // ─── Mother Portal ────────────────────────────────────
       {
+        path: 'mother/welcome',
+        element: <A allowedRoles={['mother']}><MotherWelcome /></A>
+      },
+      {
+        path: 'mother/onboarding/form',
+        element: <A allowedRoles={['mother']}><OnboardingForm /></A>
+      },
+      {
+        path: 'mother/onboarding',
+        element: <A allowedRoles={['mother']}><OnboardingFlow /></A>
+      },
+      {
         path: 'mother/dashboard',
         element: <A allowedRoles={['mother']}><MotherDashboard /></A>
       },
       {
+        path: 'mother/timeline',
+        element: <A allowedRoles={['mother']}><HealthJourneyPage /></A>
+      },
+      {
         path: 'mother/pregnancy',
         element: <A allowedRoles={['mother']}><MotherHealth /></A>
+      },
+      {
+        path: 'mother/pregnancy',
+        element: <A allowedRoles={['mother']}><MotherHealth /></A>
+      },
+      {
+        path: 'mother/pregnancy/new',
+        element: <A allowedRoles={['mother']}><PregnancyFormPage /></A>
+      },
+      {
+        path: 'mother/pregnancy/amina',
+        element: <A allowedRoles={['mother']}><PregnancyAminaFlow /></A>
       },
       {
         path: 'mother/children',
