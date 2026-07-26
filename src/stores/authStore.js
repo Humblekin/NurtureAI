@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import supabase, { isSupabaseConfigured } from '../lib/supabase';
 import db from '../lib/db';
 import { seedDemoForRole } from '../lib/demoData';
+import { fullSync } from '../lib/sync';
 import useMotherStore from './motherStore';
 import usePregnancyStore from './pregnancyStore';
 import useChildStore from './childStore';
@@ -99,8 +100,6 @@ const useAuthStore = create(
             if (!profileError && profile) {
               set({ profile });
               await db.profiles.put({ ...profile, synced_at: new Date().toISOString() });
-              // Seed demo data if database is empty (even with Supabase configured)
-              await seedDemoForRole(profile.id, profile.role);
             } else {
               console.error('Profile fetch error:', profileError);
             }
@@ -197,11 +196,11 @@ const useAuthStore = create(
           if (!profileError && profile) {
             set({ profile });
             await db.profiles.put({ ...profile, synced_at: new Date().toISOString() });
-            // Seed demo data if database is empty
-            await seedDemoForRole(profile.id, profile.role);
           }
 
           set({ isLoading: false });
+          // Sync data from Supabase to local IndexedDB
+          fullSync().catch(err => console.error('Post-login sync failed:', err));
           return { success: true };
         } catch (error) {
           set({ error: error.message, isLoading: false });
@@ -256,6 +255,8 @@ const useAuthStore = create(
             });
           }
 
+          // Sync data after registration
+          fullSync().catch(err => console.error('Post-signup sync failed:', err));
           return { success: true };
         } catch (error) {
           set({ error: error.message, isLoading: false });

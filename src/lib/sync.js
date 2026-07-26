@@ -3,10 +3,9 @@ import db, { getPendingSyncs, removeSyncEntry } from './db';
 
 /**
  * NurtureAI Sync Engine
- * 
- * Implements an outbox pattern for offline-first data synchronization.
- * Local changes are queued and replayed against Supabase when online.
- * Conflict resolution uses "last write wins" with timestamp comparison.
+ *
+ * Outbox pattern: local writes → sync_queue → push to Supabase when online.
+ * Also pulls from Supabase to keep local IndexedDB up-to-date across devices.
  */
 
 let isSyncing = false;
@@ -15,10 +14,12 @@ let syncListeners = [];
 const LOCAL_ONLY_FIELDS = ['synced_at', 'deleted_at'];
 const MAX_SYNC_ATTEMPTS = 5;
 
-/**
- * Columns that exist in Supabase for each table.
- * Anything not in this list is stripped before upsert to prevent 400 errors.
- */
+const PULL_TABLES = [
+  'profiles', 'mothers', 'pregnancies', 'antenatal_visits',
+  'children', 'vaccinations', 'growth_records', 'milestones',
+  'visits', 'referrals', 'facilities', 'districts', 'notifications',
+];
+
 const SUPABASE_COLUMNS = {
   mothers: ['id', 'profile_id', 'full_name', 'phone', 'date_of_birth', 'community', 'blood_group', 'medical_history', 'risk_level', 'assigned_worker_id', 'edd', 'created_at', 'updated_at'],
   pregnancies: ['id', 'mother_id', 'status', 'risk_level', 'lmp', 'edd', 'gravida', 'para', 'notes', 'created_at', 'updated_at'],
@@ -36,13 +37,9 @@ const SUPABASE_COLUMNS = {
 function stripLocalFields(data, tableName) {
   if (!data || typeof data !== 'object') return data;
   const clean = { ...data };
-
-  // Remove local-only fields
   for (const field of LOCAL_ONLY_FIELDS) {
     delete clean[field];
   }
-
-  // If we know the table schema, also strip unknown columns
   const allowedColumns = SUPABASE_COLUMNS[tableName];
   if (allowedColumns) {
     for (const key of Object.keys(clean)) {
@@ -51,13 +48,9 @@ function stripLocalFields(data, tableName) {
       }
     }
   }
-
   return clean;
 }
 
-/**
- * Register a listener for sync status changes.
- */
 export function onSyncStatusChange(callback) {
   syncListeners.push(callback);
   return () => {
@@ -70,8 +63,7 @@ function notifySyncListeners(status) {
 }
 
 /**
- * Process all pending sync queue entries.
- * Called when network connectivity is restored.
+ * Process all pending sync queue entries (push local changes to Supabase).
  */
 export async function processSyncQueue() {
   if (!isSupabaseConfigured() || isSyncing) return;
@@ -85,9 +77,8 @@ export async function processSyncQueue() {
     let errorCount = 0;
 
     for (const entry of pending) {
-      // Skip entries that have exceeded max retries (likely RLS-blocked)
       if ((entry.attempts || 0) >= MAX_SYNC_ATTEMPTS) {
-        console.warn(`[Sync] Skipping ${entry.table_name}/${entry.record_id} — max retries exceeded (${entry.last_error})`);
+        console.warn(`[Sync] Skipping ${entry.table_name}/${entry.record_id} — max retries exceeded`);
         await removeSyncEntry(entry.id);
         continue;
       }
@@ -116,7 +107,6 @@ export async function processSyncQueue() {
               .eq('id', entry.record_id);
             break;
           default:
-            console.warn(`Unknown sync operation: ${entry.operation}`);
             continue;
         }
 
@@ -124,12 +114,11 @@ export async function processSyncQueue() {
           throw result.error;
         }
 
-        // Mark the local record as synced
-        const localTable = db.table(entry.table_name);
         if (entry.operation !== 'DELETE') {
+          const localTable = db.table(entry.table_name);
           await localTable.update(entry.record_id, {
             synced_at: new Date().toISOString(),
-          });
+          }).catch(() => {});
         }
 
         await removeSyncEntry(entry.id);
@@ -137,8 +126,6 @@ export async function processSyncQueue() {
       } catch (error) {
         console.error(`Sync error for ${entry.table_name}/${entry.record_id}:`, error);
         errorCount++;
-
-        // Update retry count
         await db.sync_queue.update(entry.id, {
           attempts: (entry.attempts || 0) + 1,
           last_error: error.message,
@@ -158,63 +145,119 @@ export async function processSyncQueue() {
 }
 
 /**
- * Pull latest data from Supabase for a specific table.
- * Uses synced_at timestamp to only fetch newer records.
+ * Pull data FROM Supabase into local IndexedDB.
+ * Fetches records updated since lastSyncedAt for each table.
  */
 export async function pullFromServer(tableName, lastSyncedAt) {
   if (!isSupabaseConfigured()) return [];
 
-  let query = supabase
-    .from(tableName)
-    .select('*')
-    .order('updated_at', { ascending: false })
-    .limit(1000);
+  try {
+    let query = supabase
+      .from(tableName)
+      .select('*')
+      .order('updated_at', { ascending: false })
+      .limit(1000);
 
-  if (lastSyncedAt) {
-    query = query.gt('updated_at', lastSyncedAt);
+    if (lastSyncedAt) {
+      query = query.gt('updated_at', lastSyncedAt);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.warn(`[Sync] Pull error for ${tableName}:`, error.message);
+      return [];
+    }
+
+    if (data && data.length > 0) {
+      const localTable = db.table(tableName);
+      await localTable.bulkPut(
+        data.map(record => ({
+          ...record,
+          synced_at: new Date().toISOString(),
+        }))
+      );
+    }
+
+    return data || [];
+  } catch (err) {
+    console.warn(`[Sync] Pull failed for ${tableName}:`, err.message);
+    return [];
   }
-
-  const { data, error } = await query;
-  if (error) throw error;
-
-  // Upsert into local database
-  if (data && data.length > 0) {
-    const localTable = db.table(tableName);
-    await localTable.bulkPut(
-      data.map(record => ({
-        ...record,
-        synced_at: new Date().toISOString(),
-      }))
-    );
-  }
-
-  return data || [];
 }
 
 /**
- * Set up automatic sync when network comes online.
- * Includes periodic sync every 30 seconds to catch any missed queue entries.
+ * Pull all tables from Supabase into local IndexedDB.
+ * This is the key function for multi-device sync.
  */
+export async function pullAllTables() {
+  if (!isSupabaseConfigured()) return;
+
+  notifySyncListeners('syncing');
+
+  try {
+    for (const table of PULL_TABLES) {
+      await pullFromServer(table);
+    }
+    notifySyncListeners('synced');
+  } catch (error) {
+    console.error('[Sync] Pull all tables failed:', error);
+    notifySyncListeners('error');
+  }
+}
+
+/**
+ * Full sync: push local changes, then pull remote changes.
+ */
+export async function fullSync() {
+  if (!isSupabaseConfigured()) return;
+
+  try {
+    await processSyncQueue();
+    await pullAllTables();
+  } catch (error) {
+    console.error('[Sync] Full sync failed:', error);
+  }
+}
+
+// ---- Auto-sync setup ----
+
 let syncInterval = null;
+let onlineHandler = null;
 
 export function setupAutoSync() {
-  window.addEventListener('online', () => {
-    console.log('NurtureAI: Network restored, starting sync...');
-    processSyncQueue().catch(err => console.error('Sync on reconnect failed:', err));
-  });
+  // Clean up previous listeners
+  if (onlineHandler) {
+    window.removeEventListener('online', onlineHandler);
+  }
 
-  // Periodic sync every 30 seconds (catches missed entries)
+  onlineHandler = () => {
+    console.log('[Sync] Network restored, syncing...');
+    fullSync().catch(err => console.error('[Sync] Reconnect sync failed:', err));
+  };
+  window.addEventListener('online', onlineHandler);
+
   if (syncInterval) clearInterval(syncInterval);
   syncInterval = setInterval(() => {
     if (navigator.onLine && isSupabaseConfigured()) {
-      processSyncQueue().catch(err => console.error('Periodic sync failed:', err));
+      fullSync().catch(err => console.error('[Sync] Periodic sync failed:', err));
     }
   }, 30000);
 
-  // Initial sync if online
+  // Initial sync after short delay
   if (navigator.onLine && isSupabaseConfigured()) {
     setTimeout(() => {
-      processSyncQueue().catch(err => console.error('Initial sync failed:', err));
+      fullSync().catch(err => console.error('[Sync] Initial sync failed:', err));
     }, 2000);
+  }
+}
+
+export function stopAutoSync() {
+  if (syncInterval) {
+    clearInterval(syncInterval);
+    syncInterval = null;
+  }
+  if (onlineHandler) {
+    window.removeEventListener('online', onlineHandler);
+    onlineHandler = null;
   }
 }
