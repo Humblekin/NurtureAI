@@ -682,6 +682,11 @@
    Mobile — Voice Mode
    ============================================ */
 @media (max-width: 768px) {
+  .voicePage {
+    overflow-y: auto;
+    padding-bottom: var(--bottom-nav-height);
+  }
+
   .voiceTopBar {
     padding: var(--space-2) var(--space-3);
   }
@@ -779,6 +784,7 @@
 
   .inputArea {
     padding: var(--space-2) var(--space-3);
+    padding-bottom: calc(var(--space-2) + var(--bottom-nav-height));
   }
 
   .inputWrapper {
