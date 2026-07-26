@@ -152,14 +152,18 @@ export async function pullFromServer(tableName, lastSyncedAt) {
   if (!isSupabaseConfigured()) return [];
 
   try {
+    // Tables without updated_at — order by created_at instead
+    const useCreated_at = ['notifications', 'ai_conversations'];
+    const orderCol = useCreated_at.includes(tableName) ? 'created_at' : 'updated_at';
+
     let query = supabase
       .from(tableName)
       .select('*')
-      .order('updated_at', { ascending: false })
+      .order(orderCol, { ascending: false })
       .limit(1000);
 
     if (lastSyncedAt) {
-      query = query.gt('updated_at', lastSyncedAt);
+      query = query.gt(orderCol, lastSyncedAt);
     }
 
     const { data, error } = await query;
