@@ -1,12 +1,14 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Users, Activity, AlertTriangle, CheckCircle2, Baby } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import useAuthStore from '../../stores/authStore';
 import useMotherStore from '../../stores/motherStore';
 import useVisitStore from '../../stores/visitStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
+import db from '../../lib/db';
 
 export const CHWDashboard = () => {
   const { profile } = useAuthStore();
@@ -19,6 +21,14 @@ export const CHWDashboard = () => {
       fetchVisitsByWorker(profile.id);
     }
   }, [profile?.id, fetchMothers, fetchVisitsByWorker]);
+
+  const totalPatients = useLiveQuery(() =>
+    db.mothers.filter(m => !m.deleted_at).count()
+  ) ?? mothers.length;
+
+  const totalVisits = useLiveQuery(() =>
+    db.visits.filter(v => !v.deleted_at).count()
+  ) ?? visits.length;
 
   const highRiskMothers = mothers.filter(m => m.risk_level === 'high' || m.risk_level === 'critical');
   const today = new Date().toISOString().split('T')[0];
@@ -42,10 +52,10 @@ export const CHWDashboard = () => {
               <span className="body-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Total Patients</span>
               <Users size={16} style={{ color: 'var(--color-primary-500)' }} />
             </div>
-            <h2 className="heading-2" style={{ marginTop: 'var(--space-2)' }}>{mothers.length}</h2>
+            <h2 className="heading-2" style={{ marginTop: 'var(--space-2)' }}>{totalPatients}</h2>
           </CardBody>
         </Card>
-        
+
         <Card>
           <CardBody>
             <div className="flex-between">
@@ -72,7 +82,7 @@ export const CHWDashboard = () => {
               <span className="body-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Total Visits</span>
               <CheckCircle2 size={16} style={{ color: 'var(--color-success-500)' }} />
             </div>
-            <h2 className="heading-2" style={{ marginTop: 'var(--space-2)' }}>{visits.length}</h2>
+            <h2 className="heading-2" style={{ marginTop: 'var(--space-2)' }}>{totalVisits}</h2>
           </CardBody>
         </Card>
       </div>
@@ -83,7 +93,7 @@ export const CHWDashboard = () => {
           <CardBody style={{ padding: 0 }}>
             {highRiskMothers.length > 0 ? (
               highRiskMothers.slice(0, 5).map((mother) => (
-                <Link to={`/chw/mothers/${mother.profile_id || mother.id}`} 
+                <Link to={`/chw/mothers/${mother.profile_id || mother.id}`}
                   key={mother.id}
                   style={{ textDecoration: 'none', color: 'inherit' }}
                 >

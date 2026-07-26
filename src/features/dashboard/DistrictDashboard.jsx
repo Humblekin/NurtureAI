@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Building2, Users, Activity, TrendingUp, MapPin, FileText } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import useAuthStore from '../../stores/authStore';
 import useMotherStore from '../../stores/motherStore';
 import useReferralStore from '../../stores/referralStore';
@@ -14,25 +14,15 @@ export const DistrictDashboard = () => {
   const { profile } = useAuthStore();
   const { mothers, fetchMothers, isLoading } = useMotherStore();
   const { referrals, fetchOutgoingReferrals } = useReferralStore();
-  const [facilityCount, setFacilityCount] = useState(0);
-  const [workerCount, setWorkerCount] = useState(0);
 
-  useEffect(() => {
+  const facilityCount = useLiveQuery(() => db.facilities.filter(f => !f.deleted_at).count()) ?? 0;
+  const workerCount = useLiveQuery(() => {
+    return db.profiles.where('role').anyOf(['chw', 'nurse', 'doctor']).count();
+  }) ?? 0;
+
+  if (mothers.length === 0 && !isLoading) {
     fetchMothers();
-    async function fetchCounts() {
-      try {
-        const [facilities, profiles] = await Promise.all([
-          db.facilities.count(),
-          db.profiles.where('role').anyOf(['chw', 'nurse', 'doctor']).count(),
-        ]);
-        setFacilityCount(facilities);
-        setWorkerCount(profiles);
-      } catch (e) {
-        console.error('Failed to fetch district stats:', e);
-      }
-    }
-    fetchCounts();
-  }, [fetchMothers]);
+  }
 
   const highRisk = mothers.filter(m => m.risk_level === 'high' || m.risk_level === 'critical');
   const pendingReferrals = referrals.filter(r => r.status === 'pending');

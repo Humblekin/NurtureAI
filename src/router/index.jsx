@@ -73,10 +73,6 @@ export const router = createBrowserRouter([
         element: <A allowedRoles={['mother']}><MotherHealth /></A>
       },
       {
-        path: 'mother/pregnancy',
-        element: <A allowedRoles={['mother']}><MotherHealth /></A>
-      },
-      {
         path: 'mother/pregnancy/new',
         element: <A allowedRoles={['mother']}><PregnancyFormPage /></A>
       },

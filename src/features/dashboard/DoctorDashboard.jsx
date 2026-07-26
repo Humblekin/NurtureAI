@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Stethoscope, Users, AlertTriangle, ClipboardList, Activity, ArrowRight } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import useAuthStore from '../../stores/authStore';
 import useMotherStore from '../../stores/motherStore';
 import useReferralStore from '../../stores/referralStore';
@@ -8,12 +9,12 @@ import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
+import db from '../../lib/db';
 
 export const DoctorDashboard = () => {
   const { profile } = useAuthStore();
   const { mothers, fetchMothers, isLoading } = useMotherStore();
   const { referrals, fetchIncomingReferrals } = useReferralStore();
-  const [today] = useState(new Date().toISOString().split('T')[0]);
 
   useEffect(() => {
     fetchMothers();
@@ -21,6 +22,10 @@ export const DoctorDashboard = () => {
       fetchIncomingReferrals(profile.facility_id);
     }
   }, [profile?.facility_id, fetchMothers, fetchIncomingReferrals]);
+
+  const totalPatients = useLiveQuery(() =>
+    db.mothers.filter(m => !m.deleted_at).count()
+  ) ?? mothers.length;
 
   const highRisk = mothers.filter(m => m.risk_level === 'high' || m.risk_level === 'critical');
   const pendingReferrals = referrals.filter(r => r.status === 'pending');
@@ -76,7 +81,7 @@ export const DoctorDashboard = () => {
               <span className="body-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Total Patients</span>
               <Users size={16} style={{ color: 'var(--color-primary-500)' }} />
             </div>
-            <h2 className="heading-2" style={{ marginTop: 'var(--space-2)' }}>{mothers.length}</h2>
+            <h2 className="heading-2" style={{ marginTop: 'var(--space-2)' }}>{totalPatients}</h2>
           </CardBody>
         </Card>
       </div>
