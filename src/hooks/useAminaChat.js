@@ -242,8 +242,8 @@ export function useVoiceConversation() {
         console.error('[Voice] STT error:', err);
         if (err.includes('permission')) setMicPermission('denied');
       },
-    });
-  }, []);
+    }, { language });
+  }, [language]);
 
   const stopListening = useCallback(() => {
     if (sttRef.current) {

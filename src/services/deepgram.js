@@ -51,15 +51,17 @@ export function isDeepgramConfigured() {
  * @param {function} callbacks.onError   - (error) connection or recognition error
  * @returns {{ stop: () => void }} Call stop() to close the WebSocket
  */
-export function startStreamingSTT(stream, callbacks) {
+export function startStreamingSTT(stream, callbacks, options = {}) {
   if (!DEEPGRAM_API_KEY) {
     callbacks.onError?.('Deepgram API key not configured');
     return { stop: () => {} };
   }
 
+  const sttLanguage = options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US';
+
   const params = new URLSearchParams({
     model: 'nova-2',
-    language: 'en-US',
+    language: sttLanguage,
     smart_format: 'true',
     interim_results: 'true',
     utterance_end_ms: '1000',
@@ -162,6 +164,45 @@ export function startStreamingSTT(stream, callbacks) {
 let currentAudio = null;
 let currentAbortController = null;
 
+const TTS_MAX_CHUNK = 1000;
+
+function chunkText(text, maxLen = TTS_MAX_CHUNK) {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxLen) return [trimmed];
+  const chunks = [];
+  let rest = trimmed;
+  while (rest.length > 0) {
+    if (rest.length <= maxLen) { chunks.push(rest); break; }
+    let cut = rest.lastIndexOf('. ', maxLen - 1);
+    if (cut <= 0) cut = rest.lastIndexOf(' ', maxLen - 1);
+    if (cut <= 0) cut = maxLen;
+    else cut += 1;
+    chunks.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  return chunks.filter(Boolean);
+}
+
+function playAudioChunk(audio, abortSignal) {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => { audio.pause(); audio.currentTime = 0; reject(new DOMException('Aborted', 'AbortError')); };
+    abortSignal.addEventListener('abort', onAbort, { once: true });
+    audio.onended = () => { abortSignal.removeEventListener('abort', onAbort); resolve(); };
+    audio.onerror = (e) => { abortSignal.removeEventListener('abort', onAbort); reject(e); };
+    audio.play().catch((err) => {
+      if (err.name === 'NotAllowedError') {
+        unlockAudio();
+        setTimeout(() => {
+          audio.play().then(resolve).catch(() => { abortSignal.removeEventListener('abort', onAbort); reject(err); });
+        }, 100);
+      } else {
+        abortSignal.removeEventListener('abort', onAbort);
+        reject(err);
+      }
+    });
+  });
+}
+
 /**
  * Convert text to speech using Deepgram TTS.
  * @param {string} text - Text to speak
@@ -177,95 +218,55 @@ export async function speak(text, options = {}) {
   }
   if (!text?.trim()) return;
 
-  // Stop any current audio
   stopSpeaking();
-
   if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
   const abortController = new AbortController();
   currentAbortController = abortController;
-
   if (options.signal) {
     options.signal.addEventListener('abort', () => abortController.abort(), { once: true });
   }
 
+  const chunks = chunkText(text);
+  let started = false;
+
   try {
-    const response = await fetch(`${DEEPGRAM_REST_URL}/v1/speak`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Token ${DEEPGRAM_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        text,
-        model: 'aura-asteria-en',
-      }),
-      signal: abortController.signal,
-    });
+    for (const chunk of chunks) {
+      if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
-    if (!response.ok) {
-      const errBody = await response.text();
-      throw new Error(`Deepgram TTS error ${response.status}: ${errBody}`);
-    }
+      const response = await fetch(`${DEEPGRAM_REST_URL}/v1/speak?model=aura-asteria-en`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Token ${DEEPGRAM_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text: chunk }),
+        signal: abortController.signal,
+      });
 
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.preload = 'auto';
-    currentAudio = audio;
-
-    options.onSpeechStart?.();
-
-    await new Promise((resolve, reject) => {
-      const cleanup = () => {
-        URL.revokeObjectURL(url);
-        currentAudio = null;
-        currentAbortController = null;
-        options.onSpeechEnd?.();
-      };
-
-      abortController.signal.addEventListener('abort', () => {
-        audio.pause();
-        audio.currentTime = 0;
-        cleanup();
-        reject(new DOMException('Aborted', 'AbortError'));
-      }, { once: true });
-
-      audio.onended = () => { cleanup(); resolve(); };
-      audio.onerror = (e) => { cleanup(); reject(e); };
-
-      // Mobile browsers may block autoplay — retry with user gesture unlock
-      const playPromise = audio.play();
-      if (playPromise !== undefined) {
-        playPromise.catch((err) => {
-          if (err.name === 'NotAllowedError') {
-            console.warn('[TTS] Autoplay blocked, attempting audio unlock...');
-            // Create a short silent audio to unlock the audio context
-            const ctx = new (window.AudioContext || window.webkitAudioContext)();
-            const buffer = ctx.createBuffer(1, 1, 22050);
-            const source = ctx.createBufferSource();
-            source.buffer = buffer;
-            source.connect(ctx.destination);
-            source.start(0);
-            // Retry play after unlock
-            setTimeout(() => {
-              audio.play().then(resolve).catch(() => {
-                cleanup();
-                reject(err);
-              });
-            }, 100);
-          } else {
-            cleanup();
-            reject(err);
-          }
-        });
+      if (!response.ok) {
+        const errBody = await response.text();
+        throw new Error(`Deepgram TTS error ${response.status}: ${errBody}`);
       }
-    });
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.preload = 'auto';
+      currentAudio = audio;
+
+      if (!started) { started = true; options.onSpeechStart?.(); }
+
+      await playAudioChunk(audio, abortController.signal);
+      URL.revokeObjectURL(url);
+    }
   } catch (err) {
+    if (err.name !== 'AbortError') console.error('[TTS] Error:', err);
+    throw err;
+  } finally {
     currentAudio = null;
     currentAbortController = null;
-    if (err.name === 'AbortError') throw err;
-    throw err;
+    options.onSpeechEnd?.();
   }
 }
 

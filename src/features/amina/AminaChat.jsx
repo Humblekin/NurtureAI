@@ -600,6 +600,7 @@ export const AminaChat = () => {
                       className={styles.speakNotifBtn}
                       onClick={() => {
                         if (isDeepgramConfigured()) {
+                          unlockAudio();
                           deepgramSpeak(n.voice_message).catch(() => {});
                         }
                       }}
