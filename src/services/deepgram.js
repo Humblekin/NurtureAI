@@ -110,14 +110,23 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
   ws.onerror = (err) => {
     if (!stopped) {
       console.error('[STT] ❌ WebSocket error:', err);
-      callbacks.onError?.('Speech recognition connection error');
     }
   };
 
   ws.onclose = (event) => {
-    console.log('[STT] 🔌 WebSocket closed:', event.code, event.reason);
+    console.log('[STT] 🔌 WebSocket closed: code=' + event.code + ' reason=' + event.reason + ' wasClean=' + event.wasClean);
     if (recorder && recorder.state !== 'inactive') {
       try { recorder.stop(); } catch { /* ignore */ }
+    }
+    if (!stopped && event.code !== 1000) {
+      let msg = `WebSocket closed (code ${event.code})`;
+      if (event.code === 1006) msg = 'Connection lost — check your network';
+      else if (event.code === 1002) msg = 'Invalid protocol — check Deepgram API key';
+      else if (event.code === 1003) msg = 'Unsupported data — check audio encoding settings';
+      else if (event.code === 1008) msg = 'Policy violation — check Deepgram plan/permissions';
+      else if (event.code === 1011) msg = 'Deepgram server error — try again';
+      if (event.reason) msg += ': ' + event.reason;
+      callbacks.onError?.(msg);
     }
   };
 
