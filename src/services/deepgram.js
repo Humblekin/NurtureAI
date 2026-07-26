@@ -1,6 +1,4 @@
 /**
- * NurtureAI — Deepgram Voice Service
- *
  * Real-time STT (WebSocket streaming) + TTS (REST API).
  * Replaces browser SpeechRecognition and ElevenLabs.
  */
@@ -187,6 +185,7 @@ export async function speak(text, options = {}) {
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
+    audio.preload = 'auto';
     currentAudio = audio;
 
     options.onSpeechStart?.();
@@ -208,7 +207,33 @@ export async function speak(text, options = {}) {
 
       audio.onended = () => { cleanup(); resolve(); };
       audio.onerror = (e) => { cleanup(); reject(e); };
-      audio.play().catch((err) => { cleanup(); reject(err); });
+
+      // Mobile browsers may block autoplay — retry with user gesture unlock
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          if (err.name === 'NotAllowedError') {
+            console.warn('[TTS] Autoplay blocked, attempting audio unlock...');
+            // Create a short silent audio to unlock the audio context
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const buffer = ctx.createBuffer(1, 1, 22050);
+            const source = ctx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(ctx.destination);
+            source.start(0);
+            // Retry play after unlock
+            setTimeout(() => {
+              audio.play().then(resolve).catch(() => {
+                cleanup();
+                reject(err);
+              });
+            }, 100);
+          } else {
+            cleanup();
+            reject(err);
+          }
+        });
+      }
     });
   } catch (err) {
     currentAudio = null;
