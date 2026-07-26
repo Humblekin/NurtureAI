@@ -377,13 +377,6 @@ export function createConversationManager(deps) {
       conversationStartTime = new Date().toISOString();
       messageCount = 0;
 
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SpeechRecognition) {
-        forceState(CONVERSATION_STATES.ERROR);
-        onError?.('unsupported_browser');
-        return;
-      }
-
       forceState(CONVERSATION_STATES.IDLE);
 
       // Speak personalized greeting

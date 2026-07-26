@@ -195,7 +195,12 @@ export function useVoiceConversation() {
       setError(null);
       // Check if mediaDevices API is available (requires HTTPS or localhost)
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setError('Microphone access is not available. Make sure you are using HTTPS or localhost.');
+        const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+        if (!isSecure) {
+          setError('Microphone requires HTTPS. Your current connection is not secure. Please use HTTPS or access via localhost.');
+        } else {
+          setError('Microphone access is not available in this browser.');
+        }
         return null;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -210,7 +215,9 @@ export function useVoiceConversation() {
         setError('Microphone access was denied. Please allow microphone access in your browser settings and try again.');
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
         setMicPermission('prompt');
-        setError('No microphone detected. Please connect a microphone or check your device settings, then tap Retry.');
+        const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+        const extra = !isSecure ? ' Also make sure you are using HTTPS — microphone access is blocked on HTTP connections.' : '';
+        setError(`No microphone detected. Please connect a microphone or check your device settings, then tap Retry.${extra}`);
       } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
         setError('Your microphone is being used by another app. Please close other apps using the mic and try again.');
       } else {
