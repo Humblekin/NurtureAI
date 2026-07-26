@@ -1,6 +1,6 @@
 /**
- * Real-time STT (WebSocket streaming) + TTS (REST API).
- * Replaces browser SpeechRecognition and ElevenLabs.
+ * Real-time STT (WebSocket with REST fallback) + TTS (REST API).
+ * Falls back to chunked REST upload when WebSocket is blocked by carrier.
  */
 
 const DEEPGRAM_API_KEY = import.meta.env.VITE_DEEPGRAM_API_KEY;
@@ -11,12 +11,6 @@ const DEEPGRAM_WS_URL = 'wss://api.deepgram.com/v1/listen';
 
 let audioUnlocked = false;
 
-/**
- * Unlock audio playback on mobile browsers.
- * MUST be called from a user gesture (click/tap) BEFORE any async work.
- * Without this, iOS/Safari will block audio.play() even with user gesture
- * if the play() call happens in a different microtask.
- */
 export function unlockAudio() {
   if (audioUnlocked) return;
   try {
@@ -26,9 +20,7 @@ export function unlockAudio() {
     source.buffer = buffer;
     source.connect(ctx.destination);
     source.start(0);
-    if (ctx.state === 'suspended') {
-      ctx.resume();
-    }
+    if (ctx.state === 'suspended') ctx.resume();
     audioUnlocked = true;
   } catch (e) {
     console.warn('[Audio] Unlock failed:', e);
@@ -39,28 +31,255 @@ export function isDeepgramConfigured() {
   return !!DEEPGRAM_API_KEY;
 }
 
-// ---- Speech-to-Text (WebSocket streaming) ----
+// ---- Speech-to-Text ----
 
 /**
- * Start streaming STT from a MediaStream.
- *
- * @param {MediaStream} stream - Microphone stream from getUserMedia
- * @param {object} callbacks
- * @param {function} callbacks.onInterim - (text) live interim transcript
- * @param {function} callbacks.onFinal   - (text) final transcript (speech ended)
- * @param {function} callbacks.onError   - (error) connection or recognition error
- * @returns {{ stop: () => void }} Call stop() to close the WebSocket
+ * Attempt WebSocket STT. Returns a promise that resolves { ok: true, stop }
+ * if WebSocket connects, or { ok: false } if it fails (carrier block, etc).
  */
-export function startStreamingSTT(stream, callbacks, options = {}) {
+function tryWebSocketSTT(stream, callbacks, options) {
+  return new Promise((resolve) => {
+    const sttLanguage = options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US';
+    const params = new URLSearchParams({
+      token: DEEPGRAM_API_KEY,
+      model: 'nova-2',
+      language: sttLanguage,
+      smart_format: 'true',
+      interim_results: 'true',
+      utterance_end_ms: '1000',
+      vad_events: 'true',
+      encoding: 'webm',
+      sample_rate: '48000',
+    });
+
+    const wsUrl = `${DEEPGRAM_WS_URL}?${params.toString()}`;
+    console.log('[STT] 🔌 Trying WebSocket...');
+
+    const ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+    let stopped = false;
+    let connected = false;
+    let chunkCount = 0;
+
+    const connectTimeout = setTimeout(() => {
+      if (!connected) {
+        console.warn('[STT] ⚠️ WebSocket connect timeout — carrier may be blocking WSS');
+        try { ws.close(); } catch {}
+        resolve({ ok: false });
+      }
+    }, 5000);
+
+    ws.onopen = () => {
+      connected = true;
+      clearTimeout(connectTimeout);
+      console.log('[STT] ✅ WebSocket connected');
+      ws.send(JSON.stringify({
+        type: 'Configure',
+        processing: {
+          interim_results: true,
+          utterance_end_ms: 1000,
+          vad_events: true,
+          smart_format: true,
+        },
+      }));
+    };
+
+    ws.onerror = () => {
+      if (!connected) {
+        clearTimeout(connectTimeout);
+        resolve({ ok: false });
+      }
+    };
+
+    ws.onclose = (event) => {
+      if (!connected) {
+        clearTimeout(connectTimeout);
+        resolve({ ok: false });
+        return;
+      }
+      console.log('[STT] 🔌 WebSocket closed: code=' + event.code);
+      if (!stopped && event.code !== 1000) {
+        let msg = 'Voice connection lost';
+        if (event.code === 1006) msg = 'Connection lost — check your internet';
+        else if (event.code === 1002) msg = 'Invalid API key';
+        else if (event.code === 1008) msg = 'API key rejected — check Deepgram plan';
+        else msg = 'Voice disconnected (code ' + event.code + ')';
+        if (event.reason) msg += ': ' + event.reason;
+        callbacks.onError?.(msg);
+      }
+    };
+
+    ws.onmessage = (event) => {
+      if (stopped) return;
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'Results') {
+          const transcript = msg.channel?.alternatives?.[0]?.transcript?.trim();
+          if (msg.is_final && transcript) {
+            console.log('[STT] ✅ Final:', transcript);
+            callbacks.onFinal?.(transcript);
+          } else if (transcript) {
+            callbacks.onInterim?.(transcript);
+          }
+        }
+      } catch { /* ignore */ }
+    };
+
+    let recorder = null;
+    try {
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+      recorder = new MediaRecorder(stream, { mimeType });
+      recorder.ondataavailable = async (e) => {
+        if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+          const buf = await e.data.arrayBuffer();
+          chunkCount++;
+          ws.send(buf);
+        }
+      };
+      recorder.start(100);
+    } catch (err) {
+      console.error('[STT] ❌ MediaRecorder error:', err);
+      clearTimeout(connectTimeout);
+      resolve({ ok: false });
+      return;
+    }
+
+    resolve({
+      ok: true,
+      stop: () => {
+        stopped = true;
+        console.log('[STT] 🛑 Stopping WebSocket STT, chunks:', chunkCount);
+        if (recorder && recorder.state !== 'inactive') {
+          try { recorder.stop(); } catch {}
+        }
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
+      },
+    });
+  });
+}
+
+/**
+ * REST-based STT fallback. Records audio in segments, sends via HTTP POST.
+ * Works on networks that block WebSocket connections.
+ */
+function startRestSTT(stream, callbacks, options) {
+  const sttLanguage = options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US';
+  const SEGMENT_MS = 3000; // 3-second audio segments
+  let stopped = false;
+  let recorder = null;
+  let isRecording = false;
+
+  console.log('[STT] 📡 Using REST fallback (HTTP POST) for STT');
+
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus'
+    : MediaRecorder.isTypeSupported('audio/mp4')
+    ? 'audio/mp4'
+    : 'audio/webm';
+
+  async function sendSegment(blob) {
+    if (stopped || blob.size < 100) return; // skip empty/tiny blobs
+    try {
+      console.log('[STT] 📡 Sending audio segment:', blob.size, 'bytes');
+      const params = new URLSearchParams({
+        model: 'nova-2',
+        language: sttLanguage,
+        smart_format: 'true',
+        detect_language: 'true',
+      });
+      const response = await fetch(`${DEEPGRAM_REST_URL}/v1/listen?${params.toString()}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Token ${DEEPGRAM_API_KEY}`,
+          'Content-Type': mimeType,
+        },
+        body: blob,
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error('[STT] ❌ REST STT error:', response.status, errText);
+        return;
+      }
+      const result = await response.json();
+      const transcript = result.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim();
+      if (transcript) {
+        console.log('[STT] ✅ Final transcript:', transcript);
+        callbacks.onFinal?.(transcript);
+      }
+    } catch (err) {
+      console.error('[STT] ❌ REST STT fetch error:', err);
+    }
+  }
+
+  function startRecording() {
+    if (stopped || isRecording) return;
+    isRecording = true;
+
+    const chunks = [];
+    try {
+      recorder = new MediaRecorder(stream, { mimeType });
+    } catch (err) {
+      console.error('[STT] ❌ MediaRecorder creation failed:', err);
+      callbacks.onError?.('Microphone access failed');
+      return;
+    }
+
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+
+    recorder.onstop = async () => {
+      isRecording = false;
+      if (stopped) return;
+      if (chunks.length > 0) {
+        const blob = new Blob(chunks, { type: mimeType });
+        await sendSegment(blob);
+      }
+      // Immediately start next segment
+      if (!stopped) startRecording();
+    };
+
+    recorder.start();
+    console.log('[STT] 🎙️ REST mode: recording segment...');
+
+    // Stop and send after SEGMENT_MS
+    setTimeout(() => {
+      if (recorder && recorder.state === 'recording') {
+        recorder.stop();
+      }
+    }, SEGMENT_MS);
+  }
+
+  // Start the first segment
+  startRecording();
+
+  return {
+    stop: () => {
+      stopped = true;
+      console.log('[STT] 🛑 Stopping REST STT');
+      if (recorder && recorder.state !== 'inactive') {
+        try { recorder.stop(); } catch {}
+      }
+    },
+  };
+}
+
+/**
+ * Start streaming STT. Tries WebSocket first, falls back to REST if blocked.
+ */
+export async function startStreamingSTT(stream, callbacks, options = {}) {
   if (!DEEPGRAM_API_KEY) {
     console.error('[STT] ❌ Deepgram API key not configured');
     callbacks.onError?.('Deepgram API key not configured');
     return { stop: () => {} };
   }
 
-  console.log('[STT] 🎤 Microphone stream:', stream);
   console.log('[STT] 🎤 Audio tracks:', stream.getAudioTracks().map(t => ({
-    kind: t.kind, enabled: t.enabled, readyState: t.readyState, label: t.label
+    kind: t.kind, enabled: t.enabled, readyState: t.readyState, label: t.label,
   })));
 
   const audioTracks = stream.getAudioTracks();
@@ -70,143 +289,19 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
     return { stop: () => {} };
   }
 
-  const sttLanguage = options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US';
+  // Try WebSocket first
+  const wsResult = await tryWebSocketSTT(stream, callbacks, options);
 
-  const params = new URLSearchParams({
-    token: DEEPGRAM_API_KEY,
-    model: 'nova-2',
-    language: sttLanguage,
-    smart_format: 'true',
-    interim_results: 'true',
-    utterance_end_ms: '1000',
-    vad_events: 'true',
-    encoding: 'opus',
-    sample_rate: '48000',
-  });
-
-  const wsUrl = `${DEEPGRAM_WS_URL}?${params.toString()}`;
-  console.log('[STT] 🔌 Connecting to Deepgram: wss://api.deepgram.com/v1/listen?...token=<redacted>&model=nova-2&language=' + sttLanguage);
-
-  const ws = new WebSocket(wsUrl);
-  ws.binaryType = 'arraybuffer';
-
-  let stopped = false;
-  let chunkCount = 0;
-
-  ws.onopen = () => {
-    console.log('[STT] ✅ Deepgram WebSocket connected');
-    ws.send(JSON.stringify({
-      type: 'Configure',
-      processing: {
-        interim_results: true,
-        utterance_end_ms: 1000,
-        vad_events: true,
-        smart_format: true,
-      },
-    }));
-    console.log('[STT] 📤 Sent Configure message');
-  };
-
-  ws.onerror = (err) => {
-    if (!stopped) {
-      console.error('[STT] ❌ WebSocket error:', err);
-      callbacks.onError?.('Cannot connect to Deepgram. Check your API key and network connection.');
-    }
-  };
-
-  ws.onclose = (event) => {
-    console.log('[STT] 🔌 WebSocket closed: code=' + event.code + ' reason=' + event.reason + ' wasClean=' + event.wasClean);
-    if (recorder && recorder.state !== 'inactive') {
-      try { recorder.stop(); } catch { /* ignore */ }
-    }
-    if (!stopped && event.code !== 1000) {
-      let msg = 'Voice connection lost';
-      if (event.code === 1006) msg = 'Connection lost — check your internet connection';
-      else if (event.code === 1002) msg = 'Invalid API key — check VITE_DEEPGRAM_API_KEY';
-      else if (event.code === 1003) msg = 'Unsupported audio format';
-      else if (event.code === 1008) msg = 'API key rejected — check your Deepgram plan';
-      else if (event.code === 1011) msg = 'Deepgram server error — try again';
-      else msg = 'Voice disconnected (code ' + event.code + ')';
-      if (event.reason) msg += ': ' + event.reason;
-      callbacks.onError?.(msg);
-    }
-  };
-
-  // Audio recorder: streams mic chunks to Deepgram
-  let recorder = null;
-  try {
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : 'audio/webm';
-
-    console.log('[STT] 🎙️ Creating MediaRecorder with mimeType:', mimeType);
-    recorder = new MediaRecorder(stream, { mimeType });
-
-    recorder.onstart = () => {
-      console.log('[STT] 🎙️ MediaRecorder started');
-    };
-
-    recorder.onerror = (e) => {
-      console.error('[STT] ❌ MediaRecorder error:', e.error);
-    };
-
-    recorder.ondataavailable = async (e) => {
-      if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-        const buf = await e.data.arrayBuffer();
-        chunkCount++;
-        if (chunkCount % 20 === 1) { // Log every ~2 seconds (20 * 100ms)
-          console.log(`[STT] 📦 Sent ${chunkCount} chunks, latest: ${buf.byteLength} bytes`);
-        }
-        ws.send(buf);
-      } else if (e.data.size > 0 && ws.readyState !== WebSocket.OPEN) {
-        console.warn('[STT] ⚠️ WebSocket not open, dropping chunk:', buf.byteLength, 'bytes, state:', ws.readyState);
-      }
-    };
-
-    recorder.start(100); // 100ms chunks for near-real-time
-    console.log('[STT] 🎙️ MediaRecorder initialized, waiting for WebSocket...');
-  } catch (err) {
-    console.error('[STT] ❌ MediaRecorder error:', err);
-    callbacks.onError?.('Microphone access failed');
-    return { stop: () => {} };
+  if (wsResult.ok) {
+    console.log('[STT] ✅ Using WebSocket mode');
+    callbacks.onMode?.('websocket');
+    return { stop: wsResult.stop };
   }
 
-  ws.onmessage = (event) => {
-    if (stopped) return;
-    try {
-      const msg = JSON.parse(event.data);
-
-      if (msg.type === 'Results') {
-        const transcript = msg.channel?.alternatives?.[0]?.transcript?.trim();
-        const confidence = msg.channel?.alternatives?.[0]?.confidence;
-
-        if (msg.is_final && transcript) {
-          console.log('[STT] ✅ Final transcript:', transcript, `(confidence: ${confidence})`);
-          callbacks.onFinal?.(transcript);
-        } else if (transcript) {
-          console.log('[STT] 📝 Interim transcript:', transcript);
-          callbacks.onInterim?.(transcript);
-        }
-      } else if (msg.type === 'UtteranceEnd') {
-        console.log('[STT] 🛑 UtteranceEnd received');
-      } else {
-        console.log('[STT] 📩 Deepgram message:', msg.type);
-      }
-    } catch { /* ignore parse errors */ }
-  };
-
-  return {
-    stop: () => {
-      stopped = true;
-      console.log('[STT] 🛑 Stopping STT, total chunks sent:', chunkCount);
-      if (recorder && recorder.state !== 'inactive') {
-        try { recorder.stop(); } catch { /* ignore */ }
-      }
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
-      }
-    },
-  };
+  // WebSocket failed — fall back to REST
+  console.log('[STT] ⚠️ WebSocket failed, falling back to REST mode');
+  callbacks.onMode?.('rest');
+  return startRestSTT(stream, callbacks, options);
 }
 
 // ---- Text-to-Speech (REST API) ----
@@ -255,12 +350,6 @@ function playAudioChunk(audio, abortSignal) {
 
 /**
  * Convert text to speech using Deepgram TTS.
- * @param {string} text - Text to speak
- * @param {object} [options]
- * @param {AbortSignal} [options.signal] - Abort signal
- * @param {function} [options.onSpeechStart] - Called when audio starts playing
- * @param {function} [options.onSpeechEnd] - Called when audio finishes
- * @returns {Promise<void>} Resolves when playback ends
  */
 export async function speak(text, options = {}) {
   if (!DEEPGRAM_API_KEY) {
@@ -284,7 +373,7 @@ export async function speak(text, options = {}) {
     for (const chunk of chunks) {
       if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
-      console.log('[TTS] 🔊 Generating speech for chunk:', chunk.substring(0, 50) + (chunk.length > 50 ? '...' : ''));
+      console.log('[TTS] 🔊 Generating:', chunk.substring(0, 50) + (chunk.length > 50 ? '...' : ''));
       const response = await fetch(`${DEEPGRAM_REST_URL}/v1/speak?model=aura-asteria-en`, {
         method: 'POST',
         headers: {
@@ -306,8 +395,7 @@ export async function speak(text, options = {}) {
       audio.preload = 'auto';
       currentAudio = audio;
 
-      console.log('[TTS] 🔊 Playing speech, blob size:', blob.size, 'bytes');
-
+      console.log('[TTS] 🔊 Playing, size:', blob.size, 'bytes');
       if (!started) { started = true; options.onSpeechStart?.(); }
 
       await playAudioChunk(audio, abortController.signal);
@@ -323,12 +411,9 @@ export async function speak(text, options = {}) {
   }
 }
 
-/**
- * Stop any currently playing TTS audio immediately.
- */
 export function stopSpeaking() {
   if (currentAudio) {
-    try { currentAudio.pause(); currentAudio.currentTime = 0; } catch { /* ignore */ }
+    try { currentAudio.pause(); currentAudio.currentTime = 0; } catch {}
     currentAudio = null;
   }
   if (currentAbortController) {
