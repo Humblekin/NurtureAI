@@ -12,7 +12,7 @@ let isSyncing = false;
 let syncListeners = [];
 
 const LOCAL_ONLY_FIELDS = ['synced_at', 'deleted_at'];
-const MAX_SYNC_ATTEMPTS = 5;
+const MAX_SYNC_ATTEMPTS = 10;
 
 const PULL_TABLES = [
   'profiles', 'mothers', 'pregnancies', 'antenatal_visits',
@@ -66,19 +66,29 @@ function notifySyncListeners(status) {
  * Process all pending sync queue entries (push local changes to Supabase).
  */
 export async function processSyncQueue() {
-  if (!isSupabaseConfigured() || isSyncing) return;
+  if (!isSupabaseConfigured()) {
+    console.warn('[Sync] Supabase not configured — sync disabled');
+    return;
+  }
+  if (isSyncing) return;
 
   isSyncing = true;
   notifySyncListeners('syncing');
 
   try {
     const pending = await getPendingSyncs();
+    if (pending.length === 0) {
+      notifySyncListeners('synced');
+      return;
+    }
+
+    console.log(`[Sync] Processing ${pending.length} pending entries...`);
     let successCount = 0;
     let errorCount = 0;
 
     for (const entry of pending) {
       if ((entry.attempts || 0) >= MAX_SYNC_ATTEMPTS) {
-        console.warn(`[Sync] Skipping ${entry.table_name}/${entry.record_id} — max retries exceeded`);
+        console.warn(`[Sync] Giving up on ${entry.table_name}/${entry.record_id} after ${entry.attempts} attempts: ${entry.last_error}`);
         await removeSyncEntry(entry.id);
         continue;
       }
@@ -133,6 +143,7 @@ export async function processSyncQueue() {
       }
     }
 
+    console.log(`[Sync] Done: ${successCount} synced, ${errorCount} failed out of ${pending.length}`);
     notifySyncListeners(errorCount > 0 ? 'error' : 'synced');
     return { successCount, errorCount };
   } catch (error) {

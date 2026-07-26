@@ -1,4 +1,4 @@
-import db from '../lib/db';
+import db, { queueSync } from '../lib/db';
 import { GHANA_EPI_SCHEDULE, findOverdueVaccine } from '../constants/vaccinationSchedule';
 
 /**
@@ -444,15 +444,19 @@ export async function runReminderEngine(profile) {
       allNotifications.push(...inactive, ...pendingRef);
     }
 
-    // Store notifications in IndexedDB
+    // Store notifications in IndexedDB and queue for sync
     if (allNotifications.length > 0) {
-      await db.notifications.bulkPut(allNotifications.map((n, i) => ({
+      const toStore = allNotifications.map((n, i) => ({
         ...n,
         id: `reminder-${profile.id}-${Date.now()}-${i}`,
         user_id: profile.id,
         created_at: new Date().toISOString(),
         read: false,
-      })));
+      }));
+      await db.notifications.bulkPut(toStore);
+      for (const n of toStore) {
+        await queueSync('notifications', n.id, 'INSERT', n);
+      }
     }
   } catch (error) {
     console.error('Reminder engine error:', error);

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { OnboardingEngine } from '../services/onboardingEngine';
-import db, { generateId } from '../lib/db';
+import db, { generateId, queueSync } from '../lib/db';
 import useMotherStore from './motherStore';
 import usePregnancyStore from './pregnancyStore';
 import useChildStore from './childStore';
@@ -138,7 +138,7 @@ const useOnboardingStore = create((set, get) => ({
 
       // Create welcome notification
       const notificationId = generateId();
-      await db.notifications.put({
+      const welcomeNotification = {
         id: notificationId,
         type: 'welcome',
         priority: 'medium',
@@ -147,7 +147,9 @@ const useOnboardingStore = create((set, get) => ({
         read: false,
         patient_id: motherId,
         created_at: new Date().toISOString(),
-      });
+      };
+      await db.notifications.put(welcomeNotification);
+      await queueSync('notifications', notificationId, 'INSERT', welcomeNotification);
 
       set({
         isSaving: false,
