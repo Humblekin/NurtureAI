@@ -162,10 +162,7 @@ export function createConversationManager(deps) {
   async function handleUserSpeech(text) {
     if (!text || destroyed || state === CONVERSATION_STATES.PROCESSING) return;
 
-    // Don't stop recognition here — let it run during processing.
-    // The state check below prevents duplicate processing.
-    // Stopping and immediately restarting recognition causes a race condition
-    // where start() fails because the engine hasn't fully stopped yet.
+    console.log('[Conversation] ✅ Final transcript:', text);
     clearSilenceTimer();
     onTranscriptChange?.('');
 
@@ -190,6 +187,7 @@ export function createConversationManager(deps) {
         .filter(m => m.role !== 'system')
         .map(m => ({ role: m.role, content: m.content }));
 
+      console.log('[Conversation] 🤖 Sending transcript to AI:', text);
       const response = await sendToAI(apiMessages, {
         userRole: userProfile?.role || 'mother',
         languageInstruction: langInstruction,
@@ -204,6 +202,7 @@ export function createConversationManager(deps) {
       // Add assistant message
       const assistantMsg = { role: 'assistant', content: response };
       setMessages([...newMessages, assistantMsg]);
+      console.log('[Conversation] 🤖 AI replied:', response.substring(0, 100) + (response.length > 100 ? '...' : ''));
 
       // Stop recognition before speaking — prevents barge-in detection
       // from firing immediately (isListening && isSpeaking would be true)
@@ -211,6 +210,7 @@ export function createConversationManager(deps) {
 
       // Transition to speaking
       setState(CONVERSATION_STATES.SPEAKING);
+      console.log('[Conversation] 🔊 Speaking response...');
 
       try {
         await speakText(response, aiAbortController.signal);
@@ -248,12 +248,14 @@ export function createConversationManager(deps) {
   // ---- Restart listening after speaking or error ----
   function restartListening() {
     if (destroyed) return;
+    console.log('[Conversation] 🎤 Restart listening');
     setState(CONVERSATION_STATES.LISTENING);
     // Small delay to ensure recognition engine is fully stopped before restarting.
     // Without this, recognition.start() can fail silently if called too soon
     // after recognition.stop().
     setTimeout(() => {
       if (destroyed || state !== CONVERSATION_STATES.LISTENING) return;
+      console.log('[Conversation] 🎤 Starting STT...');
       startListening();
       startSilenceDetection();
     }, 80);
@@ -407,6 +409,7 @@ export function createConversationManager(deps) {
       aiAbortController = null;
 
       // Start listening — begin the conversation loop
+      console.log('[Conversation] 🎤 Greeting complete, starting to listen...');
       restartListening();
     },
 

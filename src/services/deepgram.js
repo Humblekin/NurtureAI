@@ -53,7 +53,20 @@ export function isDeepgramConfigured() {
  */
 export function startStreamingSTT(stream, callbacks, options = {}) {
   if (!DEEPGRAM_API_KEY) {
+    console.error('[STT] ❌ Deepgram API key not configured');
     callbacks.onError?.('Deepgram API key not configured');
+    return { stop: () => {} };
+  }
+
+  console.log('[STT] 🎤 Microphone stream:', stream);
+  console.log('[STT] 🎤 Audio tracks:', stream.getAudioTracks().map(t => ({
+    kind: t.kind, enabled: t.enabled, readyState: t.readyState, label: t.label
+  })));
+
+  const audioTracks = stream.getAudioTracks();
+  if (audioTracks.length === 0 || audioTracks[0].readyState !== 'live') {
+    console.error('[STT] ❌ No active audio track');
+    callbacks.onError?.('No active microphone track found');
     return { stop: () => {} };
   }
 
@@ -70,34 +83,17 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
     sample_rate: '48000',
   });
 
-  const ws = new WebSocket(`${DEEPGRAM_WS_URL}?${params.toString()}`);
+  const wsUrl = `${DEEPGRAM_WS_URL}?${params.toString()}`;
+  console.log('[STT] 🔌 Connecting to Deepgram:', wsUrl.replace(/token=[^&]+/, 'token=***'));
+
+  const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
 
   let stopped = false;
-
-  // Audio recorder: streams mic chunks to Deepgram
-  let recorder = null;
-  try {
-    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-      ? 'audio/webm;codecs=opus'
-      : 'audio/webm';
-
-    recorder = new MediaRecorder(stream, { mimeType });
-    recorder.ondataavailable = async (e) => {
-      if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-        const buf = await e.data.arrayBuffer();
-        ws.send(buf);
-      }
-    };
-    recorder.start(100); // 100ms chunks for near-real-time
-  } catch (err) {
-    console.error('[Deepgram] MediaRecorder error:', err);
-    callbacks.onError?.('Microphone access failed');
-    return { stop: () => {} };
-  }
+  let chunkCount = 0;
 
   ws.onopen = () => {
-    // Send config to Deepgram
+    console.log('[STT] ✅ Deepgram WebSocket connected');
     ws.send(JSON.stringify({
       type: 'Configure',
       processing: {
@@ -107,48 +103,90 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
         smart_format: true,
       },
     }));
+    console.log('[STT] 📤 Sent Configure message');
   };
+
+  ws.onerror = (err) => {
+    if (!stopped) {
+      console.error('[STT] ❌ WebSocket error:', err);
+      callbacks.onError?.('Speech recognition connection error');
+    }
+  };
+
+  ws.onclose = (event) => {
+    console.log('[STT] 🔌 WebSocket closed:', event.code, event.reason);
+    if (recorder && recorder.state !== 'inactive') {
+      try { recorder.stop(); } catch { /* ignore */ }
+    }
+  };
+
+  // Audio recorder: streams mic chunks to Deepgram
+  let recorder = null;
+  try {
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : 'audio/webm';
+
+    console.log('[STT] 🎙️ Creating MediaRecorder with mimeType:', mimeType);
+    recorder = new MediaRecorder(stream, { mimeType });
+
+    recorder.onstart = () => {
+      console.log('[STT] 🎙️ MediaRecorder started');
+    };
+
+    recorder.onerror = (e) => {
+      console.error('[STT] ❌ MediaRecorder error:', e.error);
+    };
+
+    recorder.ondataavailable = async (e) => {
+      if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+        const buf = await e.data.arrayBuffer();
+        chunkCount++;
+        if (chunkCount % 20 === 1) { // Log every ~2 seconds (20 * 100ms)
+          console.log(`[STT] 📦 Sent ${chunkCount} chunks, latest: ${buf.byteLength} bytes`);
+        }
+        ws.send(buf);
+      } else if (e.data.size > 0 && ws.readyState !== WebSocket.OPEN) {
+        console.warn('[STT] ⚠️ WebSocket not open, dropping chunk:', buf.byteLength, 'bytes, state:', ws.readyState);
+      }
+    };
+
+    recorder.start(100); // 100ms chunks for near-real-time
+    console.log('[STT] 🎙️ MediaRecorder initialized, waiting for WebSocket...');
+  } catch (err) {
+    console.error('[STT] ❌ MediaRecorder error:', err);
+    callbacks.onError?.('Microphone access failed');
+    return { stop: () => {} };
+  }
 
   ws.onmessage = (event) => {
     if (stopped) return;
     try {
       const msg = JSON.parse(event.data);
 
-      // Final transcript for an utterance
-      if (msg.type === 'Results' && msg.is_final) {
+      if (msg.type === 'Results') {
         const transcript = msg.channel?.alternatives?.[0]?.transcript?.trim();
-        if (transcript) callbacks.onFinal?.(transcript);
-      }
+        const confidence = msg.channel?.alternatives?.[0]?.confidence;
 
-      // Interim transcript (live display)
-      if (msg.type === 'Results' && !msg.is_final) {
-        const transcript = msg.channel?.alternatives?.[0]?.transcript?.trim();
-        if (transcript) callbacks.onInterim?.(transcript);
-      }
-
-      // Utterance end — user stopped speaking
-      if (msg.type === 'UtteranceEnd') {
-        // Deepgram signals end of utterance; we rely on is_final above
+        if (msg.is_final && transcript) {
+          console.log('[STT] ✅ Final transcript:', transcript, `(confidence: ${confidence})`);
+          callbacks.onFinal?.(transcript);
+        } else if (transcript) {
+          console.log('[STT] 📝 Interim transcript:', transcript);
+          callbacks.onInterim?.(transcript);
+        }
+      } else if (msg.type === 'UtteranceEnd') {
+        console.log('[STT] 🛑 UtteranceEnd received');
+      } else {
+        console.log('[STT] 📩 Deepgram message:', msg.type);
       }
     } catch { /* ignore parse errors */ }
-  };
-
-  ws.onerror = (err) => {
-    if (!stopped) {
-      console.error('[Deepgram] WebSocket error:', err);
-      callbacks.onError?.('Speech recognition connection error');
-    }
-  };
-
-  ws.onclose = () => {
-    if (recorder && recorder.state !== 'inactive') {
-      try { recorder.stop(); } catch { /* ignore */ }
-    }
   };
 
   return {
     stop: () => {
       stopped = true;
+      console.log('[STT] 🛑 Stopping STT, total chunks sent:', chunkCount);
       if (recorder && recorder.state !== 'inactive') {
         try { recorder.stop(); } catch { /* ignore */ }
       }
@@ -234,6 +272,7 @@ export async function speak(text, options = {}) {
     for (const chunk of chunks) {
       if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
+      console.log('[TTS] 🔊 Generating speech for chunk:', chunk.substring(0, 50) + (chunk.length > 50 ? '...' : ''));
       const response = await fetch(`${DEEPGRAM_REST_URL}/v1/speak?model=aura-asteria-en`, {
         method: 'POST',
         headers: {
@@ -254,6 +293,8 @@ export async function speak(text, options = {}) {
       const audio = new Audio(url);
       audio.preload = 'auto';
       currentAudio = audio;
+
+      console.log('[TTS] 🔊 Playing speech, blob size:', blob.size, 'bytes');
 
       if (!started) { started = true; options.onSpeechStart?.(); }
 
