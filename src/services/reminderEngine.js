@@ -1,5 +1,5 @@
-import db, { queueSync } from '../lib/db';
-import { GHANA_EPI_SCHEDULE, findOverdueVaccine } from '../constants/vaccinationSchedule';
+import db from '../lib/db';
+import { GHANA_EPI_SCHEDULE } from '../constants/vaccinationSchedule';
 
 /**
  * NurtureAI — Reminder Engine
@@ -444,7 +444,7 @@ export async function runReminderEngine(profile) {
       allNotifications.push(...inactive, ...pendingRef);
     }
 
-    // Store notifications in IndexedDB and queue for sync
+    // Store notifications in IndexedDB (local-only, derived from synced health data)
     if (allNotifications.length > 0) {
       const toStore = allNotifications.map((n, i) => ({
         ...n,
@@ -454,9 +454,6 @@ export async function runReminderEngine(profile) {
         read: false,
       }));
       await db.notifications.bulkPut(toStore);
-      for (const n of toStore) {
-        await queueSync('notifications', n.id, 'INSERT', n);
-      }
     }
   } catch (error) {
     console.error('Reminder engine error:', error);

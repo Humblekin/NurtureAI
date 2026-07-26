@@ -17,7 +17,7 @@ const MAX_SYNC_ATTEMPTS = 10;
 const PULL_TABLES = [
   'profiles', 'mothers', 'pregnancies', 'antenatal_visits',
   'children', 'vaccinations', 'growth_records', 'milestones',
-  'visits', 'referrals', 'facilities', 'districts', 'notifications',
+  'visits', 'referrals', 'facilities', 'districts',
 ];
 
 const SUPABASE_COLUMNS = {
@@ -30,7 +30,6 @@ const SUPABASE_COLUMNS = {
   visits: ['id', 'worker_id', 'patient_id', 'patient_type', 'visit_type', 'visit_date', 'notes', 'findings', 'actions_taken', 'created_at', 'updated_at'],
   referrals: ['id', 'patient_id', 'patient_type', 'from_facility_id', 'to_facility_id', 'from_worker_id', 'urgency', 'status', 'reason', 'notes', 'created_at', 'updated_at'],
   profiles: ['id', 'full_name', 'phone', 'role', 'facility_id', 'community', 'avatar_url', 'created_at', 'updated_at'],
-  notifications: ['id', 'type', 'priority', 'title', 'message', 'read', 'patient_id', 'created_at'],
   milestones: ['id', 'child_id', 'milestone_type', 'achieved_date', 'notes', 'created_at', 'updated_at'],
 };
 
@@ -164,7 +163,7 @@ export async function pullFromServer(tableName, lastSyncedAt) {
 
   try {
     // Tables without updated_at — order by created_at instead
-    const useCreated_at = ['notifications', 'ai_conversations'];
+    const useCreated_at = ['ai_conversations'];
     const orderCol = useCreated_at.includes(tableName) ? 'created_at' : 'updated_at';
 
     let query = supabase
