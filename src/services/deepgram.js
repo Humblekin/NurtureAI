@@ -40,8 +40,9 @@ export function isDeepgramConfigured() {
 // ---- Speech-to-Text ----
 
 /**
- * REST-based STT with silence detection. Records until the user finishes
- * speaking (1.8s of silence), then sends the complete utterance to Deepgram.
+ * REST-based STT with Voice Activity Detection (VAD).
+ * Records until 1.8s of continuous silence, then sends the complete
+ * utterance to Deepgram. Handles short pauses during speech correctly.
  */
 function startRestSTT(stream, callbacks, options) {
   const sttLanguage = options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US';
@@ -50,20 +51,20 @@ function startRestSTT(stream, callbacks, options) {
   const MAX_RECORDING_MS = 30000;
   const LEVEL_CHECK_INTERVAL = 100;
   let speechThreshold = 0.08;
+  let thresholdAdaptCount = 0;
 
   let stopped = false;
   let recorder = null;
   let isRecording = false;
   let chunks = [];
   let speechDetectedInSegment = false;
-  let lastSpeechTime = 0;
+  let continuousSilenceStart = 0;
+  let lastLoggedSilence = 0;
   let recordingStartTime = 0;
   let levelTimer = null;
   let maxRecordingTimer = null;
-  let audioContext = null;
+  let levelWatchCtx = null;
   let analyser = null;
-
-  console.log('[STT] 📡 Silence-detection mode (threshold=' + speechThreshold + ', silence=' + SILENCE_TIMEOUT_MS + 'ms)');
 
   const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
     ? 'audio/webm;codecs=opus'
@@ -74,6 +75,8 @@ function startRestSTT(stream, callbacks, options) {
   async function sendSegment(blob) {
     if (stopped) return;
     try {
+      const duration = ((Date.now() - recordingStartTime) / 1000).toFixed(1);
+      console.log('[STT] 📤 Sending ' + duration + '-second recording to Deepgram');
       callbacks.onInterim?.('Processing speech...');
 
       const params = new URLSearchParams({
@@ -97,11 +100,11 @@ function startRestSTT(stream, callbacks, options) {
       const result = await response.json();
       const transcript = result.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim();
       if (transcript) {
-        console.log('[STT] ✅ Final transcript:', transcript);
+        console.log('[STT] 📥 Transcript received');
         callbacks.onFinal?.(transcript);
       } else {
-        console.log('[STT] 📡 No speech detected');
-        // Silently go back to listening — no state change
+        console.log('[STT] 📥 No speech detected');
+        // Stay in Listening state — don't restart conversation
       }
     } catch (err) {
       callbacks.onError?.('REST STT failed: ' + err.message);
@@ -110,8 +113,8 @@ function startRestSTT(stream, callbacks, options) {
 
   function stopRecording(reason) {
     if (!recorder || recorder.state === 'inactive') return;
-    const duration = Date.now() - recordingStartTime;
-    console.log('[STT] 🎙️ Stop. reason=' + reason + ' duration=' + duration + 'ms speech=' + speechDetectedInSegment);
+    const duration = ((Date.now() - recordingStartTime) / 1000).toFixed(1);
+    console.log('[STT] 🛑 End of speech reached (reason=' + reason + ', ' + duration + 's)');
     clearInterval(levelTimer);
     clearTimeout(maxRecordingTimer);
     recorder.stop();
@@ -123,7 +126,16 @@ function startRestSTT(stream, callbacks, options) {
     chunks = [];
     speechDetectedInSegment = false;
     lastSpeechTime = 0;
+    continuousSilenceStart = 0;
+    lastLoggedSilence = 0;
     recordingStartTime = Date.now();
+    thresholdAdaptCount = 0;
+
+    // Clean up previous level-watch AudioContext before creating a new one
+    if (levelWatchCtx) {
+      try { levelWatchCtx.close(); } catch {}
+      levelWatchCtx = null;
+    }
 
     try {
       recorder = new MediaRecorder(stream, { mimeType });
@@ -144,35 +156,35 @@ function startRestSTT(stream, callbacks, options) {
 
     recorder.onstop = async () => {
       isRecording = false;
-      const duration = Date.now() - recordingStartTime;
-
       if (stopped) return;
 
-      // No speech detected — restart silently, stay in "Listening..." state
+      // No speech detected — silently restart, stay in Listening
       if (!speechDetectedInSegment || chunks.length === 0) {
-        console.log('[STT] 🎙️ No speech in segment (' + duration + 'ms), restarting...');
+        console.log('[STT] 🎤 Microphone opened');
         callbacks.onInterim?.('Listening...');
         if (!stopped) startRecording();
         return;
       }
 
       const blob = new Blob(chunks, { type: mimeType });
-      const speechDuration = lastSpeechTime > 0 ? lastSpeechTime - recordingStartTime : 0;
-      console.log('[STT] 📡 Segment send: ' + blob.size + ' bytes, ' + duration + 'ms rec, ~' + speechDuration + 'ms speech');
       await sendSegment(blob);
 
-      if (!stopped) startRecording();
+      // Resume listening for the next utterance
+      if (!stopped) {
+        console.log('[STT] 🎤 Microphone opened');
+        startRecording();
+      }
     };
 
     recorder.start();
     callbacks.onInterim?.('Listening...');
-    console.log('[STT] 🎙️ Recording started');
+    console.log('[STT] 🎤 Microphone opened');
 
     // Set up audio level analysis for silence detection
     try {
-      audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const source = audioContext.createMediaStreamSource(stream);
-      analyser = audioContext.createAnalyser();
+      levelWatchCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const source = levelWatchCtx.createMediaStreamSource(stream);
+      analyser = levelWatchCtx.createAnalyser();
       analyser.fftSize = 256;
       source.connect(analyser);
 
@@ -186,21 +198,46 @@ function startRestSTT(stream, callbacks, options) {
         }
         const rms = Math.sqrt(sum / dataArray.length);
 
+        const now = Date.now();
+        const elapsed = now - recordingStartTime;
+
         if (rms > speechThreshold) {
+          // Speech detected
           if (!speechDetectedInSegment) {
             speechDetectedInSegment = true;
-            console.log('[STT] 🗣️ Speech detected');
+            console.log('[STT] 🎤 Speech detected');
           }
-          lastSpeechTime = Date.now();
-        }
+          const speechSec = ((now - recordingStartTime) / 1000).toFixed(1);
+          console.log('[STT] 🎤 Speech duration: ' + speechSec + ' seconds');
+          continuousSilenceStart = 0;
+          lastLoggedSilence = 0;
+        } else if (speechDetectedInSegment && elapsed > MIN_RECORDING_MS) {
+          // Silence — track continuous duration
+          if (continuousSilenceStart === 0) {
+            continuousSilenceStart = now;
+          }
+          const silenceMs = now - continuousSilenceStart;
 
-        // Stop recording after silence (only if minimum time elapsed and speech was detected)
-        const elapsed = Date.now() - recordingStartTime;
-        if (elapsed > MIN_RECORDING_MS && speechDetectedInSegment) {
-          const silenceDuration = Date.now() - lastSpeechTime;
-          if (silenceDuration > SILENCE_TIMEOUT_MS && recorder && recorder.state === 'recording') {
+          // Log at milestones: 0.3, 0.9, 1.4, 1.8 seconds
+          const milestones = [300, 900, 1400, 1800];
+          for (const ms of milestones) {
+            if (silenceMs >= ms && lastLoggedSilence < ms) {
+              console.log('[STT] 🔇 Silence detected: ' + (ms / 1000).toFixed(1) + ' seconds');
+              lastLoggedSilence = ms;
+            }
+          }
+
+          // Stop after continuous silence exceeds timeout
+          if (silenceMs > SILENCE_TIMEOUT_MS && recorder && recorder.state === 'recording') {
             stopRecording('silence_timeout');
           }
+        }
+
+        // Adaptive threshold: if no speech after several seconds, lower threshold
+        if (!speechDetectedInSegment && elapsed > 5000 && thresholdAdaptCount < 3) {
+          speechThreshold = Math.max(0.02, speechThreshold * 0.7);
+          thresholdAdaptCount++;
+          console.log('[STT] 📡 Lowering speech threshold to ' + speechThreshold.toFixed(3));
         }
       }, LEVEL_CHECK_INTERVAL);
     } catch {
@@ -225,8 +262,8 @@ function startRestSTT(stream, callbacks, options) {
       if (recorder && recorder.state !== 'inactive') {
         try { recorder.stop(); } catch {}
       }
-      if (audioContext) {
-        try { audioContext.close(); } catch {}
+      if (levelWatchCtx) {
+        try { levelWatchCtx.close(); } catch {}
       }
     },
   };
