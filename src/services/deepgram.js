@@ -73,6 +73,7 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
   const sttLanguage = options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US';
 
   const params = new URLSearchParams({
+    token: DEEPGRAM_API_KEY,
     model: 'nova-2',
     language: sttLanguage,
     smart_format: 'true',
@@ -84,7 +85,7 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
   });
 
   const wsUrl = `${DEEPGRAM_WS_URL}?${params.toString()}`;
-  console.log('[STT] 🔌 Connecting to Deepgram:', wsUrl.replace(/token=[^&]+/, 'token=***'));
+  console.log('[STT] 🔌 Connecting to Deepgram: wss://api.deepgram.com/v1/listen?...token=<redacted>&model=nova-2&language=' + sttLanguage);
 
   const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
