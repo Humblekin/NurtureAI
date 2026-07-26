@@ -64,6 +64,30 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
     togglePause, bargeIn, clearChat, switchLanguage,
   } = voice;
 
+  const [diag, setDiag] = useState(null);
+
+  // Diagnostic: test Deepgram API key on mount
+  useEffect(() => {
+    const key = import.meta.env.VITE_DEEPGRAM_API_KEY;
+    if (!key) {
+      setDiag({ ok: false, msg: 'VITE_DEEPGRAM_API_KEY is not set in your .env file' });
+      return;
+    }
+    fetch('https://api.deepgram.com/v1/projects', {
+      headers: { Authorization: 'Token ' + key },
+    }).then(r => {
+      if (r.ok) {
+        setDiag({ ok: true, msg: 'Deepgram API key is valid' });
+      } else {
+        r.text().then(t => {
+          setDiag({ ok: false, msg: 'Deepgram API key rejected (' + r.status + '): ' + t });
+        });
+      }
+    }).catch(e => {
+      setDiag({ ok: false, msg: 'Cannot reach Deepgram API: ' + e.message });
+    });
+  }, []);
+
   const avatarState = useMemo(() => {
     switch (voiceState) {
       case VOICE_STATES.SPEAKING: return 'speaking';
@@ -136,6 +160,13 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
               <MessageSquare size={14} /> Use Chat Instead
             </Button>
           </div>
+        </div>
+      )}
+
+      {/* API Key diagnostic */}
+      {deepgramConfigured && diag && !diag.ok && (
+        <div className={styles.warningBanner} style={{ background: 'var(--color-danger-50, #fff5f5)', borderColor: 'var(--color-danger-200, #fecaca)' }}>
+          <p><strong>Voice connection failed:</strong> {diag.msg}</p>
         </div>
       )}
 

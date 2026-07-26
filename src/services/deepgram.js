@@ -110,6 +110,7 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
   ws.onerror = (err) => {
     if (!stopped) {
       console.error('[STT] ❌ WebSocket error:', err);
+      callbacks.onError?.('Cannot connect to Deepgram. Check your API key and network connection.');
     }
   };
 
@@ -119,12 +120,13 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
       try { recorder.stop(); } catch { /* ignore */ }
     }
     if (!stopped && event.code !== 1000) {
-      let msg = `WebSocket closed (code ${event.code})`;
-      if (event.code === 1006) msg = 'Connection lost — check your network';
-      else if (event.code === 1002) msg = 'Invalid protocol — check Deepgram API key';
-      else if (event.code === 1003) msg = 'Unsupported data — check audio encoding settings';
-      else if (event.code === 1008) msg = 'Policy violation — check Deepgram plan/permissions';
+      let msg = 'Voice connection lost';
+      if (event.code === 1006) msg = 'Connection lost — check your internet connection';
+      else if (event.code === 1002) msg = 'Invalid API key — check VITE_DEEPGRAM_API_KEY';
+      else if (event.code === 1003) msg = 'Unsupported audio format';
+      else if (event.code === 1008) msg = 'API key rejected — check your Deepgram plan';
       else if (event.code === 1011) msg = 'Deepgram server error — try again';
+      else msg = 'Voice disconnected (code ' + event.code + ')';
       if (event.reason) msg += ': ' + event.reason;
       callbacks.onError?.(msg);
     }
