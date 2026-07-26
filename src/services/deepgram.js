@@ -40,17 +40,30 @@ export function isDeepgramConfigured() {
 // ---- Speech-to-Text ----
 
 /**
- * REST-based STT fallback. Records audio in segments, sends via HTTP POST.
- * Works on networks that block WebSocket connections.
+ * REST-based STT with silence detection. Records until the user finishes
+ * speaking (1.8s of silence), then sends the complete utterance to Deepgram.
  */
 function startRestSTT(stream, callbacks, options) {
   const sttLanguage = options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US';
-  const SEGMENT_MS = 1500;
+  const SILENCE_TIMEOUT_MS = 1800;
+  const MIN_RECORDING_MS = 800;
+  const MAX_RECORDING_MS = 30000;
+  const LEVEL_CHECK_INTERVAL = 100;
+  let speechThreshold = 0.08;
+
   let stopped = false;
   let recorder = null;
   let isRecording = false;
+  let chunks = [];
+  let speechDetectedInSegment = false;
+  let lastSpeechTime = 0;
+  let recordingStartTime = 0;
+  let levelTimer = null;
+  let maxRecordingTimer = null;
+  let audioContext = null;
+  let analyser = null;
 
-  console.log('[STT] 📡 Using REST fallback (HTTP POST) for STT');
+  console.log('[STT] 📡 Silence-detection mode (threshold=' + speechThreshold + ', silence=' + SILENCE_TIMEOUT_MS + 'ms)');
 
   const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
     ? 'audio/webm;codecs=opus'
@@ -60,12 +73,7 @@ function startRestSTT(stream, callbacks, options) {
 
   async function sendSegment(blob) {
     if (stopped) return;
-    if (blob.size < 50) {
-      console.log('[STT] 📡 Segment too small (' + blob.size + ' bytes), skipping');
-      return;
-    }
     try {
-      console.log('[STT] 📡 Sending segment:', blob.size, 'bytes');
       callbacks.onInterim?.('Processing speech...');
 
       const params = new URLSearchParams({
@@ -83,37 +91,45 @@ function startRestSTT(stream, callbacks, options) {
       });
       if (!response.ok) {
         const errText = await response.text();
-        const errMsg = `Deepgram error ${response.status}: ${errText}`;
-        console.error('[STT] ❌', errMsg);
-        callbacks.onError?.(errMsg);
+        callbacks.onError?.('Deepgram error ' + response.status + ': ' + errText);
         return;
       }
       const result = await response.json();
-      console.log('[STT] 📡 REST response:', JSON.stringify(result).substring(0, 200));
       const transcript = result.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim();
       if (transcript) {
         console.log('[STT] ✅ Final transcript:', transcript);
         callbacks.onFinal?.(transcript);
       } else {
-        console.log('[STT] 📡 No speech detected in segment');
+        console.log('[STT] 📡 No speech detected');
+        // Silently go back to listening — no state change
       }
     } catch (err) {
-      const errMsg = 'REST STT failed: ' + err.message;
-      console.error('[STT] ❌', errMsg);
-      callbacks.onError?.(errMsg);
+      callbacks.onError?.('REST STT failed: ' + err.message);
     }
+  }
+
+  function stopRecording(reason) {
+    if (!recorder || recorder.state === 'inactive') return;
+    const duration = Date.now() - recordingStartTime;
+    console.log('[STT] 🎙️ Stop. reason=' + reason + ' duration=' + duration + 'ms speech=' + speechDetectedInSegment);
+    clearInterval(levelTimer);
+    clearTimeout(maxRecordingTimer);
+    recorder.stop();
   }
 
   function startRecording() {
     if (stopped || isRecording) return;
     isRecording = true;
+    chunks = [];
+    speechDetectedInSegment = false;
+    lastSpeechTime = 0;
+    recordingStartTime = Date.now();
 
-    const chunks = [];
     try {
       recorder = new MediaRecorder(stream, { mimeType });
     } catch (err) {
-      console.error('[STT] ❌ MediaRecorder creation failed:', err);
       callbacks.onError?.('Microphone access failed: ' + err.message);
+      isRecording = false;
       return;
     }
 
@@ -123,29 +139,80 @@ function startRestSTT(stream, callbacks, options) {
 
     recorder.onerror = (e) => {
       console.error('[STT] ❌ MediaRecorder error:', e.error);
-      callbacks.onError?.('Recording error: ' + (e.error?.message || 'unknown'));
       isRecording = false;
     };
 
     recorder.onstop = async () => {
       isRecording = false;
+      const duration = Date.now() - recordingStartTime;
+
       if (stopped) return;
-      if (chunks.length > 0) {
-        const blob = new Blob(chunks, { type: mimeType });
-        await sendSegment(blob);
+
+      // No speech detected — restart silently, stay in "Listening..." state
+      if (!speechDetectedInSegment || chunks.length === 0) {
+        console.log('[STT] 🎙️ No speech in segment (' + duration + 'ms), restarting...');
+        callbacks.onInterim?.('Listening...');
+        if (!stopped) startRecording();
+        return;
       }
+
+      const blob = new Blob(chunks, { type: mimeType });
+      const speechDuration = lastSpeechTime > 0 ? lastSpeechTime - recordingStartTime : 0;
+      console.log('[STT] 📡 Segment send: ' + blob.size + ' bytes, ' + duration + 'ms rec, ~' + speechDuration + 'ms speech');
+      await sendSegment(blob);
+
       if (!stopped) startRecording();
     };
 
     recorder.start();
     callbacks.onInterim?.('Listening...');
-    console.log('[STT] 🎙️ REST mode: recording segment...');
+    console.log('[STT] 🎙️ Recording started');
 
-    setTimeout(() => {
-      if (recorder && recorder.state === 'recording') {
-        recorder.stop();
-      }
-    }, SEGMENT_MS);
+    // Set up audio level analysis for silence detection
+    try {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const source = audioContext.createMediaStreamSource(stream);
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+
+      levelTimer = setInterval(() => {
+        const dataArray = new Uint8Array(analyser.fftSize);
+        analyser.getByteTimeDomainData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          const value = (dataArray[i] - 128) / 128;
+          sum += value * value;
+        }
+        const rms = Math.sqrt(sum / dataArray.length);
+
+        if (rms > speechThreshold) {
+          if (!speechDetectedInSegment) {
+            speechDetectedInSegment = true;
+            console.log('[STT] 🗣️ Speech detected');
+          }
+          lastSpeechTime = Date.now();
+        }
+
+        // Stop recording after silence (only if minimum time elapsed and speech was detected)
+        const elapsed = Date.now() - recordingStartTime;
+        if (elapsed > MIN_RECORDING_MS && speechDetectedInSegment) {
+          const silenceDuration = Date.now() - lastSpeechTime;
+          if (silenceDuration > SILENCE_TIMEOUT_MS && recorder && recorder.state === 'recording') {
+            stopRecording('silence_timeout');
+          }
+        }
+      }, LEVEL_CHECK_INTERVAL);
+    } catch {
+      console.warn('[STT] ⚠️ Audio level analysis unavailable, fallback to 3s segments');
+      setTimeout(() => {
+        if (recorder && recorder.state === 'recording') stopRecording('fallback_timeout');
+      }, 3000);
+    }
+
+    maxRecordingTimer = setTimeout(() => {
+      if (recorder && recorder.state === 'recording') stopRecording('max_duration');
+    }, MAX_RECORDING_MS);
   }
 
   startRecording();
@@ -153,9 +220,13 @@ function startRestSTT(stream, callbacks, options) {
   return {
     stop: () => {
       stopped = true;
-      console.log('[STT] 🛑 Stopping REST STT');
+      clearInterval(levelTimer);
+      clearTimeout(maxRecordingTimer);
       if (recorder && recorder.state !== 'inactive') {
         try { recorder.stop(); } catch {}
+      }
+      if (audioContext) {
+        try { audioContext.close(); } catch {}
       }
     },
   };
