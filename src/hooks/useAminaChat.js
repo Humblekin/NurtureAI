@@ -203,7 +203,22 @@ export function useVoiceConversation() {
         }
         return null;
       }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Request with quality constraints: echo cancellation, noise suppression,
+      // mono channel at 16kHz — ideal for speech recognition.
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: { ideal: true },
+            noiseSuppression: { ideal: true },
+            sampleRate: { ideal: 16000 },
+            channelCount: { ideal: 1 },
+          }
+        });
+      } catch {
+        // Fallback to basic constraints if specific ones aren't supported
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
       streamRef.current = stream;
       setMicPermission('granted');
       setMicReady(true);
@@ -227,43 +242,56 @@ export function useVoiceConversation() {
     }
   }, []);
 
-  // ---- Start Deepgram listening ----
+  // ---- Start Deepgram listening (WebSocket streaming) ----
   const startListening = useCallback(() => {
-    console.log('[Hook] 🎤 startListening called, stream:', !!streamRef.current, 'deepgram:', isDeepgramConfigured());
+    console.log('[Hook] 🎤 startListening called, stream:', !!streamRef.current);
     if (!streamRef.current || !isDeepgramConfigured()) {
-      console.warn('[Hook] ⚠️ Cannot start listening: stream or deepgram not ready');
+      console.warn('[Hook] ⚠️ Cannot start listening');
       return;
     }
 
-    // Stop any previous STT session
+    // If existing STT handle has a live WebSocket, just resume the recorder.
+    // This avoids the overhead of destroying and recreating the connection
+    // between conversation turns — the WebSocket stays alive the whole time.
     if (sttRef.current) {
+      const resumed = sttRef.current.resumeMic?.();
+      if (resumed) {
+        console.log('[Hook] 🎤 Resumed existing STT session');
+        return;
+      }
+      // Connection died — fall through to create new one
+      console.log('[Hook] ⚠️ Existing STT session dead, creating new one');
       try { sttRef.current.stop(); } catch {}
       sttRef.current = null;
     }
 
+    console.log('[Hook] 🎤 Starting new WebSocket STT session');
     setTranscript('');
 
     const sttHandle = startStreamingSTT(streamRef.current, {
-      onInterim: (text) => setTranscript(text),
+      onInterim: (text) => {
+        console.log('[Hook] 📝 Interim:', text);
+        setTranscript(text);
+      },
       onFinal: (text) => {
-        console.log('[Hook] ✅ onFinal received:', text);
+        console.log('[Hook] ✅ Final:', text);
         setTranscript('');
         if (managerRef.current) managerRef.current.onFinalTranscript(text);
       },
       onError: (err) => {
-        console.error('[Voice] STT error:', err);
-        if (err.includes('permission')) setMicPermission('denied');
+        console.error('[Hook] ❌ STT error:', err);
         setError(`Voice recognition error: ${err}`);
       },
     }, { language });
     sttRef.current = sttHandle;
-    console.log('[Hook] 🎤 STT started, handle:', !!sttHandle);
   }, [language]);
 
   const stopListening = useCallback(() => {
     if (sttRef.current) {
-      sttRef.current.stop();
-      sttRef.current = null;
+      console.log('[Hook] 🎤 Pausing STT — keeping WebSocket alive for next turn');
+      // Pause the mic but keep the WebSocket open.
+      // The connection is reused on the next startListening() call.
+      sttRef.current.pauseMic?.();
     }
     setTranscript('');
   }, []);
@@ -369,7 +397,11 @@ export function useVoiceConversation() {
   const clearChat = useCallback(() => {
     const mgr = managerRef.current;
     if (mgr) mgr.reset();
-    stopListening();
+    // Full cleanup — kill the WebSocket entirely (not just pause)
+    if (sttRef.current) {
+      try { sttRef.current.stop(); } catch {}
+      sttRef.current = null;
+    }
     deepgramStopSpeaking();
     initStartedRef.current = false;
     setMicReady(false);
@@ -377,7 +409,7 @@ export function useVoiceConversation() {
     setTranscript('');
     setError(null);
     setVoiceState(CONVERSATION_STATES.IDLE);
-  }, [stopListening]);
+  }, []);
 
   const switchLanguage = useCallback((lang) => {
     setLanguage(lang);

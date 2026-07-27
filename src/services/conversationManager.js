@@ -29,7 +29,7 @@ export const CONVERSATION_STATES = {
 // Valid state transitions — enforces one-way flow
 const VALID_TRANSITIONS = {
   [CONVERSATION_STATES.IDLE]: [CONVERSATION_STATES.GREETING, CONVERSATION_STATES.ERROR, CONVERSATION_STATES.PAUSED],
-  [CONVERSATION_STATES.GREETING]: [CONVERSATION_STATES.LISTENING, CONVERSATION_STATES.ERROR, CONVERSATION_STATES.PAUSED],
+  [CONVERSATION_STATES.GREETING]: [CONVERSATION_STATES.SPEAKING, CONVERSATION_STATES.LISTENING, CONVERSATION_STATES.ERROR, CONVERSATION_STATES.PAUSED],
   [CONVERSATION_STATES.LISTENING]: [CONVERSATION_STATES.PROCESSING, CONVERSATION_STATES.SPEAKING, CONVERSATION_STATES.ERROR, CONVERSATION_STATES.PAUSED],
   [CONVERSATION_STATES.PROCESSING]: [CONVERSATION_STATES.SPEAKING, CONVERSATION_STATES.LISTENING, CONVERSATION_STATES.ERROR, CONVERSATION_STATES.PAUSED],
   [CONVERSATION_STATES.SPEAKING]: [CONVERSATION_STATES.LISTENING, CONVERSATION_STATES.PROCESSING, CONVERSATION_STATES.ERROR, CONVERSATION_STATES.PAUSED],
@@ -252,12 +252,15 @@ export function createConversationManager(deps) {
     // Small delay to ensure recognition engine is fully stopped before restarting.
     // Without this, recognition.start() can fail silently if called too soon
     // after recognition.stop().
+    // 300ms gives the browser time to fully close the previous MediaRecorder
+    // before creating a new one on the same MediaStream. Too short a delay
+    // can cause silent failures on slower devices (especially mobile).
     setTimeout(() => {
       if (destroyed || state !== CONVERSATION_STATES.LISTENING) return;
       console.log('[Conversation] 🎤 Starting STT...');
       startListening();
       startSilenceDetection();
-    }, 80);
+    }, 300);
   }
 
   // ---- Generate personalized greeting ----

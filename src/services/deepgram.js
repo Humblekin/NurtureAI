@@ -37,241 +37,14 @@ export function isDeepgramConfigured() {
   return !!DEEPGRAM_API_KEY;
 }
 
-// ---- Speech-to-Text ----
+// ---- Speech-to-Text (WebSocket Streaming) ----
 
 /**
- * REST-based STT with Voice Activity Detection (VAD).
- * Records until 1.8s of continuous silence, then sends the complete
- * utterance to Deepgram. Handles short pauses during speech correctly.
- */
-function startRestSTT(stream, callbacks, options) {
-  const sttLanguage = options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US';
-  const SILENCE_TIMEOUT_MS = 1800;
-  const MIN_RECORDING_MS = 800;
-  const MAX_RECORDING_MS = 30000;
-  const LEVEL_CHECK_INTERVAL = 100;
-  let speechThreshold = 0.08;
-  let thresholdAdaptCount = 0;
-
-  let stopped = false;
-  let recorder = null;
-  let isRecording = false;
-  let chunks = [];
-  let speechDetectedInSegment = false;
-  let continuousSilenceStart = 0;
-  let lastLoggedSilence = 0;
-  let recordingStartTime = 0;
-  let levelTimer = null;
-  let maxRecordingTimer = null;
-  let levelWatchCtx = null;
-  let analyser = null;
-
-  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-    ? 'audio/webm;codecs=opus'
-    : MediaRecorder.isTypeSupported('audio/mp4')
-    ? 'audio/mp4'
-    : 'audio/webm';
-
-  async function sendSegment(blob) {
-    if (stopped) return;
-    try {
-      const duration = ((Date.now() - recordingStartTime) / 1000).toFixed(1);
-      console.log('[STT] 📤 Sending ' + duration + '-second recording to Deepgram');
-      callbacks.onInterim?.('Processing speech...');
-
-      const params = new URLSearchParams({
-        model: 'nova-2',
-        language: sttLanguage,
-        smart_format: 'true',
-      });
-      const response = await fetch(`${DEEPGRAM_REST_URL}/v1/listen?${params.toString()}`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Token ${DEEPGRAM_API_KEY}`,
-          'Content-Type': 'audio/webm',
-        },
-        body: blob,
-      });
-      if (!response.ok) {
-        const errText = await response.text();
-        callbacks.onError?.('Deepgram error ' + response.status + ': ' + errText);
-        return;
-      }
-      const result = await response.json();
-      const transcript = result.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim();
-      if (transcript) {
-        console.log('[STT] 📥 Transcript received');
-        callbacks.onFinal?.(transcript);
-      } else {
-        console.log('[STT] 📥 No speech detected');
-        // Stay in Listening state — don't restart conversation
-      }
-    } catch (err) {
-      callbacks.onError?.('REST STT failed: ' + err.message);
-    }
-  }
-
-  function stopRecording(reason) {
-    if (!recorder || recorder.state === 'inactive') return;
-    const duration = ((Date.now() - recordingStartTime) / 1000).toFixed(1);
-    console.log('[STT] 🛑 End of speech reached (reason=' + reason + ', ' + duration + 's)');
-    clearInterval(levelTimer);
-    clearTimeout(maxRecordingTimer);
-    recorder.stop();
-  }
-
-  function startRecording() {
-    if (stopped || isRecording) return;
-    isRecording = true;
-    chunks = [];
-    speechDetectedInSegment = false;
-    lastSpeechTime = 0;
-    continuousSilenceStart = 0;
-    lastLoggedSilence = 0;
-    recordingStartTime = Date.now();
-    thresholdAdaptCount = 0;
-
-    // Clean up previous level-watch AudioContext before creating a new one
-    if (levelWatchCtx) {
-      try { levelWatchCtx.close(); } catch {}
-      levelWatchCtx = null;
-    }
-
-    try {
-      recorder = new MediaRecorder(stream, { mimeType });
-    } catch (err) {
-      callbacks.onError?.('Microphone access failed: ' + err.message);
-      isRecording = false;
-      return;
-    }
-
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunks.push(e.data);
-    };
-
-    recorder.onerror = (e) => {
-      console.error('[STT] ❌ MediaRecorder error:', e.error);
-      isRecording = false;
-    };
-
-    recorder.onstop = async () => {
-      isRecording = false;
-      if (stopped) return;
-
-      // No speech detected — silently restart, stay in Listening
-      if (!speechDetectedInSegment || chunks.length === 0) {
-        console.log('[STT] 🎤 Microphone opened');
-        callbacks.onInterim?.('Listening...');
-        if (!stopped) startRecording();
-        return;
-      }
-
-      const blob = new Blob(chunks, { type: mimeType });
-      await sendSegment(blob);
-
-      // Resume listening for the next utterance
-      if (!stopped) {
-        console.log('[STT] 🎤 Microphone opened');
-        startRecording();
-      }
-    };
-
-    recorder.start();
-    callbacks.onInterim?.('Listening...');
-    console.log('[STT] 🎤 Microphone opened');
-
-    // Set up audio level analysis for silence detection
-    try {
-      levelWatchCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const source = levelWatchCtx.createMediaStreamSource(stream);
-      analyser = levelWatchCtx.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-
-      levelTimer = setInterval(() => {
-        const dataArray = new Uint8Array(analyser.fftSize);
-        analyser.getByteTimeDomainData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          const value = (dataArray[i] - 128) / 128;
-          sum += value * value;
-        }
-        const rms = Math.sqrt(sum / dataArray.length);
-
-        const now = Date.now();
-        const elapsed = now - recordingStartTime;
-
-        if (rms > speechThreshold) {
-          // Speech detected
-          if (!speechDetectedInSegment) {
-            speechDetectedInSegment = true;
-            console.log('[STT] 🎤 Speech detected');
-          }
-          const speechSec = ((now - recordingStartTime) / 1000).toFixed(1);
-          console.log('[STT] 🎤 Speech duration: ' + speechSec + ' seconds');
-          continuousSilenceStart = 0;
-          lastLoggedSilence = 0;
-        } else if (speechDetectedInSegment && elapsed > MIN_RECORDING_MS) {
-          // Silence — track continuous duration
-          if (continuousSilenceStart === 0) {
-            continuousSilenceStart = now;
-          }
-          const silenceMs = now - continuousSilenceStart;
-
-          // Log at milestones: 0.3, 0.9, 1.4, 1.8 seconds
-          const milestones = [300, 900, 1400, 1800];
-          for (const ms of milestones) {
-            if (silenceMs >= ms && lastLoggedSilence < ms) {
-              console.log('[STT] 🔇 Silence detected: ' + (ms / 1000).toFixed(1) + ' seconds');
-              lastLoggedSilence = ms;
-            }
-          }
-
-          // Stop after continuous silence exceeds timeout
-          if (silenceMs > SILENCE_TIMEOUT_MS && recorder && recorder.state === 'recording') {
-            stopRecording('silence_timeout');
-          }
-        }
-
-        // Adaptive threshold: if no speech after several seconds, lower threshold
-        if (!speechDetectedInSegment && elapsed > 5000 && thresholdAdaptCount < 3) {
-          speechThreshold = Math.max(0.02, speechThreshold * 0.7);
-          thresholdAdaptCount++;
-          console.log('[STT] 📡 Lowering speech threshold to ' + speechThreshold.toFixed(3));
-        }
-      }, LEVEL_CHECK_INTERVAL);
-    } catch {
-      console.warn('[STT] ⚠️ Audio level analysis unavailable, fallback to 3s segments');
-      setTimeout(() => {
-        if (recorder && recorder.state === 'recording') stopRecording('fallback_timeout');
-      }, 3000);
-    }
-
-    maxRecordingTimer = setTimeout(() => {
-      if (recorder && recorder.state === 'recording') stopRecording('max_duration');
-    }, MAX_RECORDING_MS);
-  }
-
-  startRecording();
-
-  return {
-    stop: () => {
-      stopped = true;
-      clearInterval(levelTimer);
-      clearTimeout(maxRecordingTimer);
-      if (recorder && recorder.state !== 'inactive') {
-        try { recorder.stop(); } catch {}
-      }
-      if (levelWatchCtx) {
-        try { levelWatchCtx.close(); } catch {}
-      }
-    },
-  };
-}
-
-/**
- * Start streaming STT (synchronous — REST mode).
- * REST works on all networks including those blocking WebSocket.
+ * WebSocket-based streaming STT.
+ * Audio chunks flow continuously to Deepgram.
+ * Interim results arrive in real-time.
+ * Deepgram detects utterance end via endpointing (1s silence).
+ * No fixed recording duration — the user speaks naturally.
  */
 export function startStreamingSTT(stream, callbacks, options = {}) {
   if (!DEEPGRAM_API_KEY) {
@@ -280,21 +53,170 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
     return { stop: () => {} };
   }
 
-  console.log('[STT] 🎤 Audio tracks:', stream.getAudioTracks().map(t => ({
-    kind: t.kind, enabled: t.enabled, readyState: t.readyState, label: t.label,
+  const sttLanguage = options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US';
+  let ws = null;
+  let recorder = null;
+  let micPaused = false;
+  let destroyed = false;
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT = 3;
+
+  // ---- Log stream info ----
+  const tracks = stream.getAudioTracks();
+  console.log('[STT] 🎤 Audio stream:', tracks.map(t => ({
+    label: t.label, enabled: t.enabled, muted: t.muted, readyState: t.readyState,
   })));
 
-  const audioTracks = stream.getAudioTracks();
-  if (audioTracks.length === 0 || audioTracks[0].readyState !== 'live') {
-    console.error('[STT] ❌ No active audio track');
-    callbacks.onError?.('No active microphone track found');
+  if (tracks.length === 0) {
+    callbacks.onError?.('No audio tracks in stream');
     return { stop: () => {} };
   }
 
-  // Always use REST — works on all networks (mobile carriers, firewalls, etc.)
-  console.log('[STT] 📡 Starting REST STT mode');
-  callbacks.onMode?.('rest');
-  return startRestSTT(stream, callbacks, options);
+  // Pick best supported mime type
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+    ? 'audio/webm;codecs=opus'
+    : MediaRecorder.isTypeSupported('audio/mp4')
+    ? 'audio/mp4'
+    : MediaRecorder.isTypeSupported('audio/webm')
+    ? 'audio/webm'
+    : '';
+
+  // Deepgram endpointing: 1000ms silence = utterance end
+  const ENDPOINTING_MS = 1000;
+
+  // ---- WebSocket connection ----
+  function connect() {
+    if (destroyed) return;
+
+    const params = new URLSearchParams({
+      model: 'nova-2',
+      language: sttLanguage,
+      interim_results: 'true',
+      endpointing: String(ENDPOINTING_MS),
+      token: DEEPGRAM_API_KEY,
+    });
+    const url = `wss://api.deepgram.com/v1/listen?${params}`;
+
+    console.log('[STT] 🔌 Connecting WebSocket...');
+    ws = new WebSocket(url);
+
+    ws.onopen = () => {
+      console.log('[STT] ✅ WebSocket connected');
+      reconnectAttempts = 0;
+      startRecorder();
+    };
+
+    ws.onclose = (e) => {
+      console.log('[STT] 🔌 WebSocket closed:', e.code, e.reason);
+      stopRecorder();
+      if (!destroyed && reconnectAttempts < MAX_RECONNECT) {
+        reconnectAttempts++;
+        console.log('[STT] 🔁 Reconnecting (' + reconnectAttempts + '/' + MAX_RECONNECT + ')...');
+        setTimeout(connect, 1000);
+      } else if (!destroyed) {
+        callbacks.onError?.('Connection to Deepgram lost. Please restart.');
+      }
+    };
+
+    ws.onerror = () => {
+      console.error('[STT] ❌ WebSocket error');
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'Results' && msg.channel?.alternatives?.[0]) {
+          const transcript = msg.channel.alternatives[0].transcript?.trim();
+          if (transcript) {
+            if (msg.is_final) {
+              console.log('[STT] 🎯 Final transcript:', JSON.stringify(transcript));
+              callbacks.onFinal?.(transcript);
+              // Utterance complete — stop recorder but keep WebSocket alive.
+              // pauseMic keeps the connection open for the next utterance,
+              // avoiding the overhead of destroying and reconnecting every turn.
+              stopRecorder();
+              micPaused = true;
+            } else {
+              callbacks.onInterim?.(transcript);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[STT] ⚠️ Parse error:', err.message);
+      }
+    };
+  }
+
+  // ---- MediaRecorder ----
+  function startRecorder() {
+    if (destroyed || micPaused || recorder) return;
+
+    try {
+      recorder = new MediaRecorder(stream, { mimeType: mimeType || undefined });
+      console.log('[STT] 🎤 MediaRecorder created mimeType=' + recorder.mimeType);
+    } catch (err) {
+      console.warn('[STT] ⚠️ MediaRecorder failed:', err.message, '- audio will not be captured');
+      return;
+    }
+
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0 && ws?.readyState === WebSocket.OPEN) {
+        ws.send(e.data);
+      }
+    };
+
+    recorder.onerror = (e) => {
+      console.error('[STT] ❌ MediaRecorder error:', e.error);
+    };
+
+    recorder.onstop = () => {
+      console.log('[STT] 📴 MediaRecorder stopped');
+      recorder = null;
+    };
+
+    recorder.start(100);
+    console.log('[STT] 🎤 MediaRecorder started, chunk interval=100ms');
+  }
+
+  function stopRecorder() {
+    if (recorder && recorder.state !== 'inactive') {
+      try { recorder.stop(); } catch {}
+    }
+    recorder = null;
+  }
+
+  // ---- Public API ----
+  connect();
+
+  return {
+    /** Full cleanup: close WebSocket + stop recorder */
+    stop: () => {
+      destroyed = true;
+      stopRecorder();
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
+        ws = null;
+      }
+    },
+
+    /** Pause sending mic audio (keep WebSocket open for next utterance) */
+    pauseMic: () => {
+      micPaused = true;
+      stopRecorder();
+    },
+
+    /** Resume sending mic audio (new recorder on same WebSocket).
+     *  Returns true if successfully resumed, false if connection is dead. */
+    resumeMic: () => {
+      if (destroyed || ws?.readyState !== WebSocket.OPEN) return false;
+      micPaused = false;
+      if (!recorder) {
+        startRecorder();
+      }
+      return true;
+    },
+  };
 }
 
 // ---- Text-to-Speech (Web Audio API — no user-gesture restriction) ----
@@ -303,12 +225,12 @@ let audioCtx = null;
 let currentSource = null;
 let currentAbortController = null;
 
-function getAudioContext() {
+async function getAudioContext() {
   if (!audioCtx || audioCtx.state === 'closed') {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
   if (audioCtx.state === 'suspended') {
-    audioCtx.resume();
+    await audioCtx.resume();
   }
   return audioCtx;
 }
@@ -332,8 +254,14 @@ function chunkText(text, maxLen = TTS_MAX_CHUNK) {
   return chunks.filter(Boolean);
 }
 
-function playBuffer(buffer, abortSignal) {
-  const ctx = getAudioContext();
+async function playBuffer(buffer, abortSignal, onStart) {
+  const ctx = await getAudioContext();
+  if (!buffer || buffer.duration <= 0) {
+    throw new Error('TTS_PLAY_FAILED: Invalid audio buffer (duration=' + (buffer?.duration || 0) + ')');
+  }
+  if (ctx.state !== 'running') {
+    throw new Error('TTS_PLAY_FAILED: AudioContext state=' + ctx.state);
+  }
   return new Promise((resolve, reject) => {
     const source = ctx.createBufferSource();
     source.buffer = buffer;
@@ -354,6 +282,7 @@ function playBuffer(buffer, abortSignal) {
     abortSignal.addEventListener('abort', onAbort, { once: true });
     source.onended = () => { cleanup(); resolve(); };
     source.start(0);
+    onStart?.();
   });
 }
 
@@ -399,13 +328,20 @@ export async function speak(text, options = {}) {
       }
 
       const arrayBuffer = await response.arrayBuffer();
-      const ctx = getAudioContext();
+      if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+        throw new Error('TTS_DECODE_FAILED: Empty response from Deepgram');
+      }
+      const ctx = await getAudioContext();
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      if (!audioBuffer || audioBuffer.duration <= 0) {
+        throw new Error('TTS_DECODE_FAILED: Invalid audio data (duration=' + (audioBuffer?.duration || 0) + ')');
+      }
 
       console.log('[TTS] 🔊 Playing chunk, duration:', audioBuffer.duration.toFixed(1) + 's');
-      if (!started) { started = true; options.onSpeechStart?.(); }
 
-      await playBuffer(audioBuffer, abortController.signal);
+      await playBuffer(audioBuffer, abortController.signal, () => {
+        if (!started) { started = true; options.onSpeechStart?.(); }
+      });
     }
   } catch (err) {
     if (err.name !== 'AbortError') console.error('[TTS] Error:', err);
