@@ -85,6 +85,8 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
   const ENDPOINTING_MS = 1000;
 
   // ---- WebSocket connection ----
+  let connectTime = 0;
+
   function connect() {
     if (destroyed) return;
 
@@ -98,6 +100,7 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
     const url = `wss://api.deepgram.com/v1/listen?${params}`;
 
     console.log('[STT] 🔌 Connecting WebSocket...');
+    connectTime = Date.now();
     ws = new WebSocket(url);
 
     ws.onopen = () => {
@@ -109,6 +112,18 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
     ws.onclose = (e) => {
       console.log('[STT] 🔌 WebSocket closed:', e.code, e.reason);
       stopRecorder();
+
+      // If the connection closed within 500ms of opening, it's a hard reject
+      // (invalid API key, wrong URL) — not a transient network issue.
+      // Retrying is pointless and only creates noise.
+      const connectionLifetime = Date.now() - connectTime;
+      const isHardReject = reconnectAttempts === 0 && connectionLifetime < 500;
+
+      if (isHardReject) {
+        callbacks.onError?.('Deepgram authentication failed. Check that VITE_DEEPGRAM_API_KEY in your .env file is a valid Deepgram API key.');
+        return;
+      }
+
       if (!destroyed && reconnectAttempts < MAX_RECONNECT) {
         reconnectAttempts++;
         console.log('[STT] 🔁 Reconnecting (' + reconnectAttempts + '/' + MAX_RECONNECT + ')...');
