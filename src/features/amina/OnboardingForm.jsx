@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, Check, Calendar, Heart, Stethoscope, Hospital, Apple, Baby, Plus, Trash2 } from 'lucide-react';
@@ -9,6 +9,16 @@ import useChildStore from '../../stores/childStore';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
 import styles from './OnboardingForm.module.css';
+
+function buildInitialFormData() {
+  const fields = {};
+  for (const step of STEPS) {
+    for (const f of step.fields) {
+      fields[f.name] = '';
+    }
+  }
+  return fields;
+}
 
 const STEPS = [
   {
@@ -96,12 +106,17 @@ const OnboardingForm = () => {
   const { registerChild } = useChildStore();
   const language = location.state?.language || profile?.preferred_language || 'en';
   const [currentStep, setCurrentStep] = useState(0);
-  const [formData, setFormData] = useState({
-    full_name: '',
-    phone: user?.phone || profile?.phone || '',
-    preferred_language: language,
-    children_list: [],
-  });
+  const initialData = useRef(null);
+  if (!initialData.current) {
+    initialData.current = {
+      ...buildInitialFormData(),
+      phone: user?.phone || profile?.phone || '',
+      preferred_language: language,
+      children_list: [],
+    };
+  }
+  const [formData, setFormData] = useState(initialData.current);
+  const formRef = useRef(formData);
   const [isSaving, setIsSaving] = useState(false);
   const [errors, setErrors] = useState({});
 
@@ -113,14 +128,17 @@ const OnboardingForm = () => {
   const lang = (en, dag) => language === 'dag' ? dag : en;
 
   const handleChange = (name, value) => {
-    setFormData(prev => ({ ...prev, [name]: value }));
+    formRef.current = { ...formRef.current, [name]: value };
+    setFormData(formRef.current);
     if (errors[name]) setErrors(prev => ({ ...prev, [name]: null }));
   };
 
   const validateStep = () => {
     const newErrors = {};
-    for (const field of visibleFields) {
-      if (field.required && !formData[field.name]?.toString().trim()) {
+    const data = formRef.current;
+    const fieldsToCheck = step.fields.filter(f => !f.condition || f.condition(data));
+    for (const field of fieldsToCheck) {
+      if (field.required && !data[field.name]?.toString().trim()) {
         newErrors[field.name] = `${field.label} is required`;
       }
     }
@@ -141,26 +159,27 @@ const OnboardingForm = () => {
 
   const handleSubmit = async () => {
     if (!validateStep()) return;
+    const data = formRef.current;
     setIsSaving(true);
     setErrors({});
 
     try {
       // 1. Register mother profile
       const medicalHistory = [
-        formData.existing_conditions,
-        formData.current_medications ? `Current medications: ${formData.current_medications}` : null,
-        formData.previous_complications ? `Previous complications: ${formData.previous_complications}` : null,
+        data.existing_conditions,
+        data.current_medications ? `Current medications: ${data.current_medications}` : null,
+        data.previous_complications ? `Previous complications: ${data.previous_complications}` : null,
       ].filter(Boolean).join('. ') || null;
 
-      const edd = formData.lmp ? calculateEDD(formData.lmp) : null;
+      const edd = data.lmp ? calculateEDD(data.lmp) : null;
 
       const motherResult = await registerMother({
         profile_id: profile.id,
-        full_name: formData.full_name || profile?.full_name || 'Unknown',
-        date_of_birth: formData.date_of_birth || null,
+        full_name: data.full_name || profile?.full_name || 'Unknown',
+        date_of_birth: data.date_of_birth || null,
         phone: user?.phone || profile?.phone || null,
-        community: formData.community || null,
-        blood_group: formData.blood_group || null,
+        community: data.community || null,
+        blood_group: data.blood_group || null,
         medical_history: medicalHistory,
         risk_level: 'low',
         assigned_worker_id: null,
@@ -175,19 +194,19 @@ const OnboardingForm = () => {
       const motherId = motherResult.data.id;
 
       // 2. Register pregnancy if applicable
-      if (formData.is_pregnant === 'Yes') {
+      if (data.is_pregnant === 'Yes') {
         const pregResult = await registerPregnancy({
           mother_id: motherId,
           status: 'active',
           risk_level: 'low',
-          lmp: formData.lmp || null,
+          lmp: data.lmp || null,
           edd,
-          gravida: parseInt(formData.gravida) || 1,
-          para: parseInt(formData.para) || 0,
+          gravida: parseInt(data.gravida) || 1,
+          para: parseInt(data.para) || 0,
           notes: [
-            formData.previous_complications ? `Previous complications: ${formData.previous_complications}` : null,
-            formData.nutrition ? `Nutrition: ${formData.nutrition}` : null,
-            formData.supplements === 'Yes' ? 'Taking supplements' : null,
+            data.previous_complications ? `Previous complications: ${data.previous_complications}` : null,
+            data.nutrition ? `Nutrition: ${data.nutrition}` : null,
+            data.supplements === 'Yes' ? 'Taking supplements' : null,
           ].filter(Boolean).join('. ') || null,
         });
 
@@ -197,8 +216,8 @@ const OnboardingForm = () => {
       }
 
       // 3. Register children if applicable
-      if (formData.has_children === 'Yes' && formData.children_list?.length > 0) {
-        for (const child of formData.children_list) {
+      if (data.has_children === 'Yes' && data.children_list?.length > 0) {
+        for (const child of data.children_list) {
           const childResult = await registerChild({
             mother_id: motherId,
             full_name: child.name || 'Unknown',
@@ -253,26 +272,32 @@ const OnboardingForm = () => {
   };
 
   const addChild = () => {
-    setFormData(prev => ({
-      ...prev,
-      children_list: [...(prev.children_list || []), { name: '', date_of_birth: '', gender: '', birth_weight: '' }],
-    }));
+    const next = {
+      ...formRef.current,
+      children_list: [...(formRef.current.children_list || []), { name: '', date_of_birth: '', gender: '', birth_weight: '' }],
+    };
+    formRef.current = next;
+    setFormData(next);
   };
 
   const removeChild = (index) => {
-    setFormData(prev => ({
-      ...prev,
-      children_list: prev.children_list.filter((_, i) => i !== index),
-    }));
+    const next = {
+      ...formRef.current,
+      children_list: formRef.current.children_list.filter((_, i) => i !== index),
+    };
+    formRef.current = next;
+    setFormData(next);
   };
 
   const updateChild = (index, field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      children_list: prev.children_list.map((child, i) =>
+    const next = {
+      ...formRef.current,
+      children_list: formRef.current.children_list.map((child, i) =>
         i === index ? { ...child, [field]: value } : child
       ),
-    }));
+    };
+    formRef.current = next;
+    setFormData(next);
   };
 
   const renderChildrenSection = () => {
@@ -289,7 +314,9 @@ const OnboardingForm = () => {
           onChange={(e) => {
             handleChange('has_children', e.target.value);
             if (e.target.value === 'No') {
-              setFormData(prev => ({ ...prev, children_list: [] }));
+              const next = { ...formRef.current, children_list: [] };
+              formRef.current = next;
+              setFormData(next);
             }
           }}
           options={[{ value: 'Yes', label: 'Yes' }, { value: 'No', label: 'No' }]}
