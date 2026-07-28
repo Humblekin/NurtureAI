@@ -1,8 +1,3 @@
-/**
- * STT + TTS via Supabase Edge Function proxy.
- * All Deepgram calls are routed server-side for security.
- */
-
 import { isSupabaseConfigured } from '../lib/supabase';
 import useAuthStore from '../stores/authStore';
 
@@ -11,7 +6,35 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 function getFunctionsBase() {
   if (!SUPABASE_URL) return null;
   const match = SUPABASE_URL.match(/https:\/\/(.+?)\.supabase\.co/);
-  return match ? `https://${match[1]}.supabase.co/functions/v1/deepgram-proxy` : null;
+  return match ? `https://${match[1]}.supabase.co/functions/v1` : null;
+}
+
+// ---- Deepgram temporary token ----
+
+async function requestDeepgramToken() {
+  const functionsBase = getFunctionsBase();
+  if (!functionsBase) throw new Error('Voice features require Supabase configuration');
+
+  const session = useAuthStore.getState().session;
+  const token = session?.access_token;
+  if (!token) throw new Error('You must be signed in to use voice features');
+
+  const response = await fetch(`${functionsBase}/deepgram-token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    let parsed;
+    try { parsed = JSON.parse(errBody); } catch {}
+    throw new Error(parsed?.error || `Token request failed: ${response.status}`);
+  }
+
+  return await response.json();
 }
 
 // ---- Helpers ----
@@ -20,14 +43,12 @@ let audioUnlocked = false;
 
 export function unlockAudio() {
   try {
-    // Create or reuse AudioContext (must be created during user gesture on mobile)
     if (!audioCtx || audioCtx.state === 'closed') {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
     if (audioCtx.state === 'suspended') {
       audioCtx.resume();
     }
-    // Play silent buffer to unlock audio system
     if (!audioUnlocked) {
       const buffer = audioCtx.createBuffer(1, 1, 22050);
       const source = audioCtx.createBufferSource();
@@ -45,19 +66,11 @@ export function isDeepgramConfigured() {
   return isSupabaseConfigured();
 }
 
-// ---- Speech-to-Text (WebSocket Streaming) ----
+// ---- Speech-to-Text (Direct Deepgram WebSocket) ----
 
-/**
- * WebSocket-based streaming STT.
- * Audio chunks flow continuously to Deepgram.
- * Interim results arrive in real-time.
- * Deepgram detects utterance end via endpointing (1s silence).
- * No fixed recording duration — the user speaks naturally.
- */
 export function startStreamingSTT(stream, callbacks, options = {}) {
-  const functionsBase = getFunctionsBase();
-  if (!functionsBase) {
-    console.error('[STT] ❌ Supabase not configured');
+  if (!getFunctionsBase()) {
+    console.error('[STT] Supabase not configured');
     callbacks.onError?.('Voice features require Supabase configuration');
     return { stop: () => {} };
   }
@@ -69,9 +82,8 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
   let reconnectAttempts = 0;
   const MAX_RECONNECT = 3;
 
-  // ---- Log stream info ----
   const tracks = stream.getAudioTracks();
-  console.log('[STT] 🎤 Audio stream:', tracks.map(t => ({
+  console.log('[STT] Audio stream:', tracks.map(t => ({
     label: t.label, enabled: t.enabled, muted: t.muted, readyState: t.readyState,
   })));
 
@@ -80,7 +92,6 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
     return { stop: () => {} };
   }
 
-  // Pick best supported mime type
   const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
     ? 'audio/webm;codecs=opus'
     : MediaRecorder.isTypeSupported('audio/mp4')
@@ -89,106 +100,102 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
     ? 'audio/webm'
     : '';
 
-  // ---- WebSocket connection via Edge Function ----
-  let connectTime = 0;
-
   function connect() {
     if (destroyed) return;
 
-    const session = useAuthStore.getState().session;
-    const token = session?.access_token;
+    requestDeepgramToken()
+      .then(({ token }) => {
+        if (destroyed) return;
 
-    if (!token) {
-      console.error('[STT] ❌ No auth session');
-      callbacks.onError?.('You must be signed in to use voice features');
-      return;
-    }
+        const wsUrl = `wss://api.deepgram.com/v1/listen?${new URLSearchParams({
+          model: 'nova-2',
+          language: options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US',
+          interim_results: 'true',
+          endpointing: '1000',
+          token,
+        })}`;
 
-    const wsUrl = functionsBase.replace('https://', 'wss://') + '/stt?' + new URLSearchParams({
-      access_token: token,
-      language: options?.language || 'en',
-    });
+        console.log('[STT] Connecting directly to Deepgram...');
+        ws = new WebSocket(wsUrl);
 
-    console.log('[STT] 🔌 Connecting to Edge Function...');
-    connectTime = Date.now();
-    ws = new WebSocket(wsUrl);
-
-    ws.onopen = () => {
-      console.log('[STT] ✅ WebSocket connected, waiting for auth...');
-      reconnectAttempts = 0;
-    };
-
-    ws.onclose = (e) => {
-      console.log('[STT] 🔌 WebSocket closed:', e.code, e.reason);
-      stopRecorder();
-
-      if (e.code === 4001) {
-        callbacks.onError?.('Voice authentication failed. Please sign in again.');
-        return;
-      }
-
-      const connectionLifetime = Date.now() - connectTime;
-      const isHardReject = e.code !== 1000 && reconnectAttempts === 0 && connectionLifetime < 500;
-
-      if (isHardReject) {
-        callbacks.onError?.('Voice service unavailable. Please try again.');
-        return;
-      }
-
-      if (!destroyed && reconnectAttempts < MAX_RECONNECT) {
-        reconnectAttempts++;
-        console.log('[STT] 🔁 Reconnecting (' + reconnectAttempts + '/' + MAX_RECONNECT + ')...');
-        setTimeout(connect, 1000);
-      } else if (!destroyed) {
-        callbacks.onError?.('Connection lost. Please restart.');
-      }
-    };
-
-    ws.onerror = () => {
-      console.error('[STT] ❌ WebSocket error');
-    };
-
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'Connected') {
-          console.log('[STT] ✅ Deepgram ready, starting recorder');
+        ws.onopen = () => {
+          console.log('[STT] Deepgram WebSocket connected');
+          reconnectAttempts = 0;
           startRecorder();
-          return;
-        }
-        if (msg.type === 'Error') {
-          console.error('[STT] ❌ Edge Function error:', msg.detail || msg.message);
-          callbacks.onError?.(msg.detail || msg.message);
-          return;
-        }
-        if (msg.type === 'Results' && msg.channel?.alternatives?.[0]) {
-          const transcript = msg.channel.alternatives[0].transcript?.trim();
-          if (transcript) {
-            if (msg.is_final) {
-              console.log('[STT] 🎯 Final transcript:', JSON.stringify(transcript));
-              callbacks.onFinal?.(transcript);
-              stopRecorder();
-              micPaused = true;
-            } else {
-              callbacks.onInterim?.(transcript);
+        };
+
+        ws.onmessage = (e) => {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'Results' && msg.channel?.alternatives?.[0]) {
+              const transcript = msg.channel.alternatives[0].transcript?.trim();
+              if (transcript) {
+                if (msg.is_final) {
+                  console.log('[STT] Final transcript:', JSON.stringify(transcript));
+                  callbacks.onFinal?.(transcript);
+                  stopRecorder();
+                  micPaused = true;
+                } else {
+                  callbacks.onInterim?.(transcript);
+                }
+              }
             }
+          } catch (err) {
+            console.warn('[STT] Parse error:', err.message);
           }
-        }
-      } catch (err) {
-        console.warn('[STT] ⚠️ Parse error:', err.message);
-      }
-    };
+        };
+
+        ws.onclose = (e) => {
+          console.log('[STT] WebSocket closed:', e.code, e.reason);
+          stopRecorder();
+
+          if (e.code === 4001) {
+            callbacks.onError?.('Voice authentication failed. Please sign in again.');
+            return;
+          }
+
+          const connectionLifetime = Date.now() - connectTime;
+          const isHardReject = e.code !== 1000 && reconnectAttempts === 0 && connectionLifetime < 500;
+
+          if (isHardReject) {
+            callbacks.onError?.('Voice service unavailable. Please try again.');
+            return;
+          }
+
+          if (!destroyed && reconnectAttempts < MAX_RECONNECT) {
+            reconnectAttempts++;
+            console.log('[STT] Reconnecting (' + reconnectAttempts + '/' + MAX_RECONNECT + ')...');
+            setTimeout(connect, 1000);
+          } else if (!destroyed) {
+            callbacks.onError?.('Connection lost. Please restart.');
+          }
+        };
+
+        ws.onerror = () => {
+          console.error('[STT] WebSocket error');
+        };
+      })
+      .catch((err) => {
+        console.error('[STT] Token request failed:', err);
+        callbacks.onError?.(err.message || 'Failed to get voice credentials');
+      });
   }
 
-  // ---- MediaRecorder ----
+  let connectTime = 0;
+  const origConnect = connect;
+  connect = function() {
+    connectTime = Date.now();
+    origConnect.call(this);
+  };
+
   function startRecorder() {
     if (destroyed || micPaused || recorder) return;
 
     try {
       recorder = new MediaRecorder(stream, { mimeType: mimeType || undefined });
-      console.log('[STT] 🎤 MediaRecorder created mimeType=' + recorder.mimeType);
+      console.log('[STT] MediaRecorder created mimeType=' + recorder.mimeType);
     } catch (err) {
-      console.warn('[STT] ⚠️ MediaRecorder failed:', err.message, '- audio will not be captured');
+      console.warn('[STT] MediaRecorder failed:', err.message, '- audio will not be captured');
       return;
     }
 
@@ -199,16 +206,16 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
     };
 
     recorder.onerror = (e) => {
-      console.error('[STT] ❌ MediaRecorder error:', e.error);
+      console.error('[STT] MediaRecorder error:', e.error);
     };
 
     recorder.onstop = () => {
-      console.log('[STT] 📴 MediaRecorder stopped');
+      console.log('[STT] MediaRecorder stopped');
       recorder = null;
     };
 
     recorder.start(100);
-    console.log('[STT] 🎤 MediaRecorder started, chunk interval=100ms');
+    console.log('[STT] MediaRecorder started, chunk interval=100ms');
   }
 
   function stopRecorder() {
@@ -218,11 +225,9 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
     recorder = null;
   }
 
-  // ---- Public API ----
   connect();
 
   return {
-    /** Full cleanup: close WebSocket + stop recorder */
     stop: () => {
       destroyed = true;
       stopRecorder();
@@ -233,14 +238,11 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
       }
     },
 
-    /** Pause sending mic audio (keep WebSocket open for next utterance) */
     pauseMic: () => {
       micPaused = true;
       stopRecorder();
     },
 
-    /** Resume sending mic audio (new recorder on same WebSocket).
-     *  Returns true if successfully resumed, false if connection is dead. */
     resumeMic: () => {
       if (destroyed || ws?.readyState !== WebSocket.OPEN) return false;
       micPaused = false;
@@ -252,7 +254,7 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
   };
 }
 
-// ---- Text-to-Speech (Web Audio API — no user-gesture restriction) ----
+// ---- Text-to-Speech (via Edge Function proxy) ----
 
 let audioCtx = null;
 let currentSource = null;
@@ -319,9 +321,6 @@ async function playBuffer(buffer, abortSignal, onStart) {
   });
 }
 
-/**
- * Convert text to speech using Deepgram TTS + Web Audio API.
- */
 export async function speak(text, options = {}) {
   const functionsBase = getFunctionsBase();
   if (!functionsBase) {
@@ -351,8 +350,8 @@ export async function speak(text, options = {}) {
     for (const chunk of chunks) {
       if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
-      console.log('[TTS] 🔊 Generating:', chunk.substring(0, 50) + (chunk.length > 50 ? '...' : ''));
-      const response = await fetch(`${functionsBase}/tts`, {
+      console.log('[TTS] Generating:', chunk.substring(0, 50) + (chunk.length > 50 ? '...' : ''));
+      const response = await fetch(`${functionsBase}/deepgram-proxy/tts`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -379,7 +378,7 @@ export async function speak(text, options = {}) {
         throw new Error('TTS_DECODE_FAILED: Invalid audio data (duration=' + (audioBuffer?.duration || 0) + ')');
       }
 
-      console.log('[TTS] 🔊 Playing chunk, duration:', audioBuffer.duration.toFixed(1) + 's');
+      console.log('[TTS] Playing chunk, duration:', audioBuffer.duration.toFixed(1) + 's');
 
       await playBuffer(audioBuffer, abortController.signal, () => {
         if (!started) { started = true; options.onSpeechStart?.(); }
