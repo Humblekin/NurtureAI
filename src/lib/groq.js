@@ -286,9 +286,10 @@ You are not here to replace nurses or doctors. You empower mothers with health e
 const requestTimestamps = [];
 const RATE_LIMIT = { maxRequests: 20, windowMs: 60_000 };
 
-async function waitForSlot() {
+async function waitForSlot(signal) {
   const now = Date.now();
   while (requestTimestamps.length >= RATE_LIMIT.maxRequests) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const oldest = requestTimestamps[0];
     if (now - oldest > RATE_LIMIT.windowMs) {
       requestTimestamps.shift();
@@ -331,6 +332,7 @@ export async function chatCompletion(messages, options = {}) {
     healthContext = '',
     conversationSummary = '',
     proactiveContext = '',
+    signal,
   } = options;
 
   const roleContext = getRoleContext(userRole);
@@ -354,7 +356,7 @@ export async function chatCompletion(messages, options = {}) {
   ];
 
   // Wait for a rate-limit slot before sending
-  await waitForSlot();
+  await waitForSlot(signal);
 
   try {
     const response = await fetch(functionsBase, {
@@ -369,6 +371,7 @@ export async function chatCompletion(messages, options = {}) {
         temperature,
         max_tokens: maxTokens,
       }),
+      signal,
     });
 
     const errBody = await response.text();
@@ -376,27 +379,25 @@ export async function chatCompletion(messages, options = {}) {
     if (!response.ok) {
       console.error(`Groq proxy error ${response.status}:`, errBody);
 
-      if (response.status === 401) return "Authentication failed. Please sign in again.";
-      if (response.status === 429) {
-        // Back off: reset window for this caller
-        requestTimestamps.length = 0;
-        return "I'm receiving too many requests at once. Please wait a moment and try again.";
-      }
+      if (response.status === 401) throw new Error('Authentication failed. Please sign in again.');
+      if (response.status === 429) throw new Error('Too many requests. Please wait a moment and try again.');
       let parsed;
       try { parsed = JSON.parse(errBody); } catch {}
-      return parsed?.error || `API error ${response.status}. Please try again later.`;
+      throw new Error(parsed?.error || `API error ${response.status}. Please try again later.`);
     }
 
     const data = JSON.parse(errBody);
     return data.choices?.[0]?.message?.content || 'I apologize, I could not generate a response. Please try again.';
   } catch (error) {
+    if (error.name === 'AbortError') throw error;
     console.error('Groq AI error:', error.message || error);
 
     if (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError') || error.name === 'TypeError') {
-      return "Network error. Please check your internet connection and try again.";
+      throw new Error('Network error. Please check your internet connection and try again.');
     }
 
-    return "I'm having trouble connecting right now. If you have a health concern, please visit your nearest health facility or contact your community health worker.";
+    // Re-throw our own typed errors (401, 429, API error)
+    throw error;
   }
 }
 
