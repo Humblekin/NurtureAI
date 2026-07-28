@@ -46,7 +46,7 @@ export function createConversationManager(deps) {
   let conversationStartTime = null;
   let messageCount = 0;
   let aiAbortController = null;
-  let lastSpokenText = '';
+  let recentTranscripts = [];
 
   function setState(newState) {
     if (state === newState) return;
@@ -114,7 +114,6 @@ export function createConversationManager(deps) {
 
       const assistantMsg = { role: 'assistant', content: response };
       setMessages([...newMessages, assistantMsg]);
-      lastSpokenText = response;
       console.log('[Conversation] 🤖 AI replied:', response.substring(0, 100) + (response.length > 100 ? '...' : ''));
 
       // Recognition stays running — barge-in is handled by onInterimTranscript
@@ -300,7 +299,8 @@ export function createConversationManager(deps) {
       onTranscriptChange?.(text);
 
       if (state === CONVERSATION_STATES.SPEAKING) {
-        console.log('[Conversation] 🔇 User interrupted — stopping speech');
+        if (text.trim().length < 4) return; // Ignore TTS echo fragments
+        console.log('[Conversation] 🔇 User interrupted — stopping speech (interim:', text, ')');
         stopSpeech();
         forceState(CONVERSATION_STATES.INTERRUPTED);
         forceState(CONVERSATION_STATES.USER_SPEAKING);
@@ -321,16 +321,17 @@ export function createConversationManager(deps) {
       if (destroyed || !text) return;
       if (state !== CONVERSATION_STATES.USER_SPEAKING) return;
 
-      // Ignore TTS echo: if the transcript looks like a fragment of what we just spoke
-      if (lastSpokenText && text.length < 50) {
-        const lowerText = text.toLowerCase().trim();
-        const lowerLast = lastSpokenText.toLowerCase();
-        if (lowerLast.startsWith(lowerText) || lowerLast.includes(lowerText)) {
-          console.log('[Conversation] 🚫 Ignored TTS echo:', text);
-          forceState(CONVERSATION_STATES.LISTENING);
-          return;
-        }
+      // Dedup: ignore if we already processed the same text within the last 5s
+      const normalized = text.toLowerCase().trim();
+      const now = Date.now();
+      recentTranscripts = recentTranscripts.filter(t => now - t.time < 5000);
+      const isDup = recentTranscripts.some(t => t.text === normalized);
+      if (isDup) {
+        console.log('[Conversation] 🚫 Ignored duplicate transcript:', text);
+        forceState(CONVERSATION_STATES.LISTENING);
+        return;
       }
+      recentTranscripts.push({ text: normalized, time: now });
 
       handleUserSpeech(text);
     },
