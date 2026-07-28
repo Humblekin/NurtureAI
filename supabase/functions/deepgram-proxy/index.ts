@@ -7,12 +7,12 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!
 
 console.log("[DG-Proxy] Function loaded")
 
-function corsHeaders(origin: string): Headers {
-  return new Headers({
+function corsHeaders(origin: string): Record<string, string> {
+  return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  })
+  }
 }
 
 async function verifyJWT(token: string): Promise<string | null> {
