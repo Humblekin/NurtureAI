@@ -284,7 +284,7 @@ You are not here to replace nurses or doctors. You empower mothers with health e
 
 // ---- Client-side rate limiter (prevents rapid-fire 429s) ----
 const requestTimestamps = [];
-const RATE_LIMIT = { maxRequests: 8, windowMs: 60_000 }; // 8 req / min = safe under 12k TPM
+const RATE_LIMIT = { maxRequests: 20, windowMs: 60_000 };
 
 async function waitForSlot() {
   const now = Date.now();
@@ -323,7 +323,7 @@ export async function chatCompletion(messages, options = {}) {
   }
 
   const {
-    model = 'llama-3.3-70b-versatile',
+    model = 'llama-3.1-8b-instant',
     temperature = 0.7,
     maxTokens = 512,
     userRole = 'mother',
