@@ -14,14 +14,29 @@ export function unlockVoice() {
   }
 }
 
+const femaleVoiceNames = ['zira', 'samantha', 'karen', 'female', 'girl'];
+const maleVoiceNames = ['david', 'alex', 'male', 'mark', 'guy', 'daniel'];
+
+function isFemale(voice) {
+  const name = voice.name.toLowerCase();
+  if (femaleVoiceNames.some(k => name.includes(k))) return true;
+  if (maleVoiceNames.some(k => name.includes(k))) return false;
+  return null;
+}
+
 function getVoice(lang) {
   if (voiceCache.length === 0) {
     loadVoices();
   }
   const tag = lang === 'dag' ? 'ha-Latn-NG' : 'en-US';
-  return voiceCache.find(v => v.lang.startsWith(tag.split('-')[0]))
-    || voiceCache.find(v => v.lang.startsWith('en'))
-    || null;
+  const langPrefix = tag.split('-')[0];
+  const langVoices = voiceCache.filter(v => v.lang.startsWith(langPrefix));
+  if (langVoices.length === 0) {
+    const enVoices = voiceCache.filter(v => v.lang.startsWith('en'));
+    if (enVoices.length === 0) return null;
+    return enVoices.find(v => isFemale(v) === true) || enVoices[0];
+  }
+  return langVoices.find(v => isFemale(v) === true) || langVoices[0];
 }
 
 export function speak(text, options = {}) {
