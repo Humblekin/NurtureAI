@@ -1,5 +1,6 @@
 import "@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "jsr:@supabase/supabase-js@2"
+import { WebSocket as WSWebSocket } from "ws"
 
 const DEEPGRAM_API_KEY = Deno.env.get("DEEPGRAM_API_KEY")
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!
@@ -117,13 +118,14 @@ async function handleSTT(req: Request): Promise<Response> {
           language,
           interim_results: "true",
           endpointing: "1000",
-          token: DEEPGRAM_API_KEY!,
         })}`
 
         console.log("[DG-Proxy] STT: opening Deepgram WebSocket")
-        console.log(`[DG-Proxy] STT: Deepgram URL (sanitized): wss://api.deepgram.com/v1/listen?...&token=***&language=${language}`)
+        console.log(`[DG-Proxy] STT: Deepgram URL (sanitized): wss://api.deepgram.com/v1/listen?model=nova-2&language=${language}`)
         try {
-          deepgramWs = new WebSocket(dgUrl)
+          deepgramWs = new WSWebSocket(dgUrl, {
+            headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` },
+          }) as unknown as WebSocket
         } catch (wsErr) {
           console.error(`[DG-Proxy] STT: Failed to create Deepgram WebSocket: ${wsErr}`)
           try { socket!.send(JSON.stringify({ type: "Error", message: "Failed to create Deepgram WebSocket", detail: String(wsErr) })) } catch (_) { /* ignore */ }
