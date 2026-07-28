@@ -223,7 +223,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
         </AnimatePresence>
 
         {/* Start button — shown when mic is not ready and no active conversation */}
-        {!micReady && !conversationActive && deepgramConfigured && (
+        {!micReady && !conversationActive && ttsSupported && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
