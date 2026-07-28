@@ -1,10 +1,18 @@
 /**
- * Real-time STT (REST chunked upload) + TTS (REST API).
- * Uses chunked HTTP POST for speech-to-text — works on all networks.
+ * STT + TTS via Supabase Edge Function proxy.
+ * All Deepgram calls are routed server-side for security.
  */
 
-const DEEPGRAM_API_KEY = import.meta.env.VITE_DEEPGRAM_API_KEY;
-const DEEPGRAM_REST_URL = 'https://api.deepgram.com';
+import { isSupabaseConfigured } from '../lib/supabase';
+import useAuthStore from '../stores/authStore';
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+
+function getFunctionsBase() {
+  if (!SUPABASE_URL) return null;
+  const match = SUPABASE_URL.match(/https:\/\/(.+?)\.supabase\.co/);
+  return match ? `https://${match[1]}.supabase.co/functions/v1/deepgram-proxy` : null;
+}
 
 // ---- Helpers ----
 
@@ -34,7 +42,7 @@ export function unlockAudio() {
 }
 
 export function isDeepgramConfigured() {
-  return !!DEEPGRAM_API_KEY;
+  return isSupabaseConfigured();
 }
 
 // ---- Speech-to-Text (WebSocket Streaming) ----
@@ -47,13 +55,13 @@ export function isDeepgramConfigured() {
  * No fixed recording duration — the user speaks naturally.
  */
 export function startStreamingSTT(stream, callbacks, options = {}) {
-  if (!DEEPGRAM_API_KEY) {
-    console.error('[STT] ❌ Deepgram API key not configured');
-    callbacks.onError?.('Deepgram API key not configured');
+  const functionsBase = getFunctionsBase();
+  if (!functionsBase) {
+    console.error('[STT] ❌ Supabase not configured');
+    callbacks.onError?.('Voice features require Supabase configuration');
     return { stop: () => {} };
   }
 
-  const sttLanguage = options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US';
   let ws = null;
   let recorder = null;
   let micPaused = false;
@@ -81,30 +89,32 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
     ? 'audio/webm'
     : '';
 
-  // Deepgram endpointing: 1000ms silence = utterance end
-  const ENDPOINTING_MS = 1000;
-
-  // ---- WebSocket connection ----
+  // ---- WebSocket connection via Edge Function ----
   let connectTime = 0;
 
   function connect() {
     if (destroyed) return;
 
-    const params = new URLSearchParams({
-      model: 'nova-2',
-      language: sttLanguage,
-      interim_results: 'true',
-      endpointing: String(ENDPOINTING_MS),
-      token: DEEPGRAM_API_KEY,
-    });
-    const url = `wss://api.deepgram.com/v1/listen?${params}`;
+    const session = useAuthStore.getState().session;
+    const token = session?.access_token;
 
-    console.log('[STT] 🔌 Connecting WebSocket...');
+    if (!token) {
+      console.error('[STT] ❌ No auth session');
+      callbacks.onError?.('You must be signed in to use voice features');
+      return;
+    }
+
+    const wsUrl = functionsBase.replace('https://', 'wss://') + '/stt?' + new URLSearchParams({
+      access_token: token,
+      language: options?.language || 'en',
+    });
+
+    console.log('[STT] 🔌 Connecting to Edge Function...');
     connectTime = Date.now();
-    ws = new WebSocket(url);
+    ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      console.log('[STT] ✅ WebSocket connected');
+      console.log('[STT] ✅ WebSocket connected via Edge Function');
       reconnectAttempts = 0;
       startRecorder();
     };
@@ -113,14 +123,11 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
       console.log('[STT] 🔌 WebSocket closed:', e.code, e.reason);
       stopRecorder();
 
-      // If the connection closed within 500ms of opening, it's a hard reject
-      // (invalid API key, wrong URL) — not a transient network issue.
-      // Retrying is pointless and only creates noise.
       const connectionLifetime = Date.now() - connectTime;
       const isHardReject = reconnectAttempts === 0 && connectionLifetime < 500;
 
       if (isHardReject) {
-        callbacks.onError?.('Deepgram authentication failed. Check that VITE_DEEPGRAM_API_KEY in your .env file is a valid Deepgram API key.');
+        callbacks.onError?.('Voice authentication failed. Please sign in again or check the Deepgram API key in Supabase secrets.');
         return;
       }
 
@@ -129,7 +136,7 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
         console.log('[STT] 🔁 Reconnecting (' + reconnectAttempts + '/' + MAX_RECONNECT + ')...');
         setTimeout(connect, 1000);
       } else if (!destroyed) {
-        callbacks.onError?.('Connection to Deepgram lost. Please restart.');
+        callbacks.onError?.('Connection lost. Please restart.');
       }
     };
 
@@ -140,15 +147,17 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
+        if (msg.type === 'Error') {
+          console.error('[STT] ❌ Edge Function error:', msg.detail || msg.message);
+          callbacks.onError?.(msg.detail || msg.message);
+          return;
+        }
         if (msg.type === 'Results' && msg.channel?.alternatives?.[0]) {
           const transcript = msg.channel.alternatives[0].transcript?.trim();
           if (transcript) {
             if (msg.is_final) {
               console.log('[STT] 🎯 Final transcript:', JSON.stringify(transcript));
               callbacks.onFinal?.(transcript);
-              // Utterance complete — stop recorder but keep WebSocket alive.
-              // pauseMic keeps the connection open for the next utterance,
-              // avoiding the overhead of destroying and reconnecting every turn.
               stopRecorder();
               micPaused = true;
             } else {
@@ -305,10 +314,17 @@ async function playBuffer(buffer, abortSignal, onStart) {
  * Convert text to speech using Deepgram TTS + Web Audio API.
  */
 export async function speak(text, options = {}) {
-  if (!DEEPGRAM_API_KEY) {
-    throw new Error('TTS_NOT_CONFIGURED: Deepgram API key not set');
+  const functionsBase = getFunctionsBase();
+  if (!functionsBase) {
+    throw new Error('TTS_NOT_CONFIGURED: Voice features require Supabase configuration');
   }
   if (!text?.trim()) return;
+
+  const session = useAuthStore.getState().session;
+  const token = session?.access_token;
+  if (!token) {
+    throw new Error('TTS_NOT_CONFIGURED: You must be signed in to use voice features');
+  }
 
   stopSpeaking();
   if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -327,10 +343,10 @@ export async function speak(text, options = {}) {
       if (abortController.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
       console.log('[TTS] 🔊 Generating:', chunk.substring(0, 50) + (chunk.length > 50 ? '...' : ''));
-      const response = await fetch(`${DEEPGRAM_REST_URL}/v1/speak?model=aura-asteria-en`, {
+      const response = await fetch(`${functionsBase}/tts`, {
         method: 'POST',
         headers: {
-          Authorization: `Token ${DEEPGRAM_API_KEY}`,
+          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ text: chunk }),
@@ -339,12 +355,14 @@ export async function speak(text, options = {}) {
 
       if (!response.ok) {
         const errBody = await response.text();
-        throw new Error(`Deepgram TTS error ${response.status}: ${errBody}`);
+        let parsed;
+        try { parsed = JSON.parse(errBody); } catch {}
+        throw new Error(`Deepgram TTS error: ${parsed?.error || `${response.status}: ${errBody.slice(0, 200)}`}`);
       }
 
       const arrayBuffer = await response.arrayBuffer();
       if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-        throw new Error('TTS_DECODE_FAILED: Empty response from Deepgram');
+        throw new Error('TTS_DECODE_FAILED: Empty response from server');
       }
       const ctx = await getAudioContext();
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);

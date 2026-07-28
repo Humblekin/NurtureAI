@@ -313,7 +313,7 @@ export function useVoiceConversation() {
 
       speakText: async (text, signal) => {
         if (!isDeepgramConfigured()) {
-          throw new Error('TTS_NOT_CONFIGURED: Deepgram API key not set');
+          throw new Error('TTS_NOT_CONFIGURED: Voice features not available');
         }
         await deepgramSpeak(text, {
           signal,

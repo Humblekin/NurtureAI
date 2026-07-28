@@ -51,7 +51,7 @@ const STATE_RING_CLASS = {
   listening: styles.ringListening,
   speaking: styles.ringSpeaking,
   processing: styles.ringProcessing,
-  greeting: styles.ringSpeaking,
+  greeting: styles.ringProcessing,
   paused: styles.ringPaused,
   error: styles.ringError,
   initializing: styles.ringProcessing,
@@ -59,7 +59,7 @@ const STATE_RING_CLASS = {
 
 const STATE_LABEL = {
   initializing: 'Starting...',
-  greeting: 'Greeting you...',
+  greeting: 'Starting...',
   listening: 'Listening...',
   processing: 'Thinking...',
   speaking: 'Speaking...',
@@ -117,10 +117,10 @@ export const AminaAvatar = ({
           </div>
         )}
         {state === 'greeting' && (
-          <div className={styles.speakingDots}>
-            <span className={styles.dot} />
-            <span className={styles.dot} />
-            <span className={styles.dot} />
+          <div className={styles.processingDots}>
+            <span className={styles.pdot} />
+            <span className={styles.pdot} />
+            <span className={styles.pdot} />
           </div>
         )}
         {state === 'listening' && (

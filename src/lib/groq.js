@@ -1,5 +1,13 @@
-const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY;
-const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+import { isSupabaseConfigured } from './supabase';
+import useAuthStore from '../stores/authStore';
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+
+function getFunctionsBase() {
+  if (!SUPABASE_URL) return null;
+  const match = SUPABASE_URL.match(/https:\/\/(.+?)\.supabase\.co/);
+  return match ? `https://${match[1]}.supabase.co/functions/v1/groq-proxy` : null;
+}
 
 /**
  * NurtureAI — Groq AI Client
@@ -284,8 +292,15 @@ You are not here to replace nurses or doctors. You empower mothers with health e
  * @returns {Promise<string>} The AI response text
  */
 export async function chatCompletion(messages, options = {}) {
-  if (!GROQ_API_KEY) {
-    return "AI service is not configured. Please check your API key. If you have a health concern, please visit your nearest health facility.";
+  const functionsBase = getFunctionsBase();
+  if (!functionsBase) {
+    return "AI service is not configured. Please check your API key or Supabase configuration. If you have a health concern, please visit your nearest health facility.";
+  }
+
+  const session = useAuthStore.getState().session;
+  const token = session?.access_token;
+  if (!token) {
+    return "AI service requires authentication. Please sign in to use Amina.";
   }
 
   const {
@@ -320,10 +335,10 @@ export async function chatCompletion(messages, options = {}) {
   ];
 
   try {
-    const response = await fetch(GROQ_API_URL, {
+    const response = await fetch(functionsBase, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
+        'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -337,11 +352,13 @@ export async function chatCompletion(messages, options = {}) {
     const errBody = await response.text();
 
     if (!response.ok) {
-      console.error(`Groq API error ${response.status}:`, errBody);
+      console.error(`Groq proxy error ${response.status}:`, errBody);
 
-      if (response.status === 401) return "API authentication failed. Please check your Groq API key.";
+      if (response.status === 401) return "Authentication failed. Please sign in again.";
       if (response.status === 429) return "Rate limited. Too many requests. Please wait a moment and try again.";
-      return `API error ${response.status}. Please try again later.`;
+      let parsed;
+      try { parsed = JSON.parse(errBody); } catch {}
+      return parsed?.error || `API error ${response.status}. Please try again later.`;
     }
 
     const data = JSON.parse(errBody);
@@ -455,4 +472,4 @@ Respond in this exact JSON format:
   };
 }
 
-export const isAiConfigured = () => !!GROQ_API_KEY;
+export const isAiConfigured = () => isSupabaseConfigured();

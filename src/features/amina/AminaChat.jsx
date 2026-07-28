@@ -67,9 +67,9 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
   const avatarState = useMemo(() => {
     switch (voiceState) {
       case VOICE_STATES.SPEAKING: return 'speaking';
+      case VOICE_STATES.GREETING: return 'speaking';
       case VOICE_STATES.LISTENING: return 'listening';
       case VOICE_STATES.PROCESSING: return 'processing';
-      case VOICE_STATES.GREETING: return 'greeting';
       case VOICE_STATES.PAUSED: return 'paused';
       case VOICE_STATES.ERROR: return 'error';
       case VOICE_STATES.IDLE: return 'idle';
@@ -124,13 +124,13 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
 
       {!aiConfigured && (
         <div className={styles.warningBanner}>
-          AI is not configured. Set VITE_GROQ_API_KEY in your .env file to enable Amina.
+          AI is not configured. Sign in and configure Supabase to enable Amina.
         </div>
       )}
 
       {!deepgramConfigured && (
         <div className={styles.warningBanner}>
-          <p><strong>Voice unavailable:</strong> Set VITE_DEEPGRAM_API_KEY in your .env file to enable voice features.</p>
+          <p><strong>Voice unavailable:</strong> Sign in and configure Supabase to enable voice features.</p>
           <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'center' }}>
             <Button size="sm" variant="outline" onClick={onSwitchToChat}>
               <MessageSquare size={14} /> Use Chat Instead
