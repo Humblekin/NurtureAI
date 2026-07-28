@@ -117,12 +117,11 @@ async function handleSTT(req: Request): Promise<Response> {
           language,
           interim_results: "true",
           endpointing: "1000",
+          token: DEEPGRAM_API_KEY!,
         })}`
 
         console.log("[DG-Proxy] STT: opening Deepgram WebSocket")
-        deepgramWs = new WebSocket(dgUrl, {
-          headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` },
-        })
+        deepgramWs = new WebSocket(dgUrl)
 
         deepgramWs.onopen = () => {
           console.log("[DG-Proxy] STT: Deepgram WebSocket open")
