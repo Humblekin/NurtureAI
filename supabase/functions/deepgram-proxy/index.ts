@@ -121,7 +121,14 @@ async function handleSTT(req: Request): Promise<Response> {
         })}`
 
         console.log("[DG-Proxy] STT: opening Deepgram WebSocket")
-        deepgramWs = new WebSocket(dgUrl)
+        console.log(`[DG-Proxy] STT: Deepgram URL (sanitized): wss://api.deepgram.com/v1/listen?...&token=***&language=${language}`)
+        try {
+          deepgramWs = new WebSocket(dgUrl)
+        } catch (wsErr) {
+          console.error(`[DG-Proxy] STT: Failed to create Deepgram WebSocket: ${wsErr}`)
+          try { socket!.send(JSON.stringify({ type: "Error", message: "Failed to create Deepgram WebSocket", detail: String(wsErr) })) } catch (_) { /* ignore */ }
+          return
+        }
 
         deepgramWs.onopen = () => {
           console.log("[DG-Proxy] STT: Deepgram WebSocket open")
@@ -144,15 +151,19 @@ async function handleSTT(req: Request): Promise<Response> {
           }
         }
 
-        deepgramWs.onerror = () => {
-          console.error("[DG-Proxy] STT: Deepgram WebSocket error")
+        deepgramWs.onerror = (e) => {
+          const errMsg = (e as ErrorEvent)?.message || "unknown error"
+          console.error(`[DG-Proxy] STT: Deepgram WebSocket error: ${errMsg}`)
           try {
-            socket!.send(JSON.stringify({ type: "Error", message: "Deepgram connection failed", detail: "Check the DEEPGRAM_API_KEY secret" }))
+            socket!.send(JSON.stringify({ type: "Error", message: "Deepgram connection failed", detail: errMsg }))
           } catch (_) { /* ignore */ }
         }
 
         deepgramWs.onclose = (e) => {
           console.log(`[DG-Proxy] STT: Deepgram closed (code=${e.code} reason=${e.reason})`)
+          if (e.code !== 1000) {
+            console.error(`[DG-Proxy] STT: Deepgram abnormal close - code=${e.code} reason=${e.reason}`)
+          }
           if (socket!.readyState === WebSocket.OPEN) {
             try { socket!.close(1000, "Deepgram closed") } catch (_) { /* ignore */ }
           }
