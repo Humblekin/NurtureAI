@@ -69,6 +69,8 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
       case VOICE_STATES.SPEAKING: return 'speaking';
       case VOICE_STATES.GREETING: return 'speaking';
       case VOICE_STATES.LISTENING: return 'listening';
+      case VOICE_STATES.USER_SPEAKING: return 'listening';
+      case VOICE_STATES.INTERRUPTED: return 'listening';
       case VOICE_STATES.PROCESSING: return 'processing';
       case VOICE_STATES.PAUSED: return 'paused';
       case VOICE_STATES.ERROR: return 'error';
@@ -91,6 +93,8 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
       case VOICE_STATES.IDLE: return micReady ? 'Your Healthcare Companion' : 'Tap to start';
       case VOICE_STATES.GREETING: return 'Speaking...';
       case VOICE_STATES.LISTENING: return isListening ? 'Listening to you...' : 'Starting to listen...';
+      case VOICE_STATES.USER_SPEAKING: return 'Listening to you...';
+      case VOICE_STATES.INTERRUPTED: return 'Listening to you...';
       case VOICE_STATES.PROCESSING: return 'Thinking...';
       case VOICE_STATES.SPEAKING: return 'Speaking...';
       case VOICE_STATES.PAUSED: return 'Paused';
@@ -180,7 +184,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
 
         {/* Listening ring */}
         <AnimatePresence>
-          {voiceState === VOICE_STATES.LISTENING && isListening && (
+          {(voiceState === VOICE_STATES.LISTENING || voiceState === VOICE_STATES.USER_SPEAKING) && isListening && (
             <motion.div
               className={styles.listeningRing}
               initial={{ opacity: 0, scale: 0.8 }}
@@ -192,7 +196,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
 
         {/* Live transcript */}
         <AnimatePresence>
-          {voiceState === VOICE_STATES.LISTENING && transcript && (
+          {(voiceState === VOICE_STATES.LISTENING || voiceState === VOICE_STATES.USER_SPEAKING) && transcript && (
             <motion.div
               className={styles.liveTranscript}
               initial={{ opacity: 0, y: 10 }}

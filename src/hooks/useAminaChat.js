@@ -154,7 +154,7 @@ export function useSpeechSynthesis(_language = 'en') {
 }
 
 // ============================================================
-// Voice Conversation — Deepgram STT/TTS + ConversationManager
+// Voice Conversation — Browser STT/TTS + ConversationManager
 // ============================================================
 export function useVoiceConversation() {
   const [voiceState, setVoiceState] = useState(CONVERSATION_STATES.IDLE);
@@ -171,7 +171,7 @@ export function useVoiceConversation() {
   const sttRef = useRef(null);
   const initStartedRef = useRef(false);
 
-  const isListening = voiceState === CONVERSATION_STATES.LISTENING;
+  const isListening = voiceState === CONVERSATION_STATES.LISTENING || voiceState === CONVERSATION_STATES.USER_SPEAKING;
   const isSpeaking = voiceState === CONVERSATION_STATES.SPEAKING;
 
   // ---- Detect mic permission on mount (no popup) ----
@@ -194,7 +194,6 @@ export function useVoiceConversation() {
   const requestMicPermission = useCallback(async () => {
     try {
       setError(null);
-      // Check if mediaDevices API is available (requires HTTPS or localhost)
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         const isSecure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
         if (!isSecure) {
@@ -204,8 +203,6 @@ export function useVoiceConversation() {
         }
         return null;
       }
-      // Request with quality constraints: echo cancellation, noise suppression,
-      // mono channel at 16kHz — ideal for speech recognition.
       let stream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -217,7 +214,6 @@ export function useVoiceConversation() {
           }
         });
       } catch {
-        // Fallback to basic constraints if specific ones aren't supported
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       }
       streamRef.current = stream;
@@ -243,31 +239,26 @@ export function useVoiceConversation() {
     }
   }, []);
 
-  // ---- Start browser SpeechRecognition ----
-  const startListening = useCallback(() => {
-    if (!streamRef.current) {
-      console.warn('[Hook] ⚠️ Cannot start listening — no mic stream');
-      return;
-    }
-
+  // ---- Continuous browser SpeechRecognition ----
+  const startContinuousListening = useCallback(() => {
     if (sttRef.current) {
-      console.log('[Hook] 🎤 Recognition already active');
-      return;
+      sttRef.current.destroy();
+      sttRef.current = null;
     }
 
-    console.log('[Hook] 🎤 Starting browser speech recognition');
+    console.log('[Hook] 🎤 Starting continuous speech recognition');
     setTranscript('');
 
     const recognition = createSpeechRecognition({
       language,
+      keepAlive: true,
       onInterim: (text) => {
-        console.log('[Hook] 📝 Interim:', text);
         setTranscript(text);
+        managerRef.current?.onInterimTranscript(text);
       },
       onFinal: (text) => {
-        console.log('[Hook] ✅ Final:', text);
         setTranscript('');
-        if (managerRef.current) managerRef.current.onFinalTranscript(text);
+        managerRef.current?.onFinalTranscript(text);
       },
       onError: (err) => {
         console.error('[Hook] ❌ STT error:', err);
@@ -279,10 +270,9 @@ export function useVoiceConversation() {
     sttRef.current = recognition;
   }, [language]);
 
-  const stopListening = useCallback(() => {
+  const stopContinuousListening = useCallback(() => {
     if (sttRef.current) {
-      console.log('[Hook] 🎤 Stopping speech recognition');
-      sttRef.current.stop();
+      sttRef.current.destroy();
       sttRef.current = null;
     }
     setTranscript('');
@@ -311,12 +301,7 @@ export function useVoiceConversation() {
         });
       },
 
-      stopSpeech: () => {
-        browserStopSpeaking();
-      },
-
-      startListening: () => startListening(),
-      stopListening: () => stopListening(),
+      stopSpeech: () => { browserStopSpeaking(); },
 
       onStateChange: (state) => setVoiceState(state),
       onMessagesChange: (msgs) => setMessages(msgs),
@@ -339,35 +324,36 @@ export function useVoiceConversation() {
     if (initStartedRef.current) return;
     initStartedRef.current = true;
 
-    // Step 1: Request mic permission (user gesture required for mobile)
     const stream = await requestMicPermission();
     if (!stream) {
       initStartedRef.current = false;
       return;
     }
 
-    // Step 2: Start the conversation
+    // Start STT once (continuous) before the conversation loop
+    startContinuousListening();
+
     const mgr = managerRef.current;
     if (!mgr) return;
     mgr.setLanguage(language);
     mgr.setUserProfile(profile);
     if (healthContextRef.current) mgr.setHealthContext(healthContextRef.current);
     await mgr.init({ language, userProfile: profile });
-  }, [language, profile, requestMicPermission]);
+  }, [language, profile, requestMicPermission, startContinuousListening]);
 
   // ---- Public: Retry after permission error ----
   const retryMicPermission = useCallback(async () => {
     initStartedRef.current = false;
     setError(null);
     setMicPermission('unknown');
-    stopListening();
+    stopContinuousListening();
     browserStopSpeaking();
     setVoiceState(CONVERSATION_STATES.IDLE);
     setMicReady(false);
     await new Promise(r => setTimeout(r, 100));
     initStartedRef.current = false;
     await startConversation();
-  }, [startConversation, stopListening]);
+  }, [startConversation, stopContinuousListening]);
 
   // ---- Public actions ----
   const togglePause = useCallback(() => {
@@ -386,10 +372,7 @@ export function useVoiceConversation() {
   const clearChat = useCallback(() => {
     const mgr = managerRef.current;
     if (mgr) mgr.reset();
-    if (sttRef.current) {
-      try { sttRef.current.destroy(); } catch {}
-      sttRef.current = null;
-    }
+    stopContinuousListening();
     browserStopSpeaking();
     initStartedRef.current = false;
     setMicReady(false);
@@ -397,29 +380,31 @@ export function useVoiceConversation() {
     setTranscript('');
     setError(null);
     setVoiceState(CONVERSATION_STATES.IDLE);
-  }, []);
+  }, [stopContinuousListening]);
 
   const switchLanguage = useCallback((lang) => {
     setLanguage(lang);
     const mgr = managerRef.current;
     if (mgr) { mgr.reset(); mgr.setLanguage(lang); }
-    stopListening();
+    stopContinuousListening();
     browserStopSpeaking();
     initStartedRef.current = false;
     setMicReady(false);
     setMessages([]);
     setTranscript('');
     setVoiceState(CONVERSATION_STATES.IDLE);
-  }, [stopListening]);
+  }, [stopContinuousListening]);
 
   // ---- Cleanup mic stream on unmount ----
   useEffect(() => {
     return () => {
+      stopContinuousListening();
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
         streamRef.current = null;
       }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return {

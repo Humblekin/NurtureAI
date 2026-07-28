@@ -4,10 +4,12 @@ export function createSpeechRecognition(options = {}) {
     onInterim,
     onFinal,
     onError,
+    keepAlive = true,
   } = options;
 
   let recognition = null;
   let active = false;
+  let shouldRestart = false;
 
   function start() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -20,6 +22,8 @@ export function createSpeechRecognition(options = {}) {
       try { recognition.abort(); } catch {}
       recognition = null;
     }
+
+    shouldRestart = true;
 
     recognition = new SpeechRecognition();
     recognition.continuous = true;
@@ -44,10 +48,14 @@ export function createSpeechRecognition(options = {}) {
 
     recognition.onend = () => {
       active = false;
+      if (keepAlive && shouldRestart) {
+        try { recognition?.start(); active = true; } catch {}
+      }
     };
 
     recognition.onerror = (event) => {
       if (event.error === 'not-allowed') {
+        shouldRestart = false;
         onError?.('Microphone access denied. Please allow microphone access in your browser settings.');
       } else if (event.error !== 'aborted' && event.error !== 'no-speech') {
         onError?.(`Speech recognition error: ${event.error}`);
@@ -63,6 +71,7 @@ export function createSpeechRecognition(options = {}) {
   }
 
   function stop() {
+    shouldRestart = false;
     if (recognition) {
       try { recognition.stop(); } catch {}
     }
