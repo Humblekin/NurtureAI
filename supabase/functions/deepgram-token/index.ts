@@ -13,6 +13,58 @@ function corsHeaders(origin: string): Record<string, string> {
   }
 }
 
+async function tryAuthGrant(): Promise<{ token: string; expiresIn: number } | null> {
+  try {
+    const res = await fetch("https://api.deepgram.com/v1/auth/grant", {
+      method: "POST",
+      headers: {
+        Authorization: `Token ${DEEPGRAM_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ttl: 120 }),
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    return { token: data.access_token, expiresIn: data.expires_in ?? 120 }
+  } catch {
+    return null
+  }
+}
+
+async function getProjectId(): Promise<string> {
+  const res = await fetch("https://api.deepgram.com/v1/projects", {
+    headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` },
+  })
+  if (!res.ok) throw new Error(`Failed to list Deepgram projects: ${res.status}`)
+  const data = await res.json()
+  const projectId = data.projects?.[0]?.project_id
+  if (!projectId) throw new Error("No Deepgram projects found")
+  return projectId
+}
+
+async function tryManagementApi(): Promise<{ token: string; expiresIn: number } | null> {
+  try {
+    const projectId = await getProjectId()
+    const res = await fetch(`https://api.deepgram.com/v1/projects/${projectId}/keys`, {
+      method: "POST",
+      headers: {
+        Authorization: `Token ${DEEPGRAM_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        comment: "Temporary session key for STT",
+        scopes: ["member"],
+        time_to_live_in_seconds: 120,
+      }),
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    return { token: data.key, expiresIn: 120 }
+  } catch {
+    return null
+  }
+}
+
 Deno.serve(async (req) => {
   const origin = req.headers.get("origin") || ""
 
@@ -51,31 +103,20 @@ Deno.serve(async (req) => {
     )
   }
 
-  try {
-    const res = await fetch("https://api.deepgram.com/v1/auth/grant", {
-      method: "POST",
-      headers: {
-        Authorization: `Token ${DEEPGRAM_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ ttl: 120 }),
-    })
+  const result = (await tryAuthGrant()) ?? (await tryManagementApi())
 
-    if (!res.ok) {
-      const errText = await res.text()
-      throw new Error(`Deepgram auth grant failed: ${res.status} ${errText}`)
-    }
-
-    const data = await res.json()
+  if (!result) {
     return new Response(
-      JSON.stringify({ token: data.access_token, expiresIn: data.expires_in ?? 120 }),
-      { headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
-    )
-  } catch (err) {
-    console.error("[DG-Token] Error:", err)
-    return new Response(
-      JSON.stringify({ error: "Failed to generate temporary credentials", detail: String(err) }),
+      JSON.stringify({
+        error: "Failed to generate temporary credentials",
+        detail: "Both /v1/auth/grant and Management API failed. Check that DEEPGRAM_API_KEY is set and has valid permissions.",
+      }),
       { status: 502, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
     )
   }
+
+  return new Response(
+    JSON.stringify(result),
+    { headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
+  )
 })

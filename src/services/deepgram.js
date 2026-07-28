@@ -31,7 +31,9 @@ async function requestDeepgramToken() {
     const errBody = await response.text();
     let parsed;
     try { parsed = JSON.parse(errBody); } catch {}
-    throw new Error(parsed?.error || `Token request failed: ${response.status}`);
+    const msg = parsed?.error || `Token request failed: ${response.status}`;
+    if (parsed?.detail) console.error('[STT] Token error detail:', parsed.detail);
+    throw new Error(msg);
   }
 
   return await response.json();
