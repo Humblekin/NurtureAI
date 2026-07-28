@@ -282,6 +282,25 @@ Respect Ghanaian culture, local foods, family structures. Do not criticize cultu
 
 You are not here to replace nurses or doctors. You empower mothers with health education, support healthcare workers with information, and help mothers receive timely professional care. Always encourage professional medical consultation for clinical decisions.`;
 
+// ---- Client-side rate limiter (prevents rapid-fire 429s) ----
+const requestTimestamps = [];
+const RATE_LIMIT = { maxRequests: 8, windowMs: 60_000 }; // 8 req / min = safe under 12k TPM
+
+async function waitForSlot() {
+  const now = Date.now();
+  while (requestTimestamps.length >= RATE_LIMIT.maxRequests) {
+    const oldest = requestTimestamps[0];
+    if (now - oldest > RATE_LIMIT.windowMs) {
+      requestTimestamps.shift();
+    } else {
+      const waitMs = RATE_LIMIT.windowMs - (now - oldest) + 100;
+      await new Promise(r => setTimeout(r, waitMs));
+      break;
+    }
+  }
+  requestTimestamps.push(Date.now());
+}
+
 /**
  * Send a chat completion request via Groq with health context injection.
  * @param {Array} messages - Array of {role, content} message objects
@@ -306,7 +325,7 @@ export async function chatCompletion(messages, options = {}) {
   const {
     model = 'llama-3.3-70b-versatile',
     temperature = 0.7,
-    maxTokens = 1024,
+    maxTokens = 512,
     userRole = 'mother',
     languageInstruction = '',
     healthContext = '',
@@ -334,6 +353,9 @@ export async function chatCompletion(messages, options = {}) {
     ...messages,
   ];
 
+  // Wait for a rate-limit slot before sending
+  await waitForSlot();
+
   try {
     const response = await fetch(functionsBase, {
       method: 'POST',
@@ -355,7 +377,11 @@ export async function chatCompletion(messages, options = {}) {
       console.error(`Groq proxy error ${response.status}:`, errBody);
 
       if (response.status === 401) return "Authentication failed. Please sign in again.";
-      if (response.status === 429) return "Rate limited. Too many requests. Please wait a moment and try again.";
+      if (response.status === 429) {
+        // Back off: reset window for this caller
+        requestTimestamps.length = 0;
+        return "I'm receiving too many requests at once. Please wait a moment and try again.";
+      }
       let parsed;
       try { parsed = JSON.parse(errBody); } catch {}
       return parsed?.error || `API error ${response.status}. Please try again later.`;
