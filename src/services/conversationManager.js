@@ -24,6 +24,8 @@ const VALID_TRANSITIONS = {
   [CONVERSATION_STATES.ERROR]: [CONVERSATION_STATES.IDLE, CONVERSATION_STATES.LISTENING],
 };
 
+const RATE_LIMIT_MSG = "I'm a little busy right now. Please wait a few seconds.";
+
 export function createConversationManager(deps) {
   const {
     sendToAI,
@@ -47,6 +49,9 @@ export function createConversationManager(deps) {
   let messageCount = 0;
   let aiAbortController = null;
   let recentTranscripts = [];
+  let currentRequestId = 0;
+  let activeRequestId = null;
+  let isProcessing = false;
 
   function setState(newState) {
     if (state === newState) return;
@@ -75,12 +80,49 @@ export function createConversationManager(deps) {
     }
     stopSpeech();
     onTranscriptChange?.('');
+    if (activeRequestId) {
+      activeRequestId = null;
+      isProcessing = false;
+    }
   }
 
-  // ---- Handle user speech (final transcript) ----
-  async function handleUserSpeech(text) {
+  // ---- Retry loop with exponential backoff ----
+  async function sendWithRetry(apiMessages, opts, requestId, maxRetries = 3) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (activeRequestId !== requestId) throw new DOMException('Aborted', 'AbortError');
+
+      try {
+        return await sendToAI(apiMessages, opts);
+      } catch (err) {
+        if (err.name === 'AbortError') throw err;
+
+        const isRateLimit = err.message?.includes('Too many requests') ||
+                            err.message?.includes('429') ||
+                            err.message?.includes('rate limit');
+
+        if (isRateLimit && attempt < maxRetries) {
+          const delay = Math.pow(2, attempt + 1) * 1000;
+          console.log(`[Conversation] ⏳ Rate limited (retry ${attempt + 1}/${maxRetries}), waiting ${delay}ms`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+
+        if (isRateLimit) {
+          console.log(`[Conversation] ❌ Rate limit exhausted after ${maxRetries} retries`);
+          return null;
+        }
+
+        throw err;
+      }
+    }
+    return null;
+  }
+
+  // ---- Handle user speech (final transcript) with request ID ----
+  async function handleUserSpeech(text, requestId) {
     if (!text || destroyed) return;
 
+    console.log(`[Conversation] 📝 Request ${requestId}: "${text}"`);
     console.log('[Conversation] ✅ Final transcript:', text);
     onTranscriptChange?.('');
 
@@ -102,30 +144,34 @@ export function createConversationManager(deps) {
         .map(m => ({ role: m.role, content: m.content }));
 
       console.log('[Conversation] 🤖 Sending transcript to AI:', text);
-      const response = await sendToAI(apiMessages, {
+      const response = await sendWithRetry(apiMessages, {
         userRole: userProfile?.role || 'mother',
         languageInstruction: langInstruction,
         healthContext,
         proactiveContext,
         signal: aiAbortController.signal,
-      });
+      }, requestId);
 
-      if (destroyed || aiAbortController?.signal.aborted) return;
+      if (destroyed || activeRequestId !== requestId) return;
+
+      if (response === null) {
+        // Rate limit exhausted — display message without speaking
+        const busyMsg = { role: 'assistant', content: RATE_LIMIT_MSG };
+        setMessages([...newMessages, busyMsg]);
+        console.log('[Conversation] 📋 Rate limit message displayed (not spoken)');
+        forceState(CONVERSATION_STATES.LISTENING);
+        return;
+      }
 
       const assistantMsg = { role: 'assistant', content: response };
       setMessages([...newMessages, assistantMsg]);
       console.log('[Conversation] 🤖 AI replied:', response.substring(0, 100) + (response.length > 100 ? '...' : ''));
 
-      // Recognition stays running — barge-in is handled by onInterimTranscript
       console.log('[Conversation] 🔊 Speaking response...');
-
       try {
         await speakText(response, aiAbortController.signal);
       } catch (speakErr) {
-        if (speakErr.name === 'AbortError') {
-          // Barge-in — state already changed by onInterimTranscript
-          return;
-        }
+        if (speakErr.name === 'AbortError') return;
         console.error('[ConversationManager] Speech error:', speakErr);
         onError?.('speech_error');
       }
@@ -144,8 +190,23 @@ export function createConversationManager(deps) {
         forceState(CONVERSATION_STATES.LISTENING);
       }
     } finally {
-      aiAbortController = null;
+      if (activeRequestId === requestId) {
+        aiAbortController = null;
+        isProcessing = false;
+      }
     }
+  }
+
+  // ---- Wrapper: single-request mutex + request ID ----
+  function processUserSpeech(text) {
+    if (isProcessing) {
+      console.log('[Conversation] ⏳ Already processing, ignoring transcript:', text);
+      return;
+    }
+    isProcessing = true;
+    const requestId = ++currentRequestId;
+    activeRequestId = requestId;
+    handleUserSpeech(text, requestId);
   }
 
   // ---- Generate personalized greeting ----
@@ -292,17 +353,24 @@ export function createConversationManager(deps) {
 
     /**
      * Called when an interim recognition result arrives.
-     * Drives VAD state transitions and auto-barge-in.
+     * Drives VAD state transitions, auto-barge-in, and AI cancellation.
      */
     onInterimTranscript(text) {
       if (destroyed) return;
       onTranscriptChange?.(text);
 
       if (state === CONVERSATION_STATES.SPEAKING) {
-        if (text.trim().length < 4) return; // Ignore TTS echo fragments
+        if (text.trim().length < 4) return;
         console.log('[Conversation] 🔇 User interrupted — stopping speech (interim:', text, ')');
         stopSpeech();
         forceState(CONVERSATION_STATES.INTERRUPTED);
+        forceState(CONVERSATION_STATES.USER_SPEAKING);
+        return;
+      }
+
+      if (state === CONVERSATION_STATES.PROCESSING) {
+        console.log('[Conversation] 🔴 User interrupted during AI processing — cancelling (interim:', text, ')');
+        cancelCurrentWork();
         forceState(CONVERSATION_STATES.USER_SPEAKING);
         return;
       }
@@ -315,7 +383,7 @@ export function createConversationManager(deps) {
 
     /**
      * Called when a final recognition result arrives.
-     * Only processes if the user was actively speaking.
+     * Deduplicates, enforces single-request mutex, and routes to processUserSpeech.
      */
     onFinalTranscript(text) {
       if (destroyed || !text) return;
@@ -333,7 +401,13 @@ export function createConversationManager(deps) {
       }
       recentTranscripts.push({ text: normalized, time: now });
 
-      handleUserSpeech(text);
+      // Single-request mutex: if already processing, ignore
+      if (isProcessing) {
+        console.log('[Conversation] ⏳ Already processing, ignoring transcript:', text);
+        return;
+      }
+
+      processUserSpeech(text);
     },
 
     async sendText(text) {
@@ -423,6 +497,8 @@ export function createConversationManager(deps) {
 
     destroy() {
       destroyed = true;
+      isProcessing = false;
+      activeRequestId = null;
       saveConversationSummary();
       cancelCurrentWork();
     },
