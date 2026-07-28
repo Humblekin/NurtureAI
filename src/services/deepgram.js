@@ -114,20 +114,24 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      console.log('[STT] ✅ WebSocket connected via Edge Function');
+      console.log('[STT] ✅ WebSocket connected, waiting for auth...');
       reconnectAttempts = 0;
-      startRecorder();
     };
 
     ws.onclose = (e) => {
       console.log('[STT] 🔌 WebSocket closed:', e.code, e.reason);
       stopRecorder();
 
+      if (e.code === 4001) {
+        callbacks.onError?.('Voice authentication failed. Please sign in again.');
+        return;
+      }
+
       const connectionLifetime = Date.now() - connectTime;
-      const isHardReject = reconnectAttempts === 0 && connectionLifetime < 500;
+      const isHardReject = e.code !== 1000 && reconnectAttempts === 0 && connectionLifetime < 500;
 
       if (isHardReject) {
-        callbacks.onError?.('Voice authentication failed. Please sign in again or check the Deepgram API key in Supabase secrets.');
+        callbacks.onError?.('Voice service unavailable. Please try again.');
         return;
       }
 
@@ -147,6 +151,11 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
+        if (msg.type === 'Connected') {
+          console.log('[STT] ✅ Deepgram ready, starting recorder');
+          startRecorder();
+          return;
+        }
         if (msg.type === 'Error') {
           console.error('[STT] ❌ Edge Function error:', msg.detail || msg.message);
           callbacks.onError?.(msg.detail || msg.message);
