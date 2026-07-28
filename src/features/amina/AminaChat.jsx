@@ -3,7 +3,7 @@ import { Send, Mic, MicOff, Volume2, VolumeX, Trash2, User, Globe, MessageSquare
 import { motion, AnimatePresence } from 'framer-motion';
 import { useVoiceConversation, VOICE_STATES, useSpeechRecognition, useSpeechSynthesis } from '../../hooks/useAminaChat';
 import { isAiConfigured, chatCompletion } from '../../lib/groq';
-import { isDeepgramConfigured, speak as deepgramSpeak, unlockAudio } from '../../services/deepgram';
+import { speak as browserSpeak, unlockVoice, isSpeechSynthesisSupported } from '../../services/voice/speechSynthesis';
 import useAuthStore from '../../stores/authStore';
 import { buildHealthContext } from '../../services/healthContext';
 import { runReminderEngine, generateAminaGreeting } from '../../services/reminderEngine';
@@ -100,7 +100,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
   }, [voiceState, isListening, micReady]);
 
   const aiConfigured = isAiConfigured();
-  const deepgramConfigured = isDeepgramConfigured();
+  const ttsSupported = isSpeechSynthesisSupported();
   const conversationActive = voiceState !== VOICE_STATES.IDLE || micReady;
 
   return (
@@ -128,7 +128,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
         </div>
       )}
 
-      {!deepgramConfigured && (
+      {!ttsSupported && (
         <div className={styles.warningBanner}>
           <p><strong>Voice unavailable:</strong> Sign in and configure Supabase to enable voice features.</p>
           <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'center' }}>
@@ -157,7 +157,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
               <p>After enabling, click <strong>Retry Voice</strong> below.</p>
             </div>
             <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'center' }}>
-              <Button size="sm" onClick={() => { unlockAudio(); retryMicPermission(); }}>
+              <Button size="sm" onClick={() => { unlockVoice(); retryMicPermission(); }}>
                 <Mic size={14} /> Retry Voice
               </Button>
               <Button size="sm" variant="outline" onClick={onSwitchToChat}>
@@ -233,7 +233,7 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
             <p style={{ color: 'var(--text-secondary)', fontSize: '14px', textAlign: 'center', maxWidth: '280px' }}>
               Amina needs microphone access to listen and respond to you.
             </p>
-            <Button onClick={() => { unlockAudio(); startConversation(); }} size="lg">
+            <Button onClick={() => { unlockVoice(); startConversation(); }} size="lg">
               <Mic size={18} /> Start Talking with Amina
             </Button>
             <button
@@ -549,8 +549,8 @@ export const AminaChat = () => {
           hasSpokenRemindersRef.current = true;
           const criticalReminders = result.filter(n => n.priority === 'critical' || n.priority === 'high');
           if (criticalReminders.length > 0 && criticalReminders[0].voice_message) {
-            if (isDeepgramConfigured()) {
-              deepgramSpeak(criticalReminders[0].voice_message).catch(() => {});
+            if (isSpeechSynthesisSupported()) {
+              browserSpeak(criticalReminders[0].voice_message).catch(() => {});
             }
           }
         }
@@ -599,9 +599,9 @@ export const AminaChat = () => {
                     <button
                       className={styles.speakNotifBtn}
                       onClick={() => {
-                        if (isDeepgramConfigured()) {
-                          unlockAudio();
-                          deepgramSpeak(n.voice_message).catch(() => {});
+                        if (isSpeechSynthesisSupported()) {
+                          unlockVoice();
+                          browserSpeak(n.voice_message).catch(() => {});
                         }
                       }}
                       title="Listen to this reminder"

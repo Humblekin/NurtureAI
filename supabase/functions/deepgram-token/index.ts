@@ -122,7 +122,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         error: "Failed to generate temporary credentials",
-        detail: errors.join(" | "),
+        detail: "ERR:DG:" + errors.join(" | "),
       }),
       { status: 502, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
     )

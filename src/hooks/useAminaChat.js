@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { chatCompletion } from '../lib/groq';
-import { isDeepgramConfigured, startStreamingSTT, speak as deepgramSpeak, stopSpeaking as deepgramStopSpeaking } from '../services/deepgram';
+import { createSpeechRecognition } from '../services/voice/speechRecognition';
+import { speak as browserSpeak, stopSpeaking as browserStopSpeaking, isSpeechSynthesisSupported } from '../services/voice/speechSynthesis';
 import useAuthStore from '../stores/authStore';
 import { createConversationManager, CONVERSATION_STATES } from '../services/conversationManager';
 import { buildHealthContext } from '../services/healthContext';
@@ -103,7 +104,7 @@ export function useSpeechRecognition(language = 'en') {
 }
 
 // ============================================================
-// Speech Synthesis — Deepgram TTS for ChatMode
+// Speech Synthesis — Browser TTS for ChatMode
 // ============================================================
 export function useSpeechSynthesis(_language = 'en') {
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -112,10 +113,10 @@ export function useSpeechSynthesis(_language = 'en') {
   const onEndRef = useRef(null);
   const onStartRef = useRef(null);
 
-  useEffect(() => { setIsSupported(isDeepgramConfigured()); }, []);
+  useEffect(() => { setIsSupported(isSpeechSynthesisSupported()); }, []);
 
   const speak = useCallback(async (text) => {
-    if (!text || !isDeepgramConfigured()) {
+    if (!text || !isSpeechSynthesisSupported()) {
       setIsSpeaking(false);
       onEndRef.current?.();
       return;
@@ -127,14 +128,14 @@ export function useSpeechSynthesis(_language = 'en') {
     try {
       setIsSpeaking(true);
       onStartRef.current?.();
-      await deepgramSpeak(text, {
+      await browserSpeak(text, {
         signal: abortRef.current.signal,
         onSpeechStart: () => setIsSpeaking(true),
         onSpeechEnd: () => { setIsSpeaking(false); onEndRef.current?.(); },
       });
     } catch (err) {
       if (err.name === 'AbortError') { setIsSpeaking(false); return; }
-      console.error('Deepgram TTS error:', err);
+      console.error('TTS error:', err);
       setIsSpeaking(false);
       onEndRef.current?.();
     }
@@ -142,7 +143,7 @@ export function useSpeechSynthesis(_language = 'en') {
 
   const stop = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
-    deepgramStopSpeaking();
+    browserStopSpeaking();
     setIsSpeaking(false);
   }, []);
 
@@ -242,33 +243,23 @@ export function useVoiceConversation() {
     }
   }, []);
 
-  // ---- Start Deepgram listening (WebSocket streaming) ----
+  // ---- Start browser SpeechRecognition ----
   const startListening = useCallback(() => {
-    console.log('[Hook] 🎤 startListening called, stream:', !!streamRef.current);
-    if (!streamRef.current || !isDeepgramConfigured()) {
-      console.warn('[Hook] ⚠️ Cannot start listening');
+    if (!streamRef.current) {
+      console.warn('[Hook] ⚠️ Cannot start listening — no mic stream');
       return;
     }
 
-    // If existing STT handle has a live WebSocket, just resume the recorder.
-    // This avoids the overhead of destroying and recreating the connection
-    // between conversation turns — the WebSocket stays alive the whole time.
     if (sttRef.current) {
-      const resumed = sttRef.current.resumeMic?.();
-      if (resumed) {
-        console.log('[Hook] 🎤 Resumed existing STT session');
-        return;
-      }
-      // Connection died — fall through to create new one
-      console.log('[Hook] ⚠️ Existing STT session dead, creating new one');
-      try { sttRef.current.stop(); } catch {}
-      sttRef.current = null;
+      console.log('[Hook] 🎤 Recognition already active');
+      return;
     }
 
-    console.log('[Hook] 🎤 Starting new WebSocket STT session');
+    console.log('[Hook] 🎤 Starting browser speech recognition');
     setTranscript('');
 
-    const sttHandle = startStreamingSTT(streamRef.current, {
+    const recognition = createSpeechRecognition({
+      language,
       onInterim: (text) => {
         console.log('[Hook] 📝 Interim:', text);
         setTranscript(text);
@@ -282,16 +273,17 @@ export function useVoiceConversation() {
         console.error('[Hook] ❌ STT error:', err);
         setError(`Voice recognition error: ${err}`);
       },
-    }, { language });
-    sttRef.current = sttHandle;
+    });
+
+    recognition.start();
+    sttRef.current = recognition;
   }, [language]);
 
   const stopListening = useCallback(() => {
     if (sttRef.current) {
-      console.log('[Hook] 🎤 Pausing STT — keeping WebSocket alive for next turn');
-      // Pause the mic but keep the WebSocket open.
-      // The connection is reused on the next startListening() call.
-      sttRef.current.pauseMic?.();
+      console.log('[Hook] 🎤 Stopping speech recognition');
+      sttRef.current.stop();
+      sttRef.current = null;
     }
     setTranscript('');
   }, []);
@@ -312,10 +304,7 @@ export function useVoiceConversation() {
       sendToAI: async (apiMessages, opts) => chatCompletion(apiMessages, opts),
 
       speakText: async (text, signal) => {
-        if (!isDeepgramConfigured()) {
-          throw new Error('TTS_NOT_CONFIGURED: Voice features not available');
-        }
-        await deepgramSpeak(text, {
+        await browserSpeak(text, {
           signal,
           onSpeechStart: () => managerRef.current?.onSpeechStarted?.(),
           onSpeechEnd: () => managerRef.current?.onSpeechEnded(),
@@ -323,7 +312,7 @@ export function useVoiceConversation() {
       },
 
       stopSpeech: () => {
-        deepgramStopSpeaking();
+        browserStopSpeaking();
       },
 
       startListening: () => startListening(),
@@ -372,7 +361,7 @@ export function useVoiceConversation() {
     setError(null);
     setMicPermission('unknown');
     stopListening();
-    deepgramStopSpeaking();
+    browserStopSpeaking();
     setVoiceState(CONVERSATION_STATES.IDLE);
     setMicReady(false);
     await new Promise(r => setTimeout(r, 100));
@@ -397,12 +386,11 @@ export function useVoiceConversation() {
   const clearChat = useCallback(() => {
     const mgr = managerRef.current;
     if (mgr) mgr.reset();
-    // Full cleanup — kill the WebSocket entirely (not just pause)
     if (sttRef.current) {
-      try { sttRef.current.stop(); } catch {}
+      try { sttRef.current.destroy(); } catch {}
       sttRef.current = null;
     }
-    deepgramStopSpeaking();
+    browserStopSpeaking();
     initStartedRef.current = false;
     setMicReady(false);
     setMessages([]);
@@ -416,7 +404,7 @@ export function useVoiceConversation() {
     const mgr = managerRef.current;
     if (mgr) { mgr.reset(); mgr.setLanguage(lang); }
     stopListening();
-    deepgramStopSpeaking();
+    browserStopSpeaking();
     initStartedRef.current = false;
     setMicReady(false);
     setMessages([]);
