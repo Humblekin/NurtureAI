@@ -6,6 +6,9 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!
 
 console.log("[DG-Proxy] Function loaded")
+console.log(`[DG-Proxy] DEEPGRAM_API_KEY present: ${!!DEEPGRAM_API_KEY}`)
+console.log(`[DG-Proxy] SUPABASE_URL present: ${!!SUPABASE_URL}`)
+console.log(`[DG-Proxy] SUPABASE_ANON_KEY present: ${!!SUPABASE_ANON_KEY}`)
 
 function corsHeaders(origin: string): Record<string, string> {
   return {
@@ -16,16 +19,24 @@ function corsHeaders(origin: string): Record<string, string> {
 }
 
 async function verifyJWT(token: string): Promise<string | null> {
+  console.log("[DG-Proxy] verifyJWT: creating supabase client")
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    console.log("[DG-Proxy] verifyJWT: calling getUser")
     const { data: { user }, error } = await supabase.auth.getUser(token)
-    if (error || !user) {
-      console.error(`[DG-Proxy] Auth failed: ${error?.message}`)
+    if (error) {
+      console.error(`[DG-Proxy] Auth failed: ${error.message}`)
       return null
     }
+    if (!user) {
+      console.error("[DG-Proxy] Auth failed: no user returned")
+      return null
+    }
+    console.log(`[DG-Proxy] Auth success: user=${user.id}`)
     return user.id
   } catch (err) {
     console.error(`[DG-Proxy] Auth exception: ${err}`)
+    console.error(`[DG-Proxy] Auth exception stack: ${(err as Error).stack || "no stack"}`)
     return null
   }
 }
@@ -35,91 +46,143 @@ async function handleSTT(req: Request): Promise<Response> {
   const token = url.searchParams.get("access_token")
   const language = url.searchParams.get("language") === "dag" ? "ha-Latn-NG" : "en-US"
 
+  console.log("[DG-Proxy] STT: received request")
+  console.log(`[DG-Proxy] STT: token present: ${!!token}`)
+  console.log(`[DG-Proxy] STT: token length: ${token?.length || 0}`)
+  console.log(`[DG-Proxy] STT: language: ${language}`)
+  console.log(`[DG-Proxy] STT: Upgrade header: ${req.headers.get("upgrade")}`)
+
   if (!token) {
+    console.error("[DG-Proxy] STT: missing access_token")
     return new Response(
       JSON.stringify({ error: "Missing access_token query parameter" }),
       { status: 401, headers: { ...corsHeaders(req.headers.get("origin") || ""), "Content-Type": "application/json" } },
     )
   }
 
-  const { response, socket } = Deno.upgradeWebSocket(req)
+  let socket: WebSocket | null = null
+  let deepgramWs: WebSocket | null = null
+  let keepAlivePromise: Promise<void> | null = null
 
-  socket.onopen = async () => {
-    console.log("[DG-Proxy] STT: Frontend WebSocket open, authenticating...")
+  try {
+    console.log("[DG-Proxy] STT: calling Deno.upgradeWebSocket")
+    const upgrade = Deno.upgradeWebSocket(req)
+    socket = upgrade.socket
+    const response = upgrade.response
+    console.log("[DG-Proxy] STT: upgrade succeeded, returning 101")
 
-    if (!DEEPGRAM_API_KEY) {
-      socket.send(JSON.stringify({ type: "Error", message: "Deepgram API key not configured on server" }))
-      socket.close(1011, "Server configuration error")
-      return
-    }
-
-    const userId = await verifyJWT(token)
-    if (!userId) {
-      socket.send(JSON.stringify({ type: "Error", message: "Invalid or expired access_token" }))
-      socket.close(4001, "Authentication failed")
-      return
-    }
-
-    console.log(`[DG-Proxy] STT: Authenticated user ${userId}, connecting to Deepgram`)
-
-    const dgUrl = `wss://api.deepgram.com/v1/listen?${new URLSearchParams({
-      model: "nova-2",
-      language,
-      interim_results: "true",
-      endpointing: "1000",
-    })}`
-
-    const deepgramWs = new WebSocket(dgUrl, {
-      headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` },
+    let resolved = false
+    keepAlivePromise = new Promise((resolve) => {
+      socket!.onclose = () => {
+        console.log("[DG-Proxy] STT: Frontend socket closed")
+        if (deepgramWs) {
+          try {
+            if (deepgramWs.readyState === WebSocket.OPEN || deepgramWs.readyState === WebSocket.CONNECTING) {
+              deepgramWs.close(1000, "Frontend disconnected")
+            }
+          } catch (_) { /* ignore */ }
+        }
+        if (!resolved) { resolved = true; resolve() }
+      }
+      socket!.onerror = (e) => {
+        console.error(`[DG-Proxy] STT: Frontend socket error: ${(e as ErrorEvent).message || "unknown"}`)
+        if (!resolved) { resolved = true; resolve() }
+      }
     })
 
-    deepgramWs.onopen = () => {
-      console.log("[DG-Proxy] STT: Deepgram WebSocket open")
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "Connected", message: "Deepgram STT ready" }))
+    socket.onopen = async () => {
+      console.log("[DG-Proxy] STT: Frontend WebSocket open, starting auth")
+
+      if (!DEEPGRAM_API_KEY) {
+        console.error("[DG-Proxy] STT: DEEPGRAM_API_KEY not set")
+        try { socket!.send(JSON.stringify({ type: "Error", message: "Deepgram API key not configured on server" })) } catch (_) { /* ignore */ }
+        try { socket!.close(1011, "Server configuration error") } catch (_) { /* ignore */ }
+        return
+      }
+
+      console.log("[DG-Proxy] STT: verifying JWT")
+      const userId = await verifyJWT(token)
+      if (!userId) {
+        console.error("[DG-Proxy] STT: JWT verification failed")
+        try { socket!.send(JSON.stringify({ type: "Error", message: "Invalid or expired access_token" })) } catch (_) { /* ignore */ }
+        try { socket!.close(4001, "Authentication failed") } catch (_) { /* ignore */ }
+        return
+      }
+
+      console.log(`[DG-Proxy] STT: Authenticated user ${userId}, connecting to Deepgram`)
+
+      try {
+        const dgUrl = `wss://api.deepgram.com/v1/listen?${new URLSearchParams({
+          model: "nova-2",
+          language,
+          interim_results: "true",
+          endpointing: "1000",
+        })}`
+
+        console.log("[DG-Proxy] STT: opening Deepgram WebSocket")
+        deepgramWs = new WebSocket(dgUrl, {
+          headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` },
+        })
+
+        deepgramWs.onopen = () => {
+          console.log("[DG-Proxy] STT: Deepgram WebSocket open")
+          try {
+            socket!.send(JSON.stringify({ type: "Connected", message: "Deepgram STT ready" }))
+          } catch (e) {
+            console.error("[DG-Proxy] STT: Failed to send Connected message:", e)
+          }
+        }
+
+        deepgramWs.onmessage = (e) => {
+          if (socket!.readyState === WebSocket.OPEN) {
+            try { socket!.send(e.data) } catch (_) { /* ignore */ }
+          }
+        }
+
+        socket!.onmessage = (e) => {
+          if (deepgramWs!.readyState === WebSocket.OPEN) {
+            try { deepgramWs!.send(e.data) } catch (_) { /* ignore */ }
+          }
+        }
+
+        deepgramWs.onerror = () => {
+          console.error("[DG-Proxy] STT: Deepgram WebSocket error")
+          try {
+            socket!.send(JSON.stringify({ type: "Error", message: "Deepgram connection failed", detail: "Check the DEEPGRAM_API_KEY secret" }))
+          } catch (_) { /* ignore */ }
+        }
+
+        deepgramWs.onclose = (e) => {
+          console.log(`[DG-Proxy] STT: Deepgram closed (code=${e.code} reason=${e.reason})`)
+          if (socket!.readyState === WebSocket.OPEN) {
+            try { socket!.close(1000, "Deepgram closed") } catch (_) { /* ignore */ }
+          }
+        }
+      } catch (err) {
+        console.error(`[DG-Proxy] STT: Error in onopen: ${err}`)
+        console.error(`[DG-Proxy] STT: Stack: ${(err as Error).stack || "none"}`)
+        try {
+          socket!.send(JSON.stringify({ type: "Error", message: "Internal error connecting to Deepgram", detail: String(err) }))
+        } catch (_) { /* ignore */ }
       }
     }
 
-    deepgramWs.onmessage = (e) => {
-      if (socket.readyState === WebSocket.OPEN) socket.send(e.data)
-    }
-
-    socket.onmessage = (e) => {
-      if (deepgramWs.readyState === WebSocket.OPEN) deepgramWs.send(e.data)
-    }
-
-    deepgramWs.onerror = () => {
-      console.error("[DG-Proxy] STT: Deepgram WebSocket error")
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "Error", message: "Deepgram connection failed", detail: "Check the DEEPGRAM_API_KEY secret" }))
-      }
-    }
-
-    deepgramWs.onclose = (e) => {
-      console.log(`[DG-Proxy] STT: Deepgram closed (code=${e.code})`)
-      if (socket.readyState === WebSocket.OPEN) socket.close(1000, "Deepgram closed")
-    }
-
-    socket.onclose = () => {
-      console.log("[DG-Proxy] STT: Frontend closed")
-      if (deepgramWs.readyState === WebSocket.OPEN || deepgramWs.readyState === WebSocket.CONNECTING) {
-        deepgramWs.close(1000, "Frontend disconnected")
-      }
-    }
-
-    socket.onerror = () => {
-      console.error("[DG-Proxy] STT: Frontend WebSocket error")
-      if (deepgramWs.readyState === WebSocket.OPEN || deepgramWs.readyState === WebSocket.CONNECTING) {
-        deepgramWs.close(1000, "Frontend error")
-      }
-    }
+    EdgeRuntime.waitUntil(keepAlivePromise)
+    return response
+  } catch (err) {
+    console.error(`[DG-Proxy] STT: CRITICAL error during upgrade: ${err}`)
+    console.error(`[DG-Proxy] STT: Stack: ${(err as Error).stack || "none"}`)
+    return new Response(
+      JSON.stringify({ error: "WebSocket upgrade failed", detail: String(err) }),
+      { status: 502, headers: { ...corsHeaders(req.headers.get("origin") || ""), "Content-Type": "application/json" } },
+    )
   }
-
-  return response
 }
 
 async function handleTTS(req: Request): Promise<Response> {
   const origin = req.headers.get("origin") || ""
+
+  console.log("[DG-Proxy] TTS: received request")
 
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders(origin) })
@@ -223,20 +286,38 @@ Deno.serve(async (req) => {
   const path = url.pathname
 
   console.log(`[DG-Proxy] Request: ${req.method} ${path}`)
+  console.log(`[DG-Proxy] Headers: upgrade=${req.headers.get("upgrade")}, origin=${req.headers.get("origin")}`)
 
-  if (path.endsWith("/stt")) {
-    return handleSTT(req)
+  try {
+    if (path.endsWith("/stt")) {
+      const upgrade = (req.headers.get("upgrade") || "").toLowerCase()
+      if (upgrade !== "websocket") {
+        console.log("[DG-Proxy] Not a WebSocket upgrade request, returning upgrade response")
+        return new Response(
+          JSON.stringify({ error: "This endpoint requires a WebSocket upgrade. Use ws:// or wss:// to connect." }),
+          { status: 426, headers: { ...corsHeaders(req.headers.get("origin") || ""), "Content-Type": "application/json" } },
+        )
+      }
+      return handleSTT(req)
+    }
+
+    if (path.endsWith("/tts")) {
+      return handleTTS(req)
+    }
+
+    return new Response(
+      JSON.stringify({
+        error: "Not found",
+        available: ["GET /stt (WebSocket)", "POST /tts"],
+      }),
+      { status: 404, headers: { "Content-Type": "application/json" } },
+    )
+  } catch (err) {
+    console.error(`[DG-Proxy] Unhandled error: ${err}`)
+    console.error(`[DG-Proxy] Stack: ${(err as Error).stack || "none"}`)
+    return new Response(
+      JSON.stringify({ error: "Internal server error" }),
+      { status: 500, headers: { ...corsHeaders(req.headers.get("origin") || ""), "Content-Type": "application/json" } },
+    )
   }
-
-  if (path.endsWith("/tts")) {
-    return handleTTS(req)
-  }
-
-  return new Response(
-    JSON.stringify({
-      error: "Not found",
-      available: ["GET /stt (WebSocket)", "POST /tts"],
-    }),
-    { status: 404, headers: { "Content-Type": "application/json" } },
-  )
 })
