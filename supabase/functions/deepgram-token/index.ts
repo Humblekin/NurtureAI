@@ -5,48 +5,12 @@ const DEEPGRAM_API_KEY = Deno.env.get("DEEPGRAM_API_KEY")
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!
 
-let cachedProjectId: string | null = null
-
 function corsHeaders(origin: string): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
   }
-}
-
-async function getProjectId(): Promise<string> {
-  if (cachedProjectId) return cachedProjectId
-  const res = await fetch("https://api.deepgram.com/v1/projects", {
-    headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` },
-  })
-  if (!res.ok) throw new Error(`Failed to list Deepgram projects: ${res.status}`)
-  const data = await res.json()
-  const projectId = data.projects?.[0]?.project_id
-  if (!projectId) throw new Error("No Deepgram projects found")
-  cachedProjectId = projectId
-  return projectId
-}
-
-async function generateTempToken(projectId: string): Promise<{ token: string; expiresIn: number }> {
-  const res = await fetch(`https://api.deepgram.com/v1/projects/${projectId}/keys`, {
-    method: "POST",
-    headers: {
-      Authorization: `Token ${DEEPGRAM_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      comment: "Temporary session key for STT",
-      scopes: ["member"],
-      time_to_live_in_seconds: 120,
-    }),
-  })
-  if (!res.ok) {
-    const errText = await res.text()
-    throw new Error(`Deepgram key creation failed: ${res.status} ${errText}`)
-  }
-  const data = await res.json()
-  return { token: data.key, expiresIn: 120 }
 }
 
 Deno.serve(async (req) => {
@@ -88,10 +52,23 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const projectId = await getProjectId()
-    const { token, expiresIn } = await generateTempToken(projectId)
+    const res = await fetch("https://api.deepgram.com/v1/auth/grant", {
+      method: "POST",
+      headers: {
+        Authorization: `Token ${DEEPGRAM_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ttl: 120 }),
+    })
+
+    if (!res.ok) {
+      const errText = await res.text()
+      throw new Error(`Deepgram auth grant failed: ${res.status} ${errText}`)
+    }
+
+    const data = await res.json()
     return new Response(
-      JSON.stringify({ token, expiresIn }),
+      JSON.stringify({ token: data.access_token, expiresIn: data.expires_in ?? 120 }),
       { headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
     )
   } catch (err) {

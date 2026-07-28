@@ -112,11 +112,10 @@ export function startStreamingSTT(stream, callbacks, options = {}) {
           language: options?.language === 'dag' ? 'ha-Latn-NG' : 'en-US',
           interim_results: 'true',
           endpointing: '1000',
-          token,
         })}`;
 
         console.log('[STT] Connecting directly to Deepgram...');
-        ws = new WebSocket(wsUrl);
+        ws = new WebSocket(wsUrl, ['token', token]);
 
         ws.onopen = () => {
           console.log('[STT] Deepgram WebSocket connected');
