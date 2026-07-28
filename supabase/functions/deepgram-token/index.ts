@@ -23,29 +23,37 @@ async function tryAuthGrant(): Promise<{ token: string; expiresIn: number } | nu
       },
       body: JSON.stringify({ ttl: 120 }),
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      const body = await res.text()
+      console.error("[DG-Token] /v1/auth/grant responded:", res.status, body)
+      return null
+    }
     const data = await res.json()
     return { token: data.access_token, expiresIn: data.expires_in ?? 120 }
-  } catch {
+  } catch (err) {
+    console.error("[DG-Token] /v1/auth/grant threw:", err)
     return null
   }
 }
 
-async function getProjectId(): Promise<string> {
-  const res = await fetch("https://api.deepgram.com/v1/projects", {
-    headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` },
-  })
-  if (!res.ok) throw new Error(`Failed to list Deepgram projects: ${res.status}`)
-  const data = await res.json()
-  const projectId = data.projects?.[0]?.project_id
-  if (!projectId) throw new Error("No Deepgram projects found")
-  return projectId
-}
-
 async function tryManagementApi(): Promise<{ token: string; expiresIn: number } | null> {
   try {
-    const projectId = await getProjectId()
-    const res = await fetch(`https://api.deepgram.com/v1/projects/${projectId}/keys`, {
+    console.log("[DG-Token] Falling back to Management API")
+    const res = await fetch("https://api.deepgram.com/v1/projects", {
+      headers: { Authorization: `Token ${DEEPGRAM_API_KEY}` },
+    })
+    if (!res.ok) {
+      const body = await res.text()
+      console.error("[DG-Token] GET /v1/projects responded:", res.status, body)
+      return null
+    }
+    const projects = await res.json()
+    const projectId = projects.projects?.[0]?.project_id
+    if (!projectId) {
+      console.error("[DG-Token] No Deepgram projects found")
+      return null
+    }
+    const keyRes = await fetch(`https://api.deepgram.com/v1/projects/${projectId}/keys`, {
       method: "POST",
       headers: {
         Authorization: `Token ${DEEPGRAM_API_KEY}`,
@@ -57,10 +65,15 @@ async function tryManagementApi(): Promise<{ token: string; expiresIn: number } 
         time_to_live_in_seconds: 120,
       }),
     })
-    if (!res.ok) return null
-    const data = await res.json()
+    if (!keyRes.ok) {
+      const body = await keyRes.text()
+      console.error("[DG-Token] POST /v1/projects/keys responded:", keyRes.status, body)
+      return null
+    }
+    const data = await keyRes.json()
     return { token: data.key, expiresIn: 120 }
-  } catch {
+  } catch (err) {
+    console.error("[DG-Token] Management API threw:", err)
     return null
   }
 }
@@ -97,11 +110,14 @@ Deno.serve(async (req) => {
   }
 
   if (!DEEPGRAM_API_KEY) {
+    console.error("[DG-Token] DEEPGRAM_API_KEY env var is not set")
     return new Response(
       JSON.stringify({ error: "Deepgram API key not configured on server" }),
       { status: 500, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
     )
   }
+
+  console.log("[DG-Token] DEEPGRAM_API_KEY is set, length:", DEEPGRAM_API_KEY.length)
 
   const result = (await tryAuthGrant()) ?? (await tryManagementApi())
 
@@ -109,7 +125,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         error: "Failed to generate temporary credentials",
-        detail: "Both /v1/auth/grant and Management API failed. Check that DEEPGRAM_API_KEY is set and has valid permissions.",
+        detail: "Both /v1/auth/grant and Management API failed. Check Supabase function logs for [DG-Token] details.",
       }),
       { status: 502, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
     )
