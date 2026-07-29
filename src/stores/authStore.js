@@ -64,14 +64,9 @@ const useAuthStore = create(
         set({ isLoading: true, error: null });
 
         if (!isSupabaseConfigured()) {
-          // Offline-only mode: check local storage for cached profile
           const cachedProfile = get().profile;
           if (cachedProfile) {
-            set({
-              isAuthenticated: true,
-              isLoading: false,
-            });
-            // Seed demo data if database is empty
+            set({ isAuthenticated: true, isLoading: false });
             await seedDemoForRole(cachedProfile.id, cachedProfile.role);
           } else {
             set({ isLoading: false });
@@ -90,7 +85,6 @@ const useAuthStore = create(
               isAuthenticated: true,
             });
 
-            // Always fetch fresh profile from Supabase
             const { data: profile, error: profileError } = await supabase
               .from('profiles')
               .select('*')
@@ -104,12 +98,10 @@ const useAuthStore = create(
               console.error('Profile fetch error:', profileError);
             }
 
-            // Pull data from Supabase into IndexedDB on app load
-            fullSync().catch(err => console.error('Post-init sync failed:', err));
+            await fullSync();
           }
         } catch (error) {
           console.error('Auth init error:', error);
-          // Fall back to cached profile only if online fetch failed
           const cachedProfile = get().profile;
           if (cachedProfile) {
             set({ isAuthenticated: true });

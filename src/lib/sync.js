@@ -164,7 +164,6 @@ export async function pullFromServer(tableName, lastSyncedAt) {
   if (!isSupabaseConfigured()) return [];
 
   try {
-    // Tables without updated_at — order by created_at instead
     const useCreated_at = ['ai_conversations'];
     const orderCol = useCreated_at.includes(tableName) ? 'created_at' : 'updated_at';
 
@@ -183,6 +182,9 @@ export async function pullFromServer(tableName, lastSyncedAt) {
       console.warn(`[Sync] Pull error for ${tableName}:`, error.message);
       return [];
     }
+
+    const count = data?.length || 0;
+    console.log(`[Sync] Pull ${tableName}: ${count} rows`);
 
     if (data && data.length > 0) {
       const localTable = db.table(tableName);
