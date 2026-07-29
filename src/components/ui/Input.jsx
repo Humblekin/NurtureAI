@@ -66,9 +66,9 @@ const Input = forwardRef(({
           aria-invalid={!!error}
           {...props}
         >
-          {props.placeholder && (
+          {(!props.value || props.value === '') && (
             <option value="" disabled>
-              {props.placeholder}
+              {props.placeholder || 'Select...'}
             </option>
           )}
           {options?.map((opt) => (
