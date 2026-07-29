@@ -281,11 +281,22 @@ export async function buildChildTimeline(childId) {
     data: child,
   });
 
+  const vaccinations = await db.vaccinations
+    .where('child_id').equals(child.id)
+    .filter(v => !v.deleted_at)
+    .toArray();
+
+  const vaxNames = new Set(vaccinations.map(v => v.vaccine_name));
+
   CHILD_MILESTONES.forEach(m => {
     if (ageWeeks !== null && m.ageWeeks <= ageWeeks + 2) {
       const milestoneDate = new Date(child.date_of_birth);
       milestoneDate.setDate(milestoneDate.getDate() + m.ageWeeks * 7);
-      const isPast = m.ageWeeks <= ageWeeks;
+
+      let isCompleted = m.ageWeeks <= ageWeeks;
+      if (m.category === 'vaccination') {
+        isCompleted = vaxNames.has(m.label);
+      }
 
       events.push({
         id: `child-milestone-${child.id}-${m.ageWeeks}-${m.label}`,
@@ -296,17 +307,12 @@ export async function buildChildTimeline(childId) {
         label: m.label,
         icon: m.icon,
         color: m.color,
-        completed: isPast,
-        status: isPast ? 'completed' : m.ageWeeks <= ageWeeks + 1 ? 'upcoming' : 'future',
-        celebration: m.celebration && isPast,
+        completed: isCompleted,
+        status: isCompleted ? 'completed' : m.ageWeeks <= ageWeeks + 1 ? 'upcoming' : 'future',
+        celebration: m.celebration && isCompleted,
       });
     }
   });
-
-  const vaccinations = await db.vaccinations
-    .where('child_id').equals(child.id)
-    .filter(v => !v.deleted_at)
-    .toArray();
 
   vaccinations.forEach(vax => {
     const vaxAgeDays = child.date_of_birth
@@ -386,7 +392,6 @@ export async function buildChildTimeline(childId) {
 
   const pendingActions = [];
   if (ageMonths !== null) {
-    const vaxNames = new Set(vaccinations.map(v => v.vaccine_name));
     const overdueVax = findOverdueVaccine(ageMonths, vaxNames);
     if (overdueVax) {
       pendingActions.push({

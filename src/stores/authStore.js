@@ -249,15 +249,16 @@ const useAuthStore = create(
             await get().fetchProfile(data.user.id);
 
             set({
-              user: data.user,
-              session: data.session,
-              isAuthenticated: true,
-            });
-          }
+                user: data.user,
+                session: data.session,
+                isAuthenticated: true,
+                isLoading: false,
+              });
+            }
 
-          // Sync data after registration
-          fullSync().catch(err => console.error('Post-signup sync failed:', err));
-          return { success: true };
+            // Sync data after registration
+            fullSync().catch(err => console.error('Post-signup sync failed:', err));
+            return { success: true };
         } catch (error) {
           set({ error: error.message, isLoading: false });
           return { success: false, error: error.message };

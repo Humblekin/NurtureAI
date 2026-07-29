@@ -403,7 +403,7 @@ export default function HealthJourneyTimeline({ profileId, childIds = [] }) {
         buildPregnancyTimeline(profileId);
       }
     }
-  }, [profileId, childIdsKey, childCount, childIds, buildAllTimelines, buildPregnancyTimeline]);
+  }, [profileId, childIdsKey, childCount, buildAllTimelines, buildPregnancyTimeline]);
 
   const scrollToCurrent = useCallback(() => {
     if (timelineRef.current) {
