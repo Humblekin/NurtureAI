@@ -109,6 +109,29 @@ const useWeeklyJournalStore = create((set, get) => ({
     }
   },
 
+  requeueUnsynced: async () => {
+    try {
+      const unsynced = await db.weekly_journals
+        .filter(j => !j.synced_at)
+        .toArray();
+
+      for (const entry of unsynced) {
+        const existingQueue = await db.sync_queue
+          .where({ table_name: 'weekly_journals', record_id: entry.id })
+          .first();
+        if (!existingQueue) {
+          await queueSync('weekly_journals', entry.id, 'INSERT', entry);
+        }
+      }
+
+      if (unsynced.length > 0) {
+        console.log(`[Journal] Re-queued ${unsynced.length} unsynced entries`);
+      }
+    } catch (error) {
+      console.error('[Journal] Failed to re-queue unsynced entries:', error);
+    }
+  },
+
   reset: () => set({
     journals: [],
     currentJournal: null,

@@ -82,16 +82,16 @@ export const MotherDashboard = () => {
 
   return (
     <div className="page-content fade-in">
-      <div className="flex-between" style={{ marginBottom: 'var(--space-6)' }}>
+      <div className="dashboard-header">
         <div>
-          <h1 className="heading-2">
+          <h1 className="heading-2 dashboard-greeting">
             How am I and my baby doing today, {profile?.full_name?.split(' ')[0] || 'Mother'}?
           </h1>
           <p className="body-lg" style={{ color: 'var(--text-secondary)' }}>
             Here is your health summary for today.
           </p>
         </div>
-        <div style={{ textAlign: 'right' }}>
+        <div className="dashboard-date">
           <p className="body-sm" style={{ color: 'var(--text-tertiary)' }}>
             {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
           </p>
@@ -181,8 +181,8 @@ export const MotherDashboard = () => {
         </Card>
       </div>
 
-      <div style={{ display: 'flex', gap: 'var(--space-4)', marginBottom: 'var(--space-6)' }}>
-        <Link to="/mother/timeline" style={{ textDecoration: 'none', display: 'block', flex: 1 }}>
+      <div className="grid grid-2" style={{ marginBottom: 'var(--space-6)' }}>
+        <Link to="/mother/timeline" style={{ textDecoration: 'none', display: 'block' }}>
           <Card variant="accent" hoverable clickable>
             <CardBody className="flex gap-4 items-center">
               <div style={{
@@ -192,7 +192,7 @@ export const MotherDashboard = () => {
               }}>
                 <Map size={28} style={{ color: 'var(--color-primary-600)' }} />
               </div>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h3 className="heading-4" style={{ marginBottom: 'var(--space-1)' }}>My Health Journey</h3>
                 <p className="body-sm" style={{ color: 'var(--text-secondary)' }}>
                   View your complete pregnancy and child health timeline.
@@ -202,7 +202,7 @@ export const MotherDashboard = () => {
             </CardBody>
           </Card>
         </Link>
-        <Link to="/mother/track" style={{ textDecoration: 'none', display: 'block', flex: 1 }}>
+        <Link to="/mother/track" style={{ textDecoration: 'none', display: 'block' }}>
           <Card variant="elevated" hoverable clickable className="gradient-warm" style={{ color: 'white' }}>
             <CardBody className="flex gap-4 items-center">
               <div style={{
@@ -212,7 +212,7 @@ export const MotherDashboard = () => {
               }}>
                 <ClipboardList size={28} />
               </div>
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <h3 className="heading-4" style={{ marginBottom: 'var(--space-1)' }}>Weekly Check-in</h3>
                 <p className="body-sm" style={{ opacity: 0.9 }}>
                   Track how you and your baby are doing each week.

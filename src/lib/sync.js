@@ -18,6 +18,7 @@ const PULL_TABLES = [
   'profiles', 'mothers', 'pregnancies', 'antenatal_visits',
   'children', 'vaccinations', 'growth_records', 'milestones',
   'visits', 'referrals', 'facilities', 'districts',
+  'weekly_journals',
 ];
 
 const SUPABASE_COLUMNS = {
@@ -31,6 +32,7 @@ const SUPABASE_COLUMNS = {
   referrals: ['id', 'patient_id', 'patient_type', 'from_facility_id', 'to_facility_id', 'from_worker_id', 'urgency', 'status', 'reason', 'notes', 'created_at', 'updated_at'],
   profiles: ['id', 'full_name', 'phone', 'role', 'facility_id', 'community', 'avatar_url', 'created_at', 'updated_at'],
   milestones: ['id', 'child_id', 'milestone_type', 'achieved_date', 'notes', 'created_at', 'updated_at'],
+  weekly_journals: ['id', 'user_id', 'pregnancy_id', 'week_number', 'entry_date', 'mother_feeling', 'baby_movement', 'symptoms', 'mood', 'sleep_quality', 'nutrition_notes', 'water_intake', 'exercise_notes', 'medication_notes', 'weight', 'blood_pressure', 'additional_notes', 'created_at', 'updated_at'],
 };
 
 function stripLocalFields(data, tableName) {

@@ -260,7 +260,7 @@ export default function WeeklyTrackPage() {
   const {
     journals, currentJournal,
     fetchJournalsByPregnancy, fetchCurrentWeek,
-    saveJournal, updateJournal,
+    saveJournal, updateJournal, requeueUnsynced,
   } = useWeeklyJournalStore();
 
   const [isSaving, setIsSaving] = useState(false);
@@ -288,8 +288,9 @@ export default function WeeklyTrackPage() {
     if (activePregnancy?.id && pregnancyWeek) {
       fetchJournalsByPregnancy(activePregnancy.id);
       fetchCurrentWeek(activePregnancy.id, pregnancyWeek);
+      requeueUnsynced();
     }
-  }, [activePregnancy?.id, pregnancyWeek, fetchJournalsByPregnancy, fetchCurrentWeek]);
+  }, [activePregnancy?.id, pregnancyWeek, fetchJournalsByPregnancy, fetchCurrentWeek, requeueUnsynced]);
 
   const currentCompleted = !!currentJournal;
 

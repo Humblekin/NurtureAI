@@ -22,6 +22,7 @@ DROP TRIGGER IF EXISTS update_facilities_updated_at ON facilities;
 DROP TRIGGER IF EXISTS update_districts_updated_at ON districts;
 DROP TRIGGER IF EXISTS update_milestones_updated_at ON milestones;
 DROP TRIGGER IF EXISTS update_ai_conversations_updated_at ON ai_conversations;
+DROP TRIGGER IF EXISTS update_weekly_journals_updated_at ON weekly_journals;
 
 -- Drop existing functions
 DROP FUNCTION IF EXISTS public.handle_new_user() CASCADE;
@@ -29,6 +30,7 @@ DROP FUNCTION IF EXISTS public.update_updated_at() CASCADE;
 DROP FUNCTION IF EXISTS public.user_role() CASCADE;
 
 -- Drop existing tables (in reverse dependency order) — COMMENT OUT if you have data
+-- DROP TABLE IF EXISTS weekly_journals CASCADE;
 -- DROP TABLE IF EXISTS ai_conversations CASCADE;
 -- DROP TABLE IF EXISTS referrals CASCADE;
 -- DROP TABLE IF EXISTS visits CASCADE;
@@ -247,7 +249,32 @@ CREATE TABLE IF NOT EXISTS ai_conversations (
 );
 
 -- ============================================
--- 14. NOTIFICATIONS
+-- 14. WEEKLY JOURNALS (mother check-ins)
+-- ============================================
+CREATE TABLE IF NOT EXISTS weekly_journals (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES profiles(id),
+  pregnancy_id UUID REFERENCES pregnancies(id) ON DELETE CASCADE,
+  week_number INTEGER NOT NULL,
+  entry_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  mother_feeling TEXT,
+  baby_movement TEXT,
+  symptoms TEXT,
+  mood TEXT,
+  sleep_quality TEXT,
+  nutrition_notes TEXT,
+  water_intake TEXT,
+  exercise_notes TEXT,
+  medication_notes TEXT,
+  weight NUMERIC(5,2),
+  blood_pressure TEXT,
+  additional_notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- ============================================
+-- 15. NOTIFICATIONS
 -- ============================================
 CREATE TABLE IF NOT EXISTS notifications (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -277,6 +304,8 @@ CREATE INDEX IF NOT EXISTS idx_visits_worker ON visits(worker_id);
 CREATE INDEX IF NOT EXISTS idx_visits_patient ON visits(patient_id);
 CREATE INDEX IF NOT EXISTS idx_referrals_status ON referrals(status);
 CREATE INDEX IF NOT EXISTS idx_notifications_patient ON notifications(patient_id);
+CREATE INDEX IF NOT EXISTS idx_weekly_journals_pregnancy ON weekly_journals(pregnancy_id);
+CREATE INDEX IF NOT EXISTS idx_weekly_journals_user ON weekly_journals(user_id);
 
 -- ============================================
 -- ROW LEVEL SECURITY (RLS)
@@ -303,6 +332,7 @@ ALTER TABLE visits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE referrals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_conversations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE weekly_journals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE facilities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE districts ENABLE ROW LEVEL SECURITY;
 
@@ -366,6 +396,11 @@ BEGIN
   DROP POLICY IF EXISTS "AI: insert own" ON ai_conversations;
   DROP POLICY IF EXISTS "AI: update own" ON ai_conversations;
   DROP POLICY IF EXISTS "AI: delete own" ON ai_conversations;
+  -- Weekly Journals
+  DROP POLICY IF EXISTS "WJ: read own" ON weekly_journals;
+  DROP POLICY IF EXISTS "WJ: insert own" ON weekly_journals;
+  DROP POLICY IF EXISTS "WJ: update own" ON weekly_journals;
+  DROP POLICY IF EXISTS "WJ: health workers read all" ON weekly_journals;
   -- Facilities & Districts
   DROP POLICY IF EXISTS "Facilities: public read" ON facilities;
   DROP POLICY IF EXISTS "Facilities: admin manage" ON facilities;
@@ -592,6 +627,21 @@ CREATE POLICY "AI: update own" ON ai_conversations
 CREATE POLICY "AI: delete own" ON ai_conversations
   FOR DELETE USING (user_id = auth.uid());
 
+-- Weekly Journals
+CREATE POLICY "WJ: read own" ON weekly_journals
+  FOR SELECT USING (
+    user_id = auth.uid() OR
+    EXISTS (SELECT 1 FROM pregnancies p
+      JOIN mothers m ON m.id = p.mother_id
+      WHERE p.id = pregnancy_id AND (
+        m.profile_id = auth.uid() OR public.user_role() IN ('chw', 'nurse', 'doctor', 'admin')
+      ))
+  );
+CREATE POLICY "WJ: insert own" ON weekly_journals
+  FOR INSERT WITH CHECK (user_id = auth.uid());
+CREATE POLICY "WJ: update own" ON weekly_journals
+  FOR UPDATE USING (user_id = auth.uid());
+
 -- Facilities & Districts
 CREATE POLICY "Facilities: public read" ON facilities FOR SELECT USING (true);
 CREATE POLICY "Facilities: admin manage" ON facilities FOR ALL
@@ -648,3 +698,4 @@ CREATE TRIGGER update_districts_updated_at BEFORE UPDATE ON districts FOR EACH R
 CREATE TRIGGER update_milestones_updated_at BEFORE UPDATE ON milestones FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_ai_conversations_updated_at BEFORE UPDATE ON ai_conversations FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_notifications_updated_at BEFORE UPDATE ON notifications FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER update_weekly_journals_updated_at BEFORE UPDATE ON weekly_journals FOR EACH ROW EXECUTE FUNCTION update_updated_at();
