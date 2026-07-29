@@ -35,6 +35,7 @@ import AdminArchive from '../features/admin/AdminArchive';
 import OnboardingFlow from '../features/amina/OnboardingFlow';
 import MotherWelcome from '../features/amina/MotherWelcome';
 import OnboardingForm from '../features/amina/OnboardingForm';
+import WeeklyTrackPage from '../features/track/WeeklyTrackPage';
 import PregnancyAminaFlow from '../features/pregnancies/PregnancyAminaFlow';
 import PregnancyRegister from '../features/pregnancies/PregnancyRegister';
 
@@ -67,6 +68,10 @@ export const router = createBrowserRouter([
       {
         path: 'mother/timeline',
         element: <A allowedRoles={['mother']}><HealthJourneyPage /></A>
+      },
+      {
+        path: 'mother/track',
+        element: <A allowedRoles={['mother']}><WeeklyTrackPage /></A>
       },
       {
         path: 'mother/pregnancy',

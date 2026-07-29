@@ -258,7 +258,47 @@ async function buildMotherContext(profileId) {
     }));
   }
 
-  // 6. Assigned healthcare worker
+  // 6. Weekly journals (recent 3 for Amina context)
+  if (activePregnancy) {
+    const journals = await db.weekly_journals
+      .where('pregnancy_id').equals(activePregnancy.id)
+      .reverse()
+      .sortBy('week_number');
+
+    if (journals.length > 0) {
+      context.recent_journals = journals.slice(-3).map(j => ({
+        week: j.week_number,
+        date: fmt(j.entry_date),
+        feeling: j.mother_feeling || null,
+        symptoms: j.symptoms || null,
+        mood: j.mood || null,
+        baby_movement: j.baby_movement || null,
+        sleep_quality: j.sleep_quality || null,
+        missed: false,
+      }));
+
+      // Track missed weeks
+      const reportedWeeks = new Set(journals.map(j => j.week_number));
+      const missedWeeks = [];
+      const maxWeek = Math.max(...reportedWeeks);
+      if (week && maxWeek < week - 1) {
+        for (let w = maxWeek + 1; w < week; w++) {
+          missedWeeks.push(w);
+        }
+      }
+      if (missedWeeks.length > 0) {
+        context.recent_journals.push({
+          week: missedWeeks.join(', '),
+          date: null,
+          feeling: null,
+          missed: true,
+          note: `No check-in recorded for week${missedWeeks.length > 1 ? 's' : ''} ${missedWeeks.join(', ')}`,
+        });
+      }
+    }
+  }
+
+  // 7. Assigned healthcare worker
   if (mother.assigned_worker_id) {
     const workerProfile = await db.profiles.get(mother.assigned_worker_id);
     if (workerProfile) {
@@ -570,6 +610,23 @@ function formatContextForAI(ctx) {
       }
     } else {
       lines.push(`\n[PREGNANCY] No active pregnancy`);
+    }
+
+    if (ctx.recent_journals?.length > 0) {
+      lines.push(`\n[WEEKLY CHECK-INS] (mother-reported)`);
+      ctx.recent_journals.forEach(j => {
+        if (j.missed) {
+          lines.push(`  - Week ${j.week}: ${j.note}`);
+        } else {
+          const parts = [];
+          if (j.feeling) parts.push(`Feeling: ${j.feeling}`);
+          if (j.symptoms) parts.push(`Symptoms: ${j.symptoms}`);
+          if (j.mood) parts.push(`Mood: ${j.mood}`);
+          if (j.baby_movement) parts.push(`Movement: ${j.baby_movement}`);
+          if (j.sleep_quality) parts.push(`Sleep: ${j.sleep_quality}`);
+          lines.push(`  - Week ${j.week} (${j.date}): ${parts.join(' | ')}`);
+        }
+      });
     }
 
     if (ctx.pregnancy_history?.length > 0) {

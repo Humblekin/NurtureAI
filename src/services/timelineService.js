@@ -145,6 +145,29 @@ export async function buildPregnancyTimeline(motherId) {
     }
   });
 
+  const journals = await db.weekly_journals
+    .where('pregnancy_id').equals(pregnancy.id)
+    .toArray();
+
+  journals.forEach(j => {
+    events.push({
+      id: `journal-${j.id}`,
+      type: 'journal',
+      category: 'journal',
+      date: j.entry_date || j.created_at,
+      week: j.week_number,
+      label: `Week ${j.week_number} Check-in`,
+      description: j.mother_feeling
+        ? `Feeling: ${j.mother_feeling}${j.symptoms ? ` • Symptoms: ${j.symptoms.substring(0, 60)}` : ''}`
+        : 'Weekly check-in completed',
+      icon: 'Check',
+      color: 'primary',
+      completed: true,
+      status: 'completed',
+      data: j,
+    });
+  });
+
   const ancVisits = await db.antenatal_visits
     .where('pregnancy_id').equals(pregnancy.id)
     .filter(v => !v.deleted_at)

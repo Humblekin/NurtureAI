@@ -57,6 +57,11 @@ db.version(2).stores({
   facilities: 'id, name, type, district_id, deleted_at, synced_at',
 });
 
+// Version 3: Add weekly_journals for mother weekly check-ins
+db.version(3).stores({
+  weekly_journals: 'id, user_id, pregnancy_id, week_number, entry_date, synced_at',
+});
+
 /**
  * Add a record to the sync queue for later upload.
  * @param {string} tableName - The Supabase table name

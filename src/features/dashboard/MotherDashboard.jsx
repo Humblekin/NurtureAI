@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Heart, Calendar, Baby, MessageCircle, Map } from 'lucide-react';
+import { Heart, Calendar, Baby, MessageCircle, Map, ClipboardList } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import useAuthStore from '../../stores/authStore';
 import useMotherStore from '../../stores/motherStore';
@@ -181,26 +181,48 @@ export const MotherDashboard = () => {
         </Card>
       </div>
 
-      <Link to="/mother/timeline" style={{ textDecoration: 'none', display: 'block', marginBottom: 'var(--space-6)' }}>
-        <Card variant="accent" hoverable clickable>
-          <CardBody className="flex gap-4 items-center">
-            <div style={{
-              width: 56, height: 56, borderRadius: 'var(--radius-xl)',
-              background: 'linear-gradient(135deg, var(--color-primary-100), var(--color-accent-100))',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-            }}>
-              <Map size={28} style={{ color: 'var(--color-primary-600)' }} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <h3 className="heading-4" style={{ marginBottom: 'var(--space-1)' }}>My Health Journey</h3>
-              <p className="body-sm" style={{ color: 'var(--text-secondary)' }}>
-                View your complete pregnancy and child health timeline with milestones, visits, and AI insights.
-              </p>
-            </div>
-            <Badge variant="primary" solid size="sm">View</Badge>
-          </CardBody>
-        </Card>
-      </Link>
+      <div style={{ display: 'flex', gap: 'var(--space-4)', marginBottom: 'var(--space-6)' }}>
+        <Link to="/mother/timeline" style={{ textDecoration: 'none', display: 'block', flex: 1 }}>
+          <Card variant="accent" hoverable clickable>
+            <CardBody className="flex gap-4 items-center">
+              <div style={{
+                width: 56, height: 56, borderRadius: 'var(--radius-xl)',
+                background: 'linear-gradient(135deg, var(--color-primary-100), var(--color-accent-100))',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              }}>
+                <Map size={28} style={{ color: 'var(--color-primary-600)' }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 className="heading-4" style={{ marginBottom: 'var(--space-1)' }}>My Health Journey</h3>
+                <p className="body-sm" style={{ color: 'var(--text-secondary)' }}>
+                  View your complete pregnancy and child health timeline.
+                </p>
+              </div>
+              <Badge variant="primary" solid size="sm">View</Badge>
+            </CardBody>
+          </Card>
+        </Link>
+        <Link to="/mother/track" style={{ textDecoration: 'none', display: 'block', flex: 1 }}>
+          <Card variant="elevated" hoverable clickable className="gradient-warm" style={{ color: 'white' }}>
+            <CardBody className="flex gap-4 items-center">
+              <div style={{
+                width: 56, height: 56, borderRadius: 'var(--radius-xl)',
+                background: 'rgba(255,255,255,0.2)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              }}>
+                <ClipboardList size={28} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 className="heading-4" style={{ marginBottom: 'var(--space-1)' }}>Weekly Check-in</h3>
+                <p className="body-sm" style={{ opacity: 0.9 }}>
+                  Track how you and your baby are doing each week.
+                </p>
+              </div>
+              <Badge variant="secondary" solid size="sm">Check In</Badge>
+            </CardBody>
+          </Card>
+        </Link>
+      </div>
 
       <h2 className="heading-3" style={{ marginBottom: 'var(--space-4)' }}>My Children</h2>
       <div className="grid grid-2">
