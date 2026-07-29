@@ -103,6 +103,9 @@ const useAuthStore = create(
             } else {
               console.error('Profile fetch error:', profileError);
             }
+
+            // Pull data from Supabase into IndexedDB on app load
+            fullSync().catch(err => console.error('Post-init sync failed:', err));
           }
         } catch (error) {
           console.error('Auth init error:', error);
@@ -198,9 +201,9 @@ const useAuthStore = create(
             await db.profiles.put({ ...profile, synced_at: new Date().toISOString() });
           }
 
+          // Sync data from Supabase to local IndexedDB before rendering
+          await fullSync().catch(err => console.error('Post-login sync failed:', err));
           set({ isLoading: false });
-          // Sync data from Supabase to local IndexedDB
-          fullSync().catch(err => console.error('Post-login sync failed:', err));
           return { success: true };
         } catch (error) {
           set({ error: error.message, isLoading: false });
@@ -252,12 +255,12 @@ const useAuthStore = create(
                 user: data.user,
                 session: data.session,
                 isAuthenticated: true,
-                isLoading: false,
               });
             }
 
             // Sync data after registration
-            fullSync().catch(err => console.error('Post-signup sync failed:', err));
+            await fullSync().catch(err => console.error('Post-signup sync failed:', err));
+            set({ isLoading: false });
             return { success: true };
         } catch (error) {
           set({ error: error.message, isLoading: false });

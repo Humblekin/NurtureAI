@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Heart, Calendar, Baby, MessageCircle, Map, ClipboardList } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import useAuthStore from '../../stores/authStore';
+import useAppStore from '../../stores/appStore';
 import useMotherStore from '../../stores/motherStore';
 import usePregnancyStore from '../../stores/pregnancyStore';
 import useChildStore from '../../stores/childStore';
@@ -49,11 +50,13 @@ function hasVaccineDue(childId, vaccinations) {
 
 export const MotherDashboard = () => {
   const { profile } = useAuthStore();
+  const syncStatus = useAppStore((s) => s.syncStatus);
   const { fetchMotherByProfileId } = useMotherStore();
   const { activePregnancy, antenatalVisits, fetchPregnanciesByMotherId } = usePregnancyStore();
   const { children, vaccinations, fetchChildrenByMotherId } = useChildStore();
   const navigate = useNavigate();
   const [showPregnancyChoice, setShowPregnancyChoice] = useState(false);
+  const prevSyncStatus = useRef('idle');
 
   useEffect(() => {
     if (profile?.id) {
@@ -65,6 +68,18 @@ export const MotherDashboard = () => {
       });
     }
   }, [profile?.id, fetchMotherByProfileId, fetchPregnanciesByMotherId, fetchChildrenByMotherId]);
+
+  // Re-fetch data after sync completes (e.g. after login on a new device)
+  useEffect(() => {
+    if (prevSyncStatus.current === 'syncing' && syncStatus === 'synced') {
+      const mother = useMotherStore.getState().mother;
+      if (mother) {
+        fetchPregnanciesByMotherId(mother.id);
+        fetchChildrenByMotherId(mother.id);
+      }
+    }
+    prevSyncStatus.current = syncStatus;
+  }, [syncStatus, fetchPregnanciesByMotherId, fetchChildrenByMotherId]);
 
   const pregnancyWeek = activePregnancy?.lmp
     ? calculateWeek(activePregnancy.lmp)

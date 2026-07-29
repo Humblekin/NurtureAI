@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Check, Heart, ChevronLeft, ChevronRight, Baby, Moon, Apple, Droplets, Activity, Pill, Edit3 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
+import useAppStore from '../../stores/appStore';
 import useMotherStore from '../../stores/motherStore';
 import usePregnancyStore from '../../stores/pregnancyStore';
 import useWeeklyJournalStore from '../../stores/weeklyJournalStore';
@@ -255,6 +256,7 @@ function CheckInForm({ weekNumber, initialData, onSave, onCancel, isSaving }) {
 
 export default function WeeklyTrackPage() {
   const { profile } = useAuthStore();
+  const syncStatus = useAppStore((s) => s.syncStatus);
   const { fetchMotherByProfileId } = useMotherStore();
   const { activePregnancy, fetchPregnanciesByMotherId } = usePregnancyStore();
   const {
@@ -262,6 +264,7 @@ export default function WeeklyTrackPage() {
     fetchJournalsByPregnancy, fetchCurrentWeek,
     saveJournal, updateJournal, requeueUnsynced,
   } = useWeeklyJournalStore();
+  const prevSyncStatus = useRef('idle');
 
   const [isSaving, setIsSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -291,6 +294,17 @@ export default function WeeklyTrackPage() {
       requeueUnsynced();
     }
   }, [activePregnancy?.id, pregnancyWeek, fetchJournalsByPregnancy, fetchCurrentWeek, requeueUnsynced]);
+
+  // Re-fetch journals after sync completes
+  useEffect(() => {
+    if (prevSyncStatus.current === 'syncing' && syncStatus === 'synced') {
+      if (activePregnancy?.id && pregnancyWeek) {
+        fetchJournalsByPregnancy(activePregnancy.id);
+        fetchCurrentWeek(activePregnancy.id, pregnancyWeek);
+      }
+    }
+    prevSyncStatus.current = syncStatus;
+  }, [syncStatus, activePregnancy?.id, pregnancyWeek, fetchJournalsByPregnancy, fetchCurrentWeek]);
 
   const currentCompleted = !!currentJournal;
 
