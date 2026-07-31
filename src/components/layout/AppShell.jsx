@@ -1,8 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
-import { setupAutoSync, onSyncStatusChange } from '../../lib/sync';
+import { setupAutoSync, onSyncStatusChange, requeueAllUnsynced } from '../../lib/sync';
 import Header from './Header';
 import Sidebar from './Sidebar';
 import BottomNav from './BottomNav';
@@ -20,11 +20,16 @@ export const AppShell = () => {
   const setPendingSyncCount = useAppStore((state) => state.setPendingSyncCount);
   const navigate = useNavigate();
   const location = useLocation();
+  const initialized = useRef(false);
 
   useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
+
     initTheme();
     initialize();
     setupAutoSync();
+    requeueAllUnsynced();
 
     const handleOnline = () => setOnline(true);
     const handleOffline = () => setOnline(false);

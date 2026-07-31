@@ -13,6 +13,21 @@ let syncListeners = [];
 
 const LOCAL_ONLY_FIELDS = ['synced_at', 'deleted_at'];
 const MAX_SYNC_ATTEMPTS = 10;
+const MIN_RETRY_DELAY = 5000;
+const MAX_RETRY_DELAY = 60000;
+
+function isAuthError(error) {
+  const msg = error?.message?.toLowerCase() || '';
+  const status = error?.status || error?.code || 0;
+  return status === 401 || status === 403 || status === 429
+    || msg.includes('auth') || msg.includes('jwt') || msg.includes('token')
+    || msg.includes('unauthorized') || msg.includes('forbidden')
+    || msg.includes('rate limit') || msg.includes('too many requests');
+}
+
+function getRetryDelay(attempts) {
+  return Math.min(MIN_RETRY_DELAY * Math.pow(2, attempts), MAX_RETRY_DELAY);
+}
 
 const PULL_TABLES = [
   'profiles', 'mothers', 'pregnancies', 'antenatal_visits',
@@ -88,7 +103,11 @@ export async function processSyncQueue() {
     let errorCount = 0;
 
     for (const entry of pending) {
-      if ((entry.attempts || 0) >= MAX_SYNC_ATTEMPTS) {
+      if (entry.next_retry_at && new Date(entry.next_retry_at) > new Date()) {
+        continue;
+      }
+
+      if ((entry.attempts || 0) >= MAX_SYNC_ATTEMPTS && !isAuthError({ message: entry.last_error })) {
         console.warn(`[Sync] Giving up on ${entry.table_name}/${entry.record_id} after ${entry.attempts} attempts: ${entry.last_error}`);
         await removeSyncEntry(entry.id);
         continue;
@@ -137,10 +156,19 @@ export async function processSyncQueue() {
       } catch (error) {
         console.error(`Sync error for ${entry.table_name}/${entry.record_id}:`, error);
         errorCount++;
+
+        const isAuth = isAuthError(error);
+        const delay = getRetryDelay(entry.attempts || 0);
+
         await db.sync_queue.update(entry.id, {
-          attempts: (entry.attempts || 0) + 1,
+          attempts: isAuth ? (entry.attempts || 0) : (entry.attempts || 0) + 1,
           last_error: error.message,
+          next_retry_at: isAuth ? new Date(Date.now() + delay).toISOString() : null,
         });
+
+        if (isAuth) {
+          console.log(`[Sync] Auth error, will retry in ${delay}ms (attempt ${(entry.attempts || 0) + 1})`);
+        }
       }
     }
 
@@ -235,6 +263,42 @@ export async function fullSync() {
   } catch (error) {
     console.error('[Sync] Full sync failed:', error);
   }
+}
+
+/**
+ * Re-queue all locally saved records that haven't been synced yet.
+ * Run this on app init to recover entries that were lost due to sync failures.
+ */
+export async function requeueAllUnsynced() {
+  if (!isSupabaseConfigured()) return;
+
+  const tables = db.tables.filter(t => t.name !== 'sync_queue' && t.name !== 'settings' && t.name !== 'notifications' && t.name !== 'ai_conversations');
+
+  let total = 0;
+  for (const table of tables) {
+    try {
+      const unsynced = await table
+        .filter(item => !item.synced_at && item.id)
+        .toArray();
+
+      for (const item of unsynced) {
+        const existing = await db.sync_queue
+          .where({ table_name: table.name, record_id: item.id })
+          .first();
+        if (!existing) {
+          await queueSync(table.name, item.id, 'INSERT', item);
+          total++;
+        }
+      }
+    } catch (err) {
+      console.warn(`[Sync] Re-queue failed for ${table.name}:`, err.message);
+    }
+  }
+
+  if (total > 0) {
+    console.log(`[Sync] Re-queued ${total} unsynced records`);
+  }
+  return total;
 }
 
 // ---- Auto-sync setup ----

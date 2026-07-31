@@ -35,7 +35,7 @@ db.version(1).stores({
   districts: 'id, name, region, synced_at',
 
   // ---- Sync Queue (outbox pattern) ----
-  sync_queue: '++id, table_name, record_id, operation, created_at, [table_name+record_id]',
+  sync_queue: '++id, table_name, record_id, operation, created_at, next_retry_at, [table_name+record_id]',
 
   // ---- App Settings ----
   settings: 'key',
