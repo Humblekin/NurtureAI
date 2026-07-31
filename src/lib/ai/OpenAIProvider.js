@@ -3,14 +3,14 @@ import useAuthStore from '../../stores/authStore'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 
-const DEFAULT_MODEL = 'google/gemini-2.5-flash'
+const DEFAULT_MODEL = 'gpt-4.1-mini'
 const MAX_RETRIES = 3
 const BASE_RETRY_DELAY = 1000
 
 function getFunctionsBase() {
   if (!SUPABASE_URL) return null
   const match = SUPABASE_URL.match(/https:\/\/(.+?)\.supabase\.co/)
-  return match ? `https://${match[1]}.supabase.co/functions/v1/openrouter-proxy` : null
+  return match ? `https://${match[1]}.supabase.co/functions/v1/openai-proxy` : null
 }
 
 function estimateTokens(text) {
@@ -37,7 +37,7 @@ function truncateConversation(messages, maxTurns = 5) {
 
 let requestCounter = 0
 
-export class OpenRouterProvider extends AIProvider {
+export class OpenAIProvider extends AIProvider {
   constructor(options = {}) {
     super()
     this.model = options.model || DEFAULT_MODEL
@@ -54,14 +54,14 @@ export class OpenRouterProvider extends AIProvider {
     const functionsBase = getFunctionsBase()
 
     if (!functionsBase) {
-      console.warn(`[OpenRouter #${requestId}] AI service not configured`)
+      console.warn(`[OpenAI #${requestId}] AI service not configured`)
       return 'AI service is not configured. Please check your API key or Supabase configuration.'
     }
 
     const session = useAuthStore.getState().session
     const token = session?.access_token
     if (!token) {
-      console.warn(`[OpenRouter #${requestId}] No auth token`)
+      console.warn(`[OpenAI #${requestId}] No auth token`)
       return 'AI service requires authentication. Please sign in to use Amina.'
     }
 
@@ -144,7 +144,7 @@ Be compassionate. Never create panic. Never minimize concerns. Balance honesty w
     ]
 
     const promptTokens = estimateTokens(apiMessages)
-    console.log(`[OpenRouter #${requestId}] ${apiMessages.length} messages, ~${promptTokens} prompt tokens`)
+    console.log(`[OpenAI #${requestId}] ${apiMessages.length} messages, ~${promptTokens} prompt tokens`)
 
     let lastError = null
 
@@ -170,13 +170,13 @@ Be compassionate. Never create panic. Never minimize concerns. Balance honesty w
         const errBody = await response.text()
 
         if (!response.ok) {
-          console.error(`[OpenRouter #${requestId}] Error ${response.status}:`, errBody.slice(0, 200))
+          console.error(`[OpenAI #${requestId}] Error ${response.status}:`, errBody.slice(0, 200))
 
           if (response.status === 401) throw new Error('Authentication failed. Please sign in again.')
           if (response.status === 429) {
             if (attempt < MAX_RETRIES) {
               const delay = Math.pow(2, attempt + 1) * BASE_RETRY_DELAY
-              console.log(`[OpenRouter #${requestId}] Rate limited, retrying in ${delay}ms (${attempt + 1}/${MAX_RETRIES})`)
+              console.log(`[OpenAI #${requestId}] Rate limited, retrying in ${delay}ms (${attempt + 1}/${MAX_RETRIES})`)
               await new Promise(r => setTimeout(r, delay))
               continue
             }
@@ -190,7 +190,7 @@ Be compassionate. Never create panic. Never minimize concerns. Balance honesty w
         const data = JSON.parse(errBody)
         const content = data.choices?.[0]?.message?.content || ''
         const responseTokens = estimateTokens(content)
-        console.log(`[OpenRouter #${requestId}] ~${promptTokens}p + ~${responseTokens}r = ~${promptTokens + responseTokens}t total`)
+        console.log(`[OpenAI #${requestId}] ~${promptTokens}p + ~${responseTokens}r = ~${promptTokens + responseTokens}t total`)
 
         return content || 'I apologize, I could not generate a response. Please try again.'
       } catch (error) {
@@ -201,7 +201,7 @@ Be compassionate. Never create panic. Never minimize concerns. Balance honesty w
         if (error.message?.includes('rate limit') || error.message?.includes('429')) {
           if (attempt < MAX_RETRIES) {
             const delay = Math.pow(2, attempt + 1) * BASE_RETRY_DELAY
-            console.log(`[OpenRouter #${requestId}] Rate limited, retrying in ${delay}ms (${attempt + 1}/${MAX_RETRIES})`)
+            console.log(`[OpenAI #${requestId}] Rate limited, retrying in ${delay}ms (${attempt + 1}/${MAX_RETRIES})`)
             await new Promise(r => setTimeout(r, delay))
             continue
           }

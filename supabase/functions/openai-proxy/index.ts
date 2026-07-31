@@ -1,37 +1,15 @@
 import "@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "jsr:@supabase/supabase-js@2"
 
-const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY")
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!
 
-const OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+const OPENAI_BASE = "https://api.openai.com/v1"
 
-console.log("[OpenRouter-Proxy] Function loaded")
+console.log("[OpenAI-Proxy] Function loaded")
 
-const DEFAULT_MODEL = "google/gemini-2.5-flash"
-
-// Deprecated/unsupported models mapped to their current replacements
-const MODEL_FALLBACKS: Record<string, string> = {
-  "google/gemini-2.0-flash-001": "google/gemini-2.5-flash",
-  "google/gemini-2.0-flash": "google/gemini-2.5-flash",
-  "google/gemini-flash-latest": "google/gemini-2.5-flash",
-}
-
-const VALID_MODEL_PREFIXES = [
-  "google/gemini-",
-  "google/gemma-",
-]
-
-function resolveModel(model: string): string {
-  if (MODEL_FALLBACKS[model]) {
-    console.log(`[OpenRouter-Proxy] Mapping model ${model} -> ${MODEL_FALLBACKS[model]}`)
-    return MODEL_FALLBACKS[model]
-  }
-  if (VALID_MODEL_PREFIXES.some(p => model.startsWith(p))) return model
-  console.log(`[OpenRouter-Proxy] Unrecognized model "${model}", falling back to ${DEFAULT_MODEL}`)
-  return DEFAULT_MODEL
-}
+const DEFAULT_MODEL = "gpt-4.1-mini"
 
 function corsHeaders(origin: string): Record<string, string> {
   return {
@@ -46,12 +24,12 @@ async function verifyJWT(token: string): Promise<string | null> {
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
     const { data: { user }, error } = await supabase.auth.getUser(token)
     if (error || !user) {
-      console.error(`[OpenRouter-Proxy] Auth failed: ${error?.message}`)
+      console.error(`[OpenAI-Proxy] Auth failed: ${error?.message}`)
       return null
     }
     return user.id
   } catch (err) {
-    console.error(`[OpenRouter-Proxy] Auth exception: ${err}`)
+    console.error(`[OpenAI-Proxy] Auth exception: ${err}`)
     return null
   }
 }
@@ -86,9 +64,9 @@ Deno.serve(async (req) => {
     )
   }
 
-  if (!OPENROUTER_API_KEY) {
+  if (!OPENAI_API_KEY) {
     return new Response(
-      JSON.stringify({ error: "OpenRouter API key not configured on server" }),
+      JSON.stringify({ error: "OpenAI API key not configured on server" }),
       { status: 500, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
     )
   }
@@ -103,36 +81,33 @@ Deno.serve(async (req) => {
     )
   }
 
-  const requestedModel = (body.model as string) || DEFAULT_MODEL
-  const model = resolveModel(requestedModel)
-  console.log(`[OpenRouter-Proxy] Chat completion for user ${userId}, requested=${requestedModel}, resolved=${model}`)
+  const model = (body.model as string) || DEFAULT_MODEL
+  console.log(`[OpenAI-Proxy] Chat completion for user ${userId}, model=${model}`)
 
   try {
-    const openRouterBody: Record<string, unknown> = {
+    const openAIBody: Record<string, unknown> = {
       ...body,
       model,
     }
 
-    const orResponse = await fetch(
-      `${OPENROUTER_BASE}/chat/completions`,
+    const apiResponse = await fetch(
+      `${OPENAI_BASE}/chat/completions`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
           "Content-Type": "application/json",
-          "HTTP-Referer": "https://nurtureai.app",
-          "X-Title": "NurtureAI",
         },
-        body: JSON.stringify(openRouterBody),
+        body: JSON.stringify(openAIBody),
       },
     )
 
-    const responseText = await orResponse.text()
+    const responseText = await apiResponse.text()
 
-    if (!orResponse.ok) {
-      console.error(`[OpenRouter-Proxy] OpenRouter error ${orResponse.status}: ${responseText.slice(0, 300)}`)
+    if (!apiResponse.ok) {
+      console.error(`[OpenAI-Proxy] OpenAI error ${apiResponse.status}: ${responseText.slice(0, 300)}`)
 
-      if (orResponse.status === 429) {
+      if (apiResponse.status === 429) {
         return new Response(
           JSON.stringify({
             error: "Rate limit exceeded. Please wait a moment and try again.",
@@ -143,14 +118,14 @@ Deno.serve(async (req) => {
 
       return new Response(
         JSON.stringify({
-          error: `OpenRouter API error: ${orResponse.status}`,
+          error: `OpenAI API error: ${apiResponse.status}`,
           detail: responseText.slice(0, 300),
         }),
-        { status: orResponse.status, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
+        { status: apiResponse.status, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
       )
     }
 
-    console.log(`[OpenRouter-Proxy] Response received (${responseText.length} bytes)`)
+    console.log(`[OpenAI-Proxy] Response received (${responseText.length} bytes)`)
 
     return new Response(responseText, {
       headers: {
@@ -159,9 +134,9 @@ Deno.serve(async (req) => {
       },
     })
   } catch (err) {
-    console.error(`[OpenRouter-Proxy] Fetch error: ${err}`)
+    console.error(`[OpenAI-Proxy] Fetch error: ${err}`)
     return new Response(
-      JSON.stringify({ error: "Failed to reach OpenRouter API" }),
+      JSON.stringify({ error: "Failed to reach OpenAI API" }),
       { status: 502, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
     )
   }

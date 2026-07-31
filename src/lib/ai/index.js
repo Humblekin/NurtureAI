@@ -1,10 +1,10 @@
-import { OpenRouterProvider } from './OpenRouterProvider'
+import { OpenAIProvider } from './OpenAIProvider'
 
-const defaultProvider = new OpenRouterProvider()
+const defaultProvider = new OpenAIProvider()
 
 export function getAIProvider() {
   return defaultProvider
 }
 
 export { AIProvider } from './AIProvider'
-export { OpenRouterProvider } from './OpenRouterProvider'
+export { OpenAIProvider } from './OpenAIProvider'
