@@ -90,19 +90,45 @@ Deno.serve(async (req) => {
       model,
     }
 
-    const apiResponse = await fetch(
-      `${OPENAI_BASE}/chat/completions`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(openAIBody),
-      },
-    )
+    const MAX_ATTEMPTS = 3
+    let apiResponse: Response | null = null
+    let responseText = ""
 
-    const responseText = await apiResponse.text()
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      apiResponse = await fetch(
+        `${OPENAI_BASE}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(openAIBody),
+        },
+      )
+      responseText = await apiResponse.text()
+
+      const retryable = apiResponse.status === 429 || apiResponse.status >= 500
+      if (apiResponse.ok || !retryable || attempt === MAX_ATTEMPTS) break
+
+      const retryAfter = apiResponse.headers.get("retry-after")
+      let delayMs = Math.pow(2, attempt) * 1000
+      if (retryAfter) {
+        const seconds = parseInt(retryAfter, 10)
+        if (!isNaN(seconds) && seconds >= 0 && seconds <= 30) delayMs = seconds * 1000
+      }
+      console.log(
+        `[OpenAI-Proxy] Upstream ${apiResponse.status}, retrying in ${delayMs}ms (attempt ${attempt}/${MAX_ATTEMPTS})`,
+      )
+      await new Promise((r) => setTimeout(r, delayMs))
+    }
+
+    if (!apiResponse) {
+      return new Response(
+        JSON.stringify({ error: "Failed to reach OpenAI API" }),
+        { status: 502, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
+      )
+    }
 
     if (!apiResponse.ok) {
       console.error(`[OpenAI-Proxy] OpenAI error ${apiResponse.status}: ${responseText.slice(0, 300)}`)

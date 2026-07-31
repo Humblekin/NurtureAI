@@ -110,9 +110,11 @@ export function createConversationManager(deps) {
       } catch (err) {
         if (err.name === 'AbortError') throw err;
 
-        const isRateLimit = err.message?.includes('Too many requests') ||
-                            err.message?.includes('429') ||
-                            err.message?.includes('rate limit');
+        const msg = (err.message || '').toLowerCase();
+        const isRateLimit = msg.includes('too many requests') ||
+                            msg.includes('429') ||
+                            msg.includes('rate limit') ||
+                            msg.includes('ratelimit');
 
         if (isRateLimit && attempt < maxRetries) {
           const delay = Math.pow(2, attempt + 1) * 1000;
