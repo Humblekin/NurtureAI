@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { chatCompletion } from '../lib/groq';
 import { createSpeechRecognition } from '../services/voice/speechRecognition';
+import { createVAD } from '../services/voice/vad';
 import { speak as browserSpeak, stopSpeaking as browserStopSpeaking, isSpeechSynthesisSupported } from '../services/voice/speechSynthesis';
 import useAuthStore from '../stores/authStore';
 import { createConversationManager, CONVERSATION_STATES } from '../services/conversationManager';
@@ -154,7 +155,7 @@ export function useSpeechSynthesis(_language = 'en') {
 }
 
 // ============================================================
-// Voice Conversation — Browser STT/TTS + ConversationManager
+// Voice Conversation — Browser STT/TTS + ConversationManager + VAD
 // ============================================================
 export function useVoiceConversation() {
   const [voiceState, setVoiceState] = useState(CONVERSATION_STATES.IDLE);
@@ -169,9 +170,10 @@ export function useVoiceConversation() {
   const healthContextRef = useRef('');
   const streamRef = useRef(null);
   const sttRef = useRef(null);
+  const vadRef = useRef(null);
   const initStartedRef = useRef(false);
 
-  const isListening = voiceState === CONVERSATION_STATES.LISTENING || voiceState === CONVERSATION_STATES.USER_SPEAKING;
+  const isListening = voiceState === CONVERSATION_STATES.LISTENING;
   const isSpeaking = voiceState === CONVERSATION_STATES.SPEAKING;
 
   // ---- Detect mic permission on mount (no popup) ----
@@ -209,6 +211,7 @@ export function useVoiceConversation() {
           audio: {
             echoCancellation: { ideal: true },
             noiseSuppression: { ideal: true },
+            autoGainControl: { ideal: true },
             sampleRate: { ideal: 16000 },
             channelCount: { ideal: 1 },
           }
@@ -239,44 +242,71 @@ export function useVoiceConversation() {
     }
   }, []);
 
-  // ---- Continuous browser SpeechRecognition ----
-  const startContinuousListening = useCallback(() => {
-    if (sttRef.current) {
-      sttRef.current.destroy();
-      sttRef.current = null;
-    }
-
-    console.log('[Hook] 🎤 Starting continuous speech recognition');
+  // ---- SpeechRecognition lifecycle ----
+  function startRecognition() {
+    stopRecognition();
     setTranscript('');
-
     const recognition = createSpeechRecognition({
       language,
-      keepAlive: true,
       onInterim: (text) => {
         setTranscript(text);
-        managerRef.current?.onInterimTranscript(text);
       },
       onFinal: (text) => {
         setTranscript('');
         managerRef.current?.onFinalTranscript(text);
       },
       onError: (err) => {
-        console.error('[Hook] ❌ STT error:', err);
+        console.error('[Hook] STT error:', err);
         setError(`Voice recognition error: ${err}`);
       },
     });
-
     recognition.start();
     sttRef.current = recognition;
-  }, [language]);
+  }
 
-  const stopContinuousListening = useCallback(() => {
+  function stopRecognition() {
     if (sttRef.current) {
-      sttRef.current.destroy();
+      sttRef.current.stop();
       sttRef.current = null;
     }
-    setTranscript('');
-  }, []);
+  }
+
+  // ---- VAD Lifecycle ----
+  function startVAD(stream) {
+    destroyVAD();
+    const vad = createVAD(stream, {
+      onSpeechStart: () => {
+        managerRef.current?.vadSpeechStart();
+      },
+      onSpeechEnd: () => {
+        managerRef.current?.vadSpeechEnd();
+      },
+    });
+    vad.start();
+    vadRef.current = vad;
+  }
+
+  function destroyVAD() {
+    if (vadRef.current) {
+      vadRef.current.stop();
+      vadRef.current = null;
+    }
+  }
+
+  // ---- State-driven SpeechRecognition lifecycle ----
+  useEffect(() => {
+    if (voiceState === CONVERSATION_STATES.LISTENING) {
+      startRecognition();
+    } else if (voiceState === CONVERSATION_STATES.PROCESSING ||
+               voiceState === CONVERSATION_STATES.SPEAKING ||
+               voiceState === CONVERSATION_STATES.INTERRUPTING ||
+               voiceState === CONVERSATION_STATES.PAUSED ||
+               voiceState === CONVERSATION_STATES.IDLE ||
+               voiceState === CONVERSATION_STATES.ERROR) {
+      stopRecognition();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceState]);
 
   // ---- Fetch health context when profile changes ----
   useEffect(() => {
@@ -294,11 +324,7 @@ export function useVoiceConversation() {
       sendToAI: async (apiMessages, opts) => chatCompletion(apiMessages, opts),
 
       speakText: async (text, signal) => {
-        await browserSpeak(text, {
-          signal,
-          onSpeechStart: () => managerRef.current?.onSpeechStarted?.(),
-          onSpeechEnd: () => managerRef.current?.onSpeechEnded(),
-        });
+        await browserSpeak(text, { signal });
       },
 
       stopSpeech: () => { browserStopSpeaking(); },
@@ -330,30 +356,32 @@ export function useVoiceConversation() {
       return;
     }
 
-    // Start STT once (continuous) before the conversation loop
-    startContinuousListening();
+    startVAD(stream);
 
     const mgr = managerRef.current;
-    if (!mgr) return;
+    if (!mgr) {
+      initStartedRef.current = false;
+      return;
+    }
     mgr.setLanguage(language);
     mgr.setUserProfile(profile);
     if (healthContextRef.current) mgr.setHealthContext(healthContextRef.current);
     await mgr.init({ language, userProfile: profile });
-  }, [language, profile, requestMicPermission, startContinuousListening]);
+    initStartedRef.current = false;
+  }, [language, profile, requestMicPermission]);
 
   // ---- Public: Retry after permission error ----
   const retryMicPermission = useCallback(async () => {
     initStartedRef.current = false;
     setError(null);
     setMicPermission('unknown');
-    stopContinuousListening();
+    stopRecognition();
     browserStopSpeaking();
     setVoiceState(CONVERSATION_STATES.IDLE);
     setMicReady(false);
     await new Promise(r => setTimeout(r, 100));
-    initStartedRef.current = false;
     await startConversation();
-  }, [startConversation, stopContinuousListening]);
+  }, [startConversation]);
 
   // ---- Public actions ----
   const togglePause = useCallback(() => {
@@ -372,7 +400,8 @@ export function useVoiceConversation() {
   const clearChat = useCallback(() => {
     const mgr = managerRef.current;
     if (mgr) mgr.reset();
-    stopContinuousListening();
+    stopRecognition();
+    destroyVAD();
     browserStopSpeaking();
     initStartedRef.current = false;
     setMicReady(false);
@@ -380,25 +409,35 @@ export function useVoiceConversation() {
     setTranscript('');
     setError(null);
     setVoiceState(CONVERSATION_STATES.IDLE);
-  }, [stopContinuousListening]);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+  }, []);
 
   const switchLanguage = useCallback((lang) => {
     setLanguage(lang);
     const mgr = managerRef.current;
     if (mgr) { mgr.reset(); mgr.setLanguage(lang); }
-    stopContinuousListening();
+    stopRecognition();
+    destroyVAD();
     browserStopSpeaking();
     initStartedRef.current = false;
     setMicReady(false);
     setMessages([]);
     setTranscript('');
     setVoiceState(CONVERSATION_STATES.IDLE);
-  }, [stopContinuousListening]);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+  }, []);
 
   // ---- Cleanup mic stream on unmount ----
   useEffect(() => {
     return () => {
-      stopContinuousListening();
+      stopRecognition();
+      destroyVAD();
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
         streamRef.current = null;

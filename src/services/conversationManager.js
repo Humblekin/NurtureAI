@@ -2,24 +2,20 @@ import db from '../lib/db';
 
 export const CONVERSATION_STATES = {
   IDLE: 'idle',
-  GREETING: 'greeting',
   LISTENING: 'listening',
-  USER_SPEAKING: 'user_speaking',
   PROCESSING: 'processing',
   SPEAKING: 'speaking',
-  INTERRUPTED: 'interrupted',
+  INTERRUPTING: 'interrupting',
   PAUSED: 'paused',
   ERROR: 'error',
 };
 
 const VALID_TRANSITIONS = {
-  [CONVERSATION_STATES.IDLE]: [CONVERSATION_STATES.GREETING, CONVERSATION_STATES.ERROR, CONVERSATION_STATES.PAUSED],
-  [CONVERSATION_STATES.GREETING]: [CONVERSATION_STATES.SPEAKING, CONVERSATION_STATES.ERROR, CONVERSATION_STATES.PAUSED],
-  [CONVERSATION_STATES.LISTENING]: [CONVERSATION_STATES.USER_SPEAKING, CONVERSATION_STATES.ERROR, CONVERSATION_STATES.PAUSED],
-  [CONVERSATION_STATES.USER_SPEAKING]: [CONVERSATION_STATES.PROCESSING, CONVERSATION_STATES.LISTENING, CONVERSATION_STATES.ERROR, CONVERSATION_STATES.PAUSED],
-  [CONVERSATION_STATES.PROCESSING]: [CONVERSATION_STATES.SPEAKING, CONVERSATION_STATES.ERROR, CONVERSATION_STATES.PAUSED],
-  [CONVERSATION_STATES.SPEAKING]: [CONVERSATION_STATES.INTERRUPTED, CONVERSATION_STATES.LISTENING, CONVERSATION_STATES.ERROR, CONVERSATION_STATES.PAUSED],
-  [CONVERSATION_STATES.INTERRUPTED]: [CONVERSATION_STATES.LISTENING, CONVERSATION_STATES.IDLE, CONVERSATION_STATES.ERROR],
+  [CONVERSATION_STATES.IDLE]: [CONVERSATION_STATES.LISTENING, CONVERSATION_STATES.SPEAKING, CONVERSATION_STATES.ERROR],
+  [CONVERSATION_STATES.LISTENING]: [CONVERSATION_STATES.PROCESSING, CONVERSATION_STATES.PAUSED, CONVERSATION_STATES.ERROR],
+  [CONVERSATION_STATES.PROCESSING]: [CONVERSATION_STATES.SPEAKING, CONVERSATION_STATES.PAUSED, CONVERSATION_STATES.ERROR],
+  [CONVERSATION_STATES.SPEAKING]: [CONVERSATION_STATES.LISTENING, CONVERSATION_STATES.INTERRUPTING, CONVERSATION_STATES.PAUSED, CONVERSATION_STATES.ERROR],
+  [CONVERSATION_STATES.INTERRUPTING]: [CONVERSATION_STATES.LISTENING, CONVERSATION_STATES.PAUSED, CONVERSATION_STATES.ERROR],
   [CONVERSATION_STATES.PAUSED]: [CONVERSATION_STATES.LISTENING, CONVERSATION_STATES.IDLE, CONVERSATION_STATES.ERROR],
   [CONVERSATION_STATES.ERROR]: [CONVERSATION_STATES.IDLE, CONVERSATION_STATES.LISTENING],
 };
@@ -47,6 +43,7 @@ export function createConversationManager(deps) {
   let proactiveContext = '';
   let conversationStartTime = null;
   let messageCount = 0;
+  let ttsAbortController = null;
   let aiAbortController = null;
   let recentTranscripts = [];
   let currentRequestId = 0;
@@ -64,6 +61,7 @@ export function createConversationManager(deps) {
   }
 
   function forceState(newState) {
+    if (state === newState) return;
     state = newState;
     onStateChange?.(state);
   }
@@ -74,6 +72,10 @@ export function createConversationManager(deps) {
   }
 
   function cancelCurrentWork() {
+    if (ttsAbortController) {
+      ttsAbortController.abort();
+      ttsAbortController = null;
+    }
     if (aiAbortController) {
       aiAbortController.abort();
       aiAbortController = null;
@@ -84,6 +86,17 @@ export function createConversationManager(deps) {
       activeRequestId = null;
       isProcessing = false;
     }
+  }
+
+  // ---- Hash text for duplicate detection ----
+  function hashText(text) {
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+      const char = text.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash |= 0;
+    }
+    return hash;
   }
 
   // ---- Retry loop with exponential backoff ----
@@ -102,13 +115,13 @@ export function createConversationManager(deps) {
 
         if (isRateLimit && attempt < maxRetries) {
           const delay = Math.pow(2, attempt + 1) * 1000;
-          console.log(`[Conversation] ⏳ Rate limited (retry ${attempt + 1}/${maxRetries}), waiting ${delay}ms`);
+          console.log(`[Conversation] Rate limited (retry ${attempt + 1}/${maxRetries}), waiting ${delay}ms`);
           await new Promise(r => setTimeout(r, delay));
           continue;
         }
 
         if (isRateLimit) {
-          console.log(`[Conversation] ❌ Rate limit exhausted after ${maxRetries} retries`);
+          console.log(`[Conversation] Rate limit exhausted after ${maxRetries} retries`);
           return null;
         }
 
@@ -122,8 +135,7 @@ export function createConversationManager(deps) {
   async function handleUserSpeech(text, requestId) {
     if (!text || destroyed) return;
 
-    console.log(`[Conversation] 📝 Request ${requestId}: "${text}"`);
-    console.log('[Conversation] ✅ Final transcript:', text);
+    console.log(`[Conversation] Request ${requestId}: "${text}"`);
     onTranscriptChange?.('');
 
     const userMsg = { role: 'user', content: text };
@@ -143,7 +155,7 @@ export function createConversationManager(deps) {
         .filter(m => m.role !== 'system')
         .map(m => ({ role: m.role, content: m.content }));
 
-      console.log('[Conversation] 🤖 Sending transcript to AI:', text);
+      console.log('[Conversation] Sending transcript to AI:', text);
       const response = await sendWithRetry(apiMessages, {
         userRole: userProfile?.role || 'mother',
         languageInstruction: langInstruction,
@@ -155,31 +167,33 @@ export function createConversationManager(deps) {
       if (destroyed || activeRequestId !== requestId) return;
 
       if (response === null) {
-        // Rate limit exhausted — display message without speaking
         const busyMsg = { role: 'assistant', content: RATE_LIMIT_MSG };
         setMessages([...newMessages, busyMsg]);
-        console.log('[Conversation] 📋 Rate limit message displayed (not spoken)');
+        console.log('[Conversation] Rate limit message displayed (not spoken)');
         forceState(CONVERSATION_STATES.LISTENING);
         return;
       }
 
       const assistantMsg = { role: 'assistant', content: response };
       setMessages([...newMessages, assistantMsg]);
-      console.log('[Conversation] 🤖 AI replied:', response.substring(0, 100) + (response.length > 100 ? '...' : ''));
 
-      console.log('[Conversation] 🔊 Speaking response...');
+      if (destroyed || activeRequestId !== requestId) return;
+
+      setState(CONVERSATION_STATES.SPEAKING);
+      ttsAbortController = new AbortController();
+
       try {
-        await speakText(response, aiAbortController.signal);
+        await speakText(response, ttsAbortController.signal);
+        if (!destroyed && state === CONVERSATION_STATES.SPEAKING) {
+          forceState(CONVERSATION_STATES.LISTENING);
+        }
       } catch (speakErr) {
         if (speakErr.name === 'AbortError') return;
         console.error('[ConversationManager] Speech error:', speakErr);
         onError?.('speech_error');
-      }
-
-      if (destroyed) return;
-
-      if (state === CONVERSATION_STATES.PROCESSING || state === CONVERSATION_STATES.SPEAKING) {
-        forceState(CONVERSATION_STATES.LISTENING);
+        if (!destroyed) forceState(CONVERSATION_STATES.LISTENING);
+      } finally {
+        ttsAbortController = null;
       }
     } catch (err) {
       if (destroyed) return;
@@ -200,7 +214,7 @@ export function createConversationManager(deps) {
   // ---- Wrapper: single-request mutex + request ID ----
   function processUserSpeech(text) {
     if (isProcessing) {
-      console.log('[Conversation] ⏳ Already processing, ignoring transcript:', text);
+      console.log('[Conversation] Already processing, ignoring transcript:', text);
       return;
     }
     isProcessing = true;
@@ -334,80 +348,88 @@ export function createConversationManager(deps) {
         pregnancyWeek: healthContext.match(/Week (\d+)/)?.[1] ? parseInt(healthContext.match(/Week (\d+)/)[1]) : null,
       });
 
-      forceState(CONVERSATION_STATES.GREETING);
+      ttsAbortController = new AbortController();
+      forceState(CONVERSATION_STATES.SPEAKING);
+
       try {
-        aiAbortController = new AbortController();
-        await speakText(welcome, aiAbortController.signal);
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          console.error('[ConversationManager] Greeting speech error:', err);
+        await speakText(welcome, ttsAbortController.signal);
+        if (!destroyed && state === CONVERSATION_STATES.SPEAKING) {
+          forceState(CONVERSATION_STATES.LISTENING);
         }
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        console.error('[ConversationManager] Greeting speech error:', err);
       }
 
-      if (destroyed) return;
-      aiAbortController = null;
-
-      console.log('[Conversation] 🎤 Greeting complete, listening...');
-      forceState(CONVERSATION_STATES.LISTENING);
+      ttsAbortController = null;
     },
 
     /**
-     * Called when an interim recognition result arrives.
-     * Drives VAD state transitions, auto-barge-in, and AI cancellation.
-     */
-    onInterimTranscript(text) {
-      if (destroyed) return;
-      onTranscriptChange?.(text);
-
-      if (state === CONVERSATION_STATES.SPEAKING) {
-        if (text.trim().length < 4) return;
-        console.log('[Conversation] 🔇 User interrupted — stopping speech (interim:', text, ')');
-        stopSpeech();
-        forceState(CONVERSATION_STATES.INTERRUPTED);
-        forceState(CONVERSATION_STATES.USER_SPEAKING);
-        return;
-      }
-
-      if (state === CONVERSATION_STATES.PROCESSING) {
-        console.log('[Conversation] 🔴 User interrupted during AI processing — cancelling (interim:', text, ')');
-        cancelCurrentWork();
-        forceState(CONVERSATION_STATES.USER_SPEAKING);
-        return;
-      }
-
-      if (state === CONVERSATION_STATES.LISTENING) {
-        setState(CONVERSATION_STATES.USER_SPEAKING);
-        return;
-      }
-    },
-
-    /**
-     * Called when a final recognition result arrives.
-     * Deduplicates, enforces single-request mutex, and routes to processUserSpeech.
+     * Called when a final transcription result arrives from STT.
+     * Only acted upon in LISTENING state. Includes duplicate protection.
      */
     onFinalTranscript(text) {
       if (destroyed || !text) return;
-      if (state !== CONVERSATION_STATES.USER_SPEAKING) return;
+      if (state !== CONVERSATION_STATES.LISTENING) return;
 
-      // Dedup: ignore if we already processed the same text within the last 5s
       const normalized = text.toLowerCase().trim();
+      if (!normalized) return;
+
       const now = Date.now();
-      recentTranscripts = recentTranscripts.filter(t => now - t.time < 5000);
-      const isDup = recentTranscripts.some(t => t.text === normalized);
-      if (isDup) {
-        console.log('[Conversation] 🚫 Ignored duplicate transcript:', text);
-        forceState(CONVERSATION_STATES.LISTENING);
+      recentTranscripts = recentTranscripts.filter(t => now - t.time < 3000);
+      const hash = hashText(normalized);
+      if (recentTranscripts.some(t => t.hash === hash)) {
+        console.log('[Conversation] Duplicate transcript ignored:', text);
         return;
       }
-      recentTranscripts.push({ text: normalized, time: now });
+      recentTranscripts.push({ hash, time: now });
 
-      // Single-request mutex: if already processing, ignore
       if (isProcessing) {
-        console.log('[Conversation] ⏳ Already processing, ignoring transcript:', text);
+        console.log('[Conversation] Already processing, ignoring transcript:', text);
         return;
       }
 
       processUserSpeech(text);
+    },
+
+    /**
+     * Called when an interim transcription result arrives from STT.
+     * Only updates UI transcript display.
+     */
+    onInterimTranscript(text) {
+      if (destroyed) return;
+      onTranscriptChange?.(text);
+    },
+
+    /**
+     * Called by VAD when the user starts speaking.
+     * In SPEAKING state, triggers interruption.
+     * In other states, ignored.
+     */
+    vadSpeechStart() {
+      if (destroyed) return;
+      if (state === CONVERSATION_STATES.SPEAKING) {
+        console.log('[Conversation] VAD speech start → interrupting');
+        if (ttsAbortController) {
+          ttsAbortController.abort();
+          ttsAbortController = null;
+        }
+        stopSpeech();
+        forceState(CONVERSATION_STATES.INTERRUPTING);
+      }
+    },
+
+    /**
+     * Called by VAD when silence is detected (user stopped speaking).
+     * In INTERRUPTING state, transitions to LISTENING.
+     * In other states, ignored.
+     */
+    vadSpeechEnd() {
+      if (destroyed) return;
+      if (state === CONVERSATION_STATES.INTERRUPTING) {
+        console.log('[Conversation] VAD speech end → listening');
+        forceState(CONVERSATION_STATES.LISTENING);
+      }
     },
 
     async sendText(text) {
@@ -454,21 +476,11 @@ export function createConversationManager(deps) {
 
     bargeIn() {
       if (state === CONVERSATION_STATES.SPEAKING) {
+        if (ttsAbortController) {
+          ttsAbortController.abort();
+          ttsAbortController = null;
+        }
         stopSpeech();
-        forceState(CONVERSATION_STATES.INTERRUPTED);
-        forceState(CONVERSATION_STATES.LISTENING);
-      }
-    },
-
-    onSpeechStarted() {
-      if (state === CONVERSATION_STATES.PROCESSING || state === CONVERSATION_STATES.GREETING) {
-        setState(CONVERSATION_STATES.SPEAKING);
-      }
-    },
-
-    onSpeechEnded() {
-      if (destroyed) return;
-      if (state === CONVERSATION_STATES.SPEAKING) {
         forceState(CONVERSATION_STATES.LISTENING);
       }
     },

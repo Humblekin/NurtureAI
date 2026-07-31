@@ -4,26 +4,18 @@ export function createSpeechRecognition(options = {}) {
     onInterim,
     onFinal,
     onError,
-    keepAlive = true,
   } = options;
 
   let recognition = null;
-  let active = false;
-  let shouldRestart = false;
 
   function start() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      onError?.('Speech recognition is not supported in this browser. Try Chrome.');
+      onError?.('Speech recognition not supported');
       return;
     }
 
-    if (recognition) {
-      try { recognition.abort(); } catch {}
-      recognition = null;
-    }
-
-    shouldRestart = true;
+    if (recognition) stop();
 
     recognition = new SpeechRecognition();
     recognition.continuous = true;
@@ -46,16 +38,10 @@ export function createSpeechRecognition(options = {}) {
       if (final) onFinal?.(final.trim());
     };
 
-    recognition.onend = () => {
-      active = false;
-      if (keepAlive && shouldRestart) {
-        try { recognition?.start(); active = true; } catch {}
-      }
-    };
+    recognition.onend = () => {};
 
     recognition.onerror = (event) => {
       if (event.error === 'not-allowed') {
-        shouldRestart = false;
         onError?.('Microphone access denied. Please allow microphone access in your browser settings.');
       } else if (event.error !== 'aborted' && event.error !== 'no-speech') {
         onError?.(`Speech recognition error: ${event.error}`);
@@ -64,24 +50,17 @@ export function createSpeechRecognition(options = {}) {
 
     try {
       recognition.start();
-      active = true;
     } catch (err) {
       if (err.name !== 'InvalidStateError') throw err;
     }
   }
 
   function stop() {
-    shouldRestart = false;
     if (recognition) {
-      try { recognition.stop(); } catch {}
+      try { recognition.abort(); } catch {}
+      recognition = null;
     }
-    active = false;
   }
 
-  function destroy() {
-    stop();
-    recognition = null;
-  }
-
-  return { start, stop, destroy, get active() { return active; } };
+  return { start, stop };
 }
