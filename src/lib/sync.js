@@ -1,5 +1,5 @@
 import supabase, { isSupabaseConfigured } from './supabase';
-import db, { getPendingSyncs, removeSyncEntry } from './db';
+import db, { getPendingSyncs, removeSyncEntry, queueSync } from './db';
 
 /**
  * NurtureAI Sync Engine
@@ -72,6 +72,48 @@ export function onSyncStatusChange(callback) {
   return () => {
     syncListeners = syncListeners.filter(cb => cb !== callback);
   };
+}
+
+/**
+ * Try to write directly to Supabase, falling back to the sync queue if it fails.
+ * This ensures data reaches Supabase immediately when online, instead of waiting
+ * for the periodic sync to process the queue.
+ */
+export async function syncOrQueue(tableName, recordId, operation, data) {
+  if (!isSupabaseConfigured()) {
+    await queueSync(tableName, recordId, operation, data);
+    return false;
+  }
+
+  try {
+    const clean = stripLocalFields(data, tableName);
+    let result;
+
+    if (operation === 'DELETE') {
+      result = await supabase.from(tableName).delete().eq('id', recordId);
+    } else {
+      result = await supabase.from(tableName).upsert(clean, { onConflict: 'id' });
+    }
+
+    if (result?.error) throw result.error;
+
+    // Mark as synced locally
+    const localTable = db.table(tableName);
+    await localTable.update(recordId, {
+      synced_at: new Date().toISOString(),
+    }).catch(() => {});
+
+    return true;
+  } catch (error) {
+    if (isAuthError(error) || error.name === 'TypeError' || error.message?.includes('Failed to fetch')) {
+      console.log(`[Sync] Direct write failed for ${tableName}/${recordId}, queuing for later:`, error.message?.slice(0, 80));
+      await queueSync(tableName, recordId, operation, data);
+      return false;
+    }
+    console.error(`[Sync] Direct write error for ${tableName}/${recordId}:`, error);
+    await queueSync(tableName, recordId, operation, data);
+    return false;
+  }
 }
 
 function notifySyncListeners(status) {

@@ -140,6 +140,9 @@ const useAuthStore = create(
                 // Don't clear local data — just mark as unauthenticated
                 // The user can re-authenticate without losing unsynced data
                 console.warn('[Auth] Session lost (forced sign-out). Local data preserved.');
+                // Clear stale Supabase session from localStorage to break the 429 loop
+                const sbKey = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'));
+                if (sbKey) localStorage.removeItem(sbKey);
                 set({
                   session: null,
                   isAuthenticated: false,

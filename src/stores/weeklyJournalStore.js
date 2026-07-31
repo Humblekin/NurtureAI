@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import db, { queueSync, generateId } from '../lib/db';
+import db, { generateId } from '../lib/db';
+import { syncOrQueue } from '../lib/sync';
 
 const useWeeklyJournalStore = create((set, get) => ({
   journals: [],
@@ -64,7 +65,7 @@ const useWeeklyJournalStore = create((set, get) => ({
       };
 
       await db.weekly_journals.put(entry);
-      await queueSync('weekly_journals', id, 'INSERT', entry);
+      await syncOrQueue('weekly_journals', id, 'INSERT', entry);
 
       set((state) => ({
         journals: [...state.journals, entry].sort((a, b) => b.week_number - a.week_number),
@@ -93,7 +94,7 @@ const useWeeklyJournalStore = create((set, get) => ({
       };
 
       await db.weekly_journals.put(updated);
-      await queueSync('weekly_journals', id, 'UPDATE', updated);
+      await syncOrQueue('weekly_journals', id, 'UPDATE', updated);
 
       set((state) => ({
         journals: state.journals.map(j => j.id === id ? updated : j),
@@ -120,7 +121,7 @@ const useWeeklyJournalStore = create((set, get) => ({
           .where({ table_name: 'weekly_journals', record_id: entry.id })
           .first();
         if (!existingQueue) {
-          await queueSync('weekly_journals', entry.id, 'INSERT', entry);
+          await syncOrQueue('weekly_journals', entry.id, 'INSERT', entry);
         }
       }
 

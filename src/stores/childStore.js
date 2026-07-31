@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import db, { queueSync, generateId } from '../lib/db';
+import db, { generateId } from '../lib/db';
+import { syncOrQueue } from '../lib/sync';
 
 /**
  * NurtureAI — Child Store
@@ -67,7 +68,7 @@ const useChildStore = create((set, get) => ({
       };
 
       await db.children.put(newChild);
-      await queueSync('children', id, 'INSERT', newChild);
+      await syncOrQueue('children', id, 'INSERT', newChild);
 
       set((state) => ({
         children: [...state.children, newChild],
@@ -88,7 +89,7 @@ const useChildStore = create((set, get) => ({
       if (!existing) throw new Error('Child not found locally');
       const updatedChild = { ...existing, ...updates, updated_at: new Date().toISOString() };
       await db.children.put(updatedChild);
-      await queueSync('children', id, 'UPDATE', updatedChild);
+      await syncOrQueue('children', id, 'UPDATE', updatedChild);
       set((state) => ({
         children: state.children.map(c => c.id === id ? updatedChild : c),
         currentChild: state.currentChild?.id === id ? updatedChild : state.currentChild,
@@ -129,7 +130,7 @@ const useChildStore = create((set, get) => ({
       };
 
       await db.vaccinations.put(newVax);
-      await queueSync('vaccinations', id, 'INSERT', newVax);
+      await syncOrQueue('vaccinations', id, 'INSERT', newVax);
 
       set((state) => ({
         vaccinations: {
@@ -152,7 +153,7 @@ const useChildStore = create((set, get) => ({
       if (!existing) throw new Error('Vaccination not found');
       const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
       await db.vaccinations.put(updated);
-      await queueSync('vaccinations', id, 'UPDATE', updated);
+      await syncOrQueue('vaccinations', id, 'UPDATE', updated);
       set((state) => ({
         vaccinations: {
           ...state.vaccinations,
@@ -169,7 +170,7 @@ const useChildStore = create((set, get) => ({
   deleteVaccination: async (id, childId) => {
     try {
       await db.vaccinations.delete(id);
-      await queueSync('vaccinations', id, 'DELETE', { id });
+      await syncOrQueue('vaccinations', id, 'DELETE', { id });
       set((state) => ({
         vaccinations: {
           ...state.vaccinations,
@@ -212,7 +213,7 @@ const useChildStore = create((set, get) => ({
       };
 
       await db.growth_records.put(newRecord);
-      await queueSync('growth_records', id, 'INSERT', newRecord);
+      await syncOrQueue('growth_records', id, 'INSERT', newRecord);
 
       set((state) => ({
         growthRecords: {
@@ -235,7 +236,7 @@ const useChildStore = create((set, get) => ({
       if (!existing) throw new Error('Growth record not found');
       const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
       await db.growth_records.put(updated);
-      await queueSync('growth_records', id, 'UPDATE', updated);
+      await syncOrQueue('growth_records', id, 'UPDATE', updated);
       set((state) => ({
         growthRecords: {
           ...state.growthRecords,
@@ -252,7 +253,7 @@ const useChildStore = create((set, get) => ({
   deleteGrowthRecord: async (id, childId) => {
     try {
       await db.growth_records.delete(id);
-      await queueSync('growth_records', id, 'DELETE', { id });
+      await syncOrQueue('growth_records', id, 'DELETE', { id });
       set((state) => ({
         growthRecords: {
           ...state.growthRecords,
@@ -272,7 +273,7 @@ const useChildStore = create((set, get) => ({
       if (!existing) throw new Error('Child not found');
       const updated = { ...existing, deleted_at: new Date().toISOString() };
       await db.children.put(updated);
-      await queueSync('children', id, 'UPDATE', updated);
+      await syncOrQueue('children', id, 'UPDATE', updated);
       set((state) => ({
         children: state.children.filter(c => c.id !== id),
         currentChild: state.currentChild?.id === id ? null : state.currentChild,
@@ -290,7 +291,7 @@ const useChildStore = create((set, get) => ({
       if (!existing) throw new Error('Child not found');
       const updated = { ...existing, deleted_at: null };
       await db.children.put(updated);
-      await queueSync('children', id, 'UPDATE', updated);
+      await syncOrQueue('children', id, 'UPDATE', updated);
       return { success: true };
     } catch (error) {
       set({ error: error.message });

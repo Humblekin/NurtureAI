@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import db, { queueSync, generateId } from '../lib/db';
+import db, { generateId } from '../lib/db';
+import { syncOrQueue } from '../lib/sync';
 
 /**
  * NurtureAI — Referral Store
@@ -57,7 +58,7 @@ const useReferralStore = create((set, get) => ({
       };
 
       await db.referrals.put(newReferral);
-      await queueSync('referrals', id, 'INSERT', newReferral);
+      await syncOrQueue('referrals', id, 'INSERT', newReferral);
 
       set((state) => ({
         referrals: [newReferral, ...state.referrals],
@@ -85,7 +86,7 @@ const useReferralStore = create((set, get) => ({
       };
 
       await db.referrals.put(updated);
-      await queueSync('referrals', referralId, 'UPDATE', updated);
+      await syncOrQueue('referrals', referralId, 'UPDATE', updated);
 
       set((state) => ({
         referrals: state.referrals.map(r => r.id === referralId ? updated : r),
@@ -106,7 +107,7 @@ const useReferralStore = create((set, get) => ({
       if (!existing) throw new Error('Referral not found');
       const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
       await db.referrals.put(updated);
-      await queueSync('referrals', id, 'UPDATE', updated);
+      await syncOrQueue('referrals', id, 'UPDATE', updated);
       set((state) => ({
         referrals: state.referrals.map(r => r.id === id ? updated : r),
         isLoading: false,
@@ -124,7 +125,7 @@ const useReferralStore = create((set, get) => ({
       if (!existing) throw new Error('Referral not found');
       const updated = { ...existing, deleted_at: new Date().toISOString() };
       await db.referrals.put(updated);
-      await queueSync('referrals', id, 'UPDATE', updated);
+      await syncOrQueue('referrals', id, 'UPDATE', updated);
       set((state) => ({
         referrals: state.referrals.filter(r => r.id !== id),
       }));
@@ -140,7 +141,7 @@ const useReferralStore = create((set, get) => ({
       if (!existing) throw new Error('Referral not found');
       const updated = { ...existing, deleted_at: null };
       await db.referrals.put(updated);
-      await queueSync('referrals', id, 'UPDATE', updated);
+      await syncOrQueue('referrals', id, 'UPDATE', updated);
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };

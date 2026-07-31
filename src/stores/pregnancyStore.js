@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import db, { queueSync, generateId } from '../lib/db';
+import db, { generateId } from '../lib/db';
+import { syncOrQueue } from '../lib/sync';
 
 /**
  * NurtureAI — Pregnancy Store
@@ -63,7 +64,7 @@ const usePregnancyStore = create((set, get) => ({
       };
 
       await db.pregnancies.put(newPregnancy);
-      await queueSync('pregnancies', id, 'INSERT', newPregnancy);
+      await syncOrQueue('pregnancies', id, 'INSERT', newPregnancy);
 
       set((state) => ({
         activePregnancy: newPregnancy,
@@ -91,7 +92,7 @@ const usePregnancyStore = create((set, get) => ({
       };
 
       await db.antenatal_visits.put(newVisit);
-      await queueSync('antenatal_visits', id, 'INSERT', newVisit);
+      await syncOrQueue('antenatal_visits', id, 'INSERT', newVisit);
 
       // Optionally update pregnancy risk level if provided in visit
       if (visitData.assessed_risk_level) {
@@ -122,7 +123,7 @@ const usePregnancyStore = create((set, get) => ({
       };
 
       await db.pregnancies.put(updated);
-      await queueSync('pregnancies', pregnancyId, 'UPDATE', updated);
+      await syncOrQueue('pregnancies', pregnancyId, 'UPDATE', updated);
 
       set((state) => ({
         activePregnancy: state.activePregnancy?.id === pregnancyId ? updated : state.activePregnancy,
@@ -139,7 +140,7 @@ const usePregnancyStore = create((set, get) => ({
       if (!existing) throw new Error('Pregnancy not found');
       const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
       await db.pregnancies.put(updated);
-      await queueSync('pregnancies', id, 'UPDATE', updated);
+      await syncOrQueue('pregnancies', id, 'UPDATE', updated);
       set((state) => ({
         activePregnancy: state.activePregnancy?.id === id ? updated : state.activePregnancy,
         pregnancyHistory: state.pregnancyHistory.map(p => p.id === id ? updated : p),
@@ -157,7 +158,7 @@ const usePregnancyStore = create((set, get) => ({
       if (!existing) throw new Error('Visit not found');
       const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
       await db.antenatal_visits.put(updated);
-      await queueSync('antenatal_visits', id, 'UPDATE', updated);
+      await syncOrQueue('antenatal_visits', id, 'UPDATE', updated);
       set((state) => ({
         antenatalVisits: state.antenatalVisits.map(v => v.id === id ? updated : v),
       }));
@@ -171,7 +172,7 @@ const usePregnancyStore = create((set, get) => ({
   deleteAntenatalVisit: async (id) => {
     try {
       await db.antenatal_visits.delete(id);
-      await queueSync('antenatal_visits', id, 'DELETE', { id });
+      await syncOrQueue('antenatal_visits', id, 'DELETE', { id });
       set((state) => ({
         antenatalVisits: state.antenatalVisits.filter(v => v.id !== id),
       }));
@@ -188,7 +189,7 @@ const usePregnancyStore = create((set, get) => ({
       if (!existing) throw new Error('Pregnancy not found');
       const updated = { ...existing, deleted_at: new Date().toISOString() };
       await db.pregnancies.put(updated);
-      await queueSync('pregnancies', id, 'UPDATE', updated);
+      await syncOrQueue('pregnancies', id, 'UPDATE', updated);
       set((state) => ({
         pregnancyHistory: state.pregnancyHistory.filter(p => p.id !== id),
         activePregnancy: state.activePregnancy?.id === id ? null : state.activePregnancy,
@@ -205,7 +206,7 @@ const usePregnancyStore = create((set, get) => ({
       if (!existing) throw new Error('Pregnancy not found');
       const updated = { ...existing, deleted_at: null };
       await db.pregnancies.put(updated);
-      await queueSync('pregnancies', id, 'UPDATE', updated);
+      await syncOrQueue('pregnancies', id, 'UPDATE', updated);
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };

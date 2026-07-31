@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import db, { queueSync, generateId } from '../lib/db';
+import db, { generateId } from '../lib/db';
+import { syncOrQueue } from '../lib/sync';
 
 /**
  * NurtureAI — Mother Store
@@ -53,7 +54,7 @@ const useMotherStore = create((set, get) => ({
       await db.mothers.put(newMother);
 
       // Queue for Supabase sync
-      await queueSync('mothers', id, 'INSERT', newMother);
+      await syncOrQueue('mothers', id, 'INSERT', newMother);
 
       // Update local state
       set((state) => ({
@@ -87,7 +88,7 @@ const useMotherStore = create((set, get) => ({
       await db.mothers.put(updatedMother);
 
       // Queue sync
-      await queueSync('mothers', id, 'UPDATE', updatedMother);
+      await syncOrQueue('mothers', id, 'UPDATE', updatedMother);
 
       // Update state
       set((state) => ({
@@ -110,7 +111,7 @@ const useMotherStore = create((set, get) => ({
       if (!existing) throw new Error('Mother not found');
       const updated = { ...existing, deleted_at: new Date().toISOString() };
       await db.mothers.put(updated);
-      await queueSync('mothers', id, 'UPDATE', updated);
+      await syncOrQueue('mothers', id, 'UPDATE', updated);
       set((state) => ({
         mothers: state.mothers.filter(m => m.id !== id),
         currentMother: state.currentMother?.id === id ? null : state.currentMother,
@@ -129,7 +130,7 @@ const useMotherStore = create((set, get) => ({
       if (!existing) throw new Error('Mother not found');
       const updated = { ...existing, deleted_at: null };
       await db.mothers.put(updated);
-      await queueSync('mothers', id, 'UPDATE', updated);
+      await syncOrQueue('mothers', id, 'UPDATE', updated);
       set((state) => ({
         mothers: [...state.mothers, updated],
       }));

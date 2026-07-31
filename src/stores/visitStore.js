@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import db, { queueSync, generateId } from '../lib/db';
+import db, { generateId } from '../lib/db';
+import { syncOrQueue } from '../lib/sync';
 
 /**
  * NurtureAI — Visit Store
@@ -64,7 +65,7 @@ const useVisitStore = create((set, get) => ({
       };
 
       await db.visits.put(newVisit);
-      await queueSync('visits', id, 'INSERT', newVisit);
+      await syncOrQueue('visits', id, 'INSERT', newVisit);
 
       set((state) => ({
         visits: [newVisit, ...state.visits],
@@ -85,7 +86,7 @@ const useVisitStore = create((set, get) => ({
       if (!existing) throw new Error('Visit not found');
       const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
       await db.visits.put(updated);
-      await queueSync('visits', id, 'UPDATE', updated);
+      await syncOrQueue('visits', id, 'UPDATE', updated);
       set((state) => ({
         visits: state.visits.map(v => v.id === id ? updated : v),
         isLoading: false,
@@ -103,7 +104,7 @@ const useVisitStore = create((set, get) => ({
       if (!existing) throw new Error('Visit not found');
       const updated = { ...existing, deleted_at: new Date().toISOString() };
       await db.visits.put(updated);
-      await queueSync('visits', id, 'UPDATE', updated);
+      await syncOrQueue('visits', id, 'UPDATE', updated);
       set((state) => ({
         visits: state.visits.filter(v => v.id !== id),
       }));
@@ -120,7 +121,7 @@ const useVisitStore = create((set, get) => ({
       if (!existing) throw new Error('Visit not found');
       const updated = { ...existing, deleted_at: null };
       await db.visits.put(updated);
-      await queueSync('visits', id, 'UPDATE', updated);
+      await syncOrQueue('visits', id, 'UPDATE', updated);
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };
