@@ -9,7 +9,29 @@ const OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 console.log("[OpenRouter-Proxy] Function loaded")
 
-const DEFAULT_MODEL = "google/gemini-flash-latest"
+const DEFAULT_MODEL = "google/gemini-2.5-flash"
+
+// Deprecated/unsupported models mapped to their current replacements
+const MODEL_FALLBACKS: Record<string, string> = {
+  "google/gemini-2.0-flash-001": "google/gemini-2.5-flash",
+  "google/gemini-2.0-flash": "google/gemini-2.5-flash",
+  "google/gemini-flash-latest": "google/gemini-2.5-flash",
+}
+
+const VALID_MODEL_PREFIXES = [
+  "google/gemini-",
+  "google/gemma-",
+]
+
+function resolveModel(model: string): string {
+  if (MODEL_FALLBACKS[model]) {
+    console.log(`[OpenRouter-Proxy] Mapping model ${model} -> ${MODEL_FALLBACKS[model]}`)
+    return MODEL_FALLBACKS[model]
+  }
+  if (VALID_MODEL_PREFIXES.some(p => model.startsWith(p))) return model
+  console.log(`[OpenRouter-Proxy] Unrecognized model "${model}", falling back to ${DEFAULT_MODEL}`)
+  return DEFAULT_MODEL
+}
 
 function corsHeaders(origin: string): Record<string, string> {
   return {
@@ -81,8 +103,9 @@ Deno.serve(async (req) => {
     )
   }
 
-  const model = (body.model as string) || DEFAULT_MODEL
-  console.log(`[OpenRouter-Proxy] Chat completion for user ${userId}, model=${model}`)
+  const requestedModel = (body.model as string) || DEFAULT_MODEL
+  const model = resolveModel(requestedModel)
+  console.log(`[OpenRouter-Proxy] Chat completion for user ${userId}, requested=${requestedModel}, resolved=${model}`)
 
   try {
     const openRouterBody: Record<string, unknown> = {

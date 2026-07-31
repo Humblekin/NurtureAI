@@ -3,7 +3,7 @@ import useAuthStore from '../../stores/authStore'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 
-const DEFAULT_MODEL = 'google/gemini-flash-latest'
+const DEFAULT_MODEL = 'google/gemini-2.5-flash'
 const MAX_RETRIES = 3
 const BASE_RETRY_DELAY = 1000
 
