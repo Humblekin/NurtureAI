@@ -4,8 +4,6 @@ import useAuthStore from '../../stores/authStore'
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 
 const DEFAULT_MODEL = 'gpt-4.1-mini'
-const MAX_RETRIES = 3
-const BASE_RETRY_DELAY = 1000
 
 function getFunctionsBase() {
   if (!SUPABASE_URL) return null
@@ -146,80 +144,40 @@ Be compassionate. Never create panic. Never minimize concerns. Balance honesty w
     const promptTokens = estimateTokens(apiMessages)
     console.log(`[OpenAI #${requestId}] ${apiMessages.length} messages, ~${promptTokens} prompt tokens`)
 
-    let lastError = null
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    const response = await fetch(functionsBase, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: apiMessages,
+        temperature,
+        max_tokens: maxTokens,
+      }),
+      signal,
+    })
 
-      try {
-        const response = await fetch(functionsBase, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model,
-            messages: apiMessages,
-            temperature,
-            max_tokens: maxTokens,
-          }),
-          signal,
-        })
+    const errBody = await response.text()
 
-        const errBody = await response.text()
+    if (!response.ok) {
+      console.error(`[OpenAI #${requestId}] Error ${response.status}:`, errBody.slice(0, 200))
 
-        if (!response.ok) {
-          console.error(`[OpenAI #${requestId}] Error ${response.status}:`, errBody.slice(0, 200))
-
-          if (response.status === 401) throw new Error('Authentication failed. Please sign in again.')
-          if (response.status === 429) {
-            if (attempt < MAX_RETRIES) {
-              const delay = Math.pow(2, attempt + 1) * BASE_RETRY_DELAY
-              console.log(`[OpenAI #${requestId}] Rate limited, retrying in ${delay}ms (${attempt + 1}/${MAX_RETRIES})`)
-              await new Promise(r => setTimeout(r, delay))
-              continue
-            }
-            throw new Error('Too many requests. Please wait a moment and try again.')
-          }
-          let parsed
-          try { parsed = JSON.parse(errBody) } catch {}
-          throw new Error(parsed?.error || `API error ${response.status}. Please try again later.`)
-        }
-
-        const data = JSON.parse(errBody)
-        const content = data.choices?.[0]?.message?.content || ''
-        const responseTokens = estimateTokens(content)
-        console.log(`[OpenAI #${requestId}] ~${promptTokens}p + ~${responseTokens}r = ~${promptTokens + responseTokens}t total`)
-
-        return content || 'I apologize, I could not generate a response. Please try again.'
-      } catch (error) {
-        if (error.name === 'AbortError') throw error
-
-        lastError = error
-
-        if (error.message?.includes('rate limit') || error.message?.includes('429')) {
-          if (attempt < MAX_RETRIES) {
-            const delay = Math.pow(2, attempt + 1) * BASE_RETRY_DELAY
-            console.log(`[OpenAI #${requestId}] Rate limited, retrying in ${delay}ms (${attempt + 1}/${MAX_RETRIES})`)
-            await new Promise(r => setTimeout(r, delay))
-            continue
-          }
-        }
-
-        if (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError') || error.name === 'TypeError') {
-          throw new Error('Network error. Please check your internet connection and try again.')
-        }
-
-        if (attempt < MAX_RETRIES) {
-          const delay = Math.pow(2, attempt) * 500
-          await new Promise(r => setTimeout(r, delay))
-          continue
-        }
-      }
+      if (response.status === 401) throw new Error('Authentication failed. Please sign in again.')
+      let parsed
+      try { parsed = JSON.parse(errBody) } catch {}
+      throw new Error(parsed?.error || `API error ${response.status}. Please try again later.`)
     }
 
-    throw lastError || new Error('Failed to get response. Please try again.')
+    const data = JSON.parse(errBody)
+    const content = data.choices?.[0]?.message?.content || ''
+    const responseTokens = estimateTokens(content)
+    console.log(`[OpenAI #${requestId}] ~${promptTokens}p + ~${responseTokens}r = ~${promptTokens + responseTokens}t total`)
+
+    return content || 'I apologize, I could not generate a response. Please try again.'
   }
 
   async assessRisk(patientContext, symptoms) {
