@@ -596,6 +596,14 @@ CREATE POLICY "Visits: update own" ON visits FOR UPDATE
   USING (worker_id = auth.uid());
 CREATE POLICY "Visits: admin update all" ON visits FOR UPDATE
   USING (public.user_role() IN ('admin', 'district_officer'));
+CREATE POLICY "Visits: mothers read own" ON visits FOR SELECT
+  USING (
+    EXISTS (SELECT 1 FROM mothers m WHERE m.id = visits.patient_id AND m.profile_id = auth.uid())
+    OR EXISTS (
+      SELECT 1 FROM children c JOIN mothers m ON m.id = c.mother_id
+      WHERE c.id = visits.patient_id AND m.profile_id = auth.uid()
+    )
+  );
 
 -- Referrals
 CREATE POLICY "Referrals: read access" ON referrals
@@ -608,14 +616,22 @@ CREATE POLICY "Referrals: update for health workers" ON referrals
   FOR UPDATE USING (public.user_role() IN ('nurse', 'doctor', 'admin'));
 CREATE POLICY "Referrals: delete for admin" ON referrals
   FOR DELETE USING (public.user_role() = 'admin');
+CREATE POLICY "Referrals: mothers read own" ON referrals FOR SELECT
+  USING (
+    EXISTS (SELECT 1 FROM mothers m WHERE m.id = referrals.patient_id AND m.profile_id = auth.uid())
+    OR EXISTS (
+      SELECT 1 FROM children c JOIN mothers m ON m.id = c.mother_id
+      WHERE c.id = referrals.patient_id AND m.profile_id = auth.uid()
+    )
+  );
 
 -- Notifications
-CREATE POLICY "Notifications: mothers read own" ON notifications
-  FOR SELECT USING (patient_id = auth.uid());
-CREATE POLICY "Notifications: mothers insert own" ON notifications
-  FOR INSERT WITH CHECK (patient_id = auth.uid());
-CREATE POLICY "Notifications: mothers update own" ON notifications
-  FOR UPDATE USING (patient_id = auth.uid());
+CREATE POLICY "Notifications: read own" ON notifications
+  FOR SELECT USING (user_id = auth.uid() OR patient_id = auth.uid());
+CREATE POLICY "Notifications: insert own" ON notifications
+  FOR INSERT WITH CHECK (user_id = auth.uid() OR patient_id = auth.uid());
+CREATE POLICY "Notifications: update own" ON notifications
+  FOR UPDATE USING (user_id = auth.uid() OR patient_id = auth.uid());
 
 -- AI Conversations
 CREATE POLICY "AI: read own" ON ai_conversations
