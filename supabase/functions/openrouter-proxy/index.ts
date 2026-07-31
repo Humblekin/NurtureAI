@@ -9,7 +9,7 @@ const OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 console.log("[OpenRouter-Proxy] Function loaded")
 
-const DEFAULT_MODEL = "google/gemini-2.0-flash-001"
+const DEFAULT_MODEL = "google/gemini-flash-latest"
 
 function corsHeaders(origin: string): Record<string, string> {
   return {
