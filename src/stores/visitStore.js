@@ -1,23 +1,34 @@
 import { create } from 'zustand';
-import db, { generateId } from '../lib/db';
-import { syncOrQueue } from '../lib/sync';
+import { generateId } from '../lib/db';
+import { upsertRecord } from '../lib/sync';
+import supabase, { isSupabaseConfigured } from '../lib/supabase';
 
 /**
  * NurtureAI — Visit Store
  * Tracks general health worker visits (home visits, facility visits).
+ * Reads and writes go directly to Supabase.
  */
-const useVisitStore = create((set, get) => ({
+const useVisitStore = create((set) => ({
   visits: [],
   isLoading: false,
   error: null,
 
   fetchVisitsByWorker: async (workerId) => {
     set({ isLoading: true, error: null });
+    if (!isSupabaseConfigured()) {
+      set({ visits: [], isLoading: false });
+      return [];
+    }
     try {
-      const visits = await db.visits.where('worker_id').equals(workerId).filter(v => !v.deleted_at).toArray();
-      visits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
-      set({ visits, isLoading: false });
-      return visits;
+      const { data, error } = await supabase
+        .from('visits')
+        .select('*')
+        .eq('worker_id', workerId)
+        .is('deleted_at', null)
+        .order('visit_date', { ascending: false });
+      if (error) throw error;
+      set({ visits: data || [], isLoading: false });
+      return data || [];
     } catch (error) {
       console.error('Failed to fetch worker visits:', error);
       set({ error: error.message, isLoading: false });
@@ -27,11 +38,19 @@ const useVisitStore = create((set, get) => ({
 
   fetchAllVisits: async () => {
     set({ isLoading: true, error: null });
+    if (!isSupabaseConfigured()) {
+      set({ visits: [], isLoading: false });
+      return [];
+    }
     try {
-      const visits = await db.visits.filter(v => !v.deleted_at).toArray();
-      visits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
-      set({ visits, isLoading: false });
-      return visits;
+      const { data, error } = await supabase
+        .from('visits')
+        .select('*')
+        .is('deleted_at', null)
+        .order('visit_date', { ascending: false });
+      if (error) throw error;
+      set({ visits: data || [], isLoading: false });
+      return data || [];
     } catch (error) {
       console.error('Failed to fetch all visits:', error);
       set({ error: error.message, isLoading: false });
@@ -41,11 +60,20 @@ const useVisitStore = create((set, get) => ({
 
   fetchVisitsByPatient: async (patientId) => {
     set({ isLoading: true, error: null });
+    if (!isSupabaseConfigured()) {
+      set({ visits: [], isLoading: false });
+      return [];
+    }
     try {
-      const visits = await db.visits.where('patient_id').equals(patientId).filter(v => !v.deleted_at).toArray();
-      visits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
-      set({ visits, isLoading: false });
-      return visits;
+      const { data, error } = await supabase
+        .from('visits')
+        .select('*')
+        .eq('patient_id', patientId)
+        .is('deleted_at', null)
+        .order('visit_date', { ascending: false });
+      if (error) throw error;
+      set({ visits: data || [], isLoading: false });
+      return data || [];
     } catch (error) {
       console.error('Failed to fetch patient visits:', error);
       set({ error: error.message, isLoading: false });
@@ -60,12 +88,10 @@ const useVisitStore = create((set, get) => ({
       const newVisit = {
         id,
         ...visitData,
-        synced_at: null,
         created_at: new Date().toISOString(),
       };
 
-      await db.visits.put(newVisit);
-      await syncOrQueue('visits', id, 'INSERT', newVisit);
+      await upsertRecord('visits', newVisit);
 
       set((state) => ({
         visits: [newVisit, ...state.visits],
@@ -82,11 +108,10 @@ const useVisitStore = create((set, get) => ({
   updateVisit: async (id, updates) => {
     set({ isLoading: true, error: null });
     try {
-      const existing = await db.visits.get(id);
+      const existing = getExisting(get(), id);
       if (!existing) throw new Error('Visit not found');
       const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
-      await db.visits.put(updated);
-      await syncOrQueue('visits', id, 'UPDATE', updated);
+      await upsertRecord('visits', updated);
       set((state) => ({
         visits: state.visits.map(v => v.id === id ? updated : v),
         isLoading: false,
@@ -100,11 +125,10 @@ const useVisitStore = create((set, get) => ({
 
   softDelete: async (id) => {
     try {
-      const existing = await db.visits.get(id);
+      const existing = getExisting(get(), id);
       if (!existing) throw new Error('Visit not found');
-      const updated = { ...existing, deleted_at: new Date().toISOString() };
-      await db.visits.put(updated);
-      await syncOrQueue('visits', id, 'UPDATE', updated);
+      const updated = { ...existing, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      await upsertRecord('visits', updated);
       set((state) => ({
         visits: state.visits.filter(v => v.id !== id),
       }));
@@ -117,11 +141,10 @@ const useVisitStore = create((set, get) => ({
 
   restore: async (id) => {
     try {
-      const existing = await db.visits.get(id);
+      const existing = getExisting(get(), id);
       if (!existing) throw new Error('Visit not found');
-      const updated = { ...existing, deleted_at: null };
-      await db.visits.put(updated);
-      await syncOrQueue('visits', id, 'UPDATE', updated);
+      const updated = { ...existing, deleted_at: null, updated_at: new Date().toISOString() };
+      await upsertRecord('visits', updated);
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };
@@ -129,12 +152,22 @@ const useVisitStore = create((set, get) => ({
   },
 
   fetchArchived: async () => {
+    if (!isSupabaseConfigured()) return [];
     try {
-      return await db.visits.where('deleted_at').notEqual(null).toArray();
+      const { data, error } = await supabase
+        .from('visits')
+        .select('*')
+        .not('deleted_at', 'is', null);
+      if (error) throw error;
+      return data || [];
     } catch (error) {
       return [];
     }
   },
 }));
+
+function getExisting(state, id) {
+  return state.visits.find(v => v.id === id);
+}
 
 export default useVisitStore;

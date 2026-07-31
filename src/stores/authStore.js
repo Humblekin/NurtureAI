@@ -1,9 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import supabase, { isSupabaseConfigured } from '../lib/supabase';
-import db from '../lib/db';
-import { seedDemoForRole } from '../lib/demoData';
-import { fullSync } from '../lib/sync';
 import useMotherStore from './motherStore';
 import usePregnancyStore from './pregnancyStore';
 import useChildStore from './childStore';
@@ -15,7 +12,7 @@ import useOnboardingStore from './onboardingStore';
  * NurtureAI — Auth Store
  * 
  * Manages authentication state, user profile, and role-based access.
- * Persists session locally for offline access.
+ * All data is read and written directly to Supabase.
  */
 
 // Role hierarchy for permission checks
@@ -65,13 +62,7 @@ const useAuthStore = create(
         set({ isLoading: true, error: null });
 
         if (!isSupabaseConfigured()) {
-          const cachedProfile = get().profile;
-          if (cachedProfile) {
-            set({ isAuthenticated: true, isLoading: false });
-            await seedDemoForRole(cachedProfile.id, cachedProfile.role);
-          } else {
-            set({ isLoading: false });
-          }
+          set({ isLoading: false, error: 'Supabase is not configured. Please check your environment settings.' });
           return;
         }
 
@@ -94,19 +85,13 @@ const useAuthStore = create(
 
             if (!profileError && profile) {
               set({ profile });
-              await db.profiles.put({ ...profile, synced_at: new Date().toISOString() });
             } else {
               console.error('Profile fetch error:', profileError);
             }
-
-            await fullSync();
           }
         } catch (error) {
           console.error('Auth init error:', error);
-          const cachedProfile = get().profile;
-          if (cachedProfile) {
-            set({ isAuthenticated: true });
-          }
+          set({ error: error.message });
         } finally {
           set({ isLoading: false });
         }
@@ -137,12 +122,7 @@ const useAuthStore = create(
                 localStorage.removeItem('nurtureai-auth');
               } else {
                 // Forced sign-out (token refresh failed, etc.)
-                // Don't clear local data — just mark as unauthenticated
-                // The user can re-authenticate without losing unsynced data
-                console.warn('[Auth] Session lost (forced sign-out). Local data preserved.');
-                // Clear stale Supabase session from localStorage to break the 429 loop
-                const sbKey = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'));
-                if (sbKey) localStorage.removeItem(sbKey);
+                console.warn('[Auth] Session lost (forced sign-out). Please sign in again.');
                 set({
                   session: null,
                   isAuthenticated: false,
@@ -162,25 +142,8 @@ const useAuthStore = create(
         set({ isLoading: true, error: null });
 
         if (!isSupabaseConfigured()) {
-          // Demo mode for development
-          const demoProfile = {
-            id: 'demo-user',
-            email,
-            role: 'mother',
-            full_name: 'Fatima Abdulai',
-            phone: '+233241234567',
-            community: 'Tamale South',
-            region: 'Northern',
-          };
-          set({
-            user: { id: 'demo-user', email },
-            profile: demoProfile,
-            isAuthenticated: true,
-            isLoading: false,
-          });
-          await db.profiles.put(demoProfile);
-          await seedDemoForRole(demoProfile.id, demoProfile.role);
-          return { success: true };
+          set({ error: 'Supabase is not configured. Please check your environment settings.', isLoading: false });
+          return { success: false, error: 'Supabase is not configured.' };
         }
 
         try {
@@ -206,11 +169,8 @@ const useAuthStore = create(
 
           if (!profileError && profile) {
             set({ profile });
-            await db.profiles.put({ ...profile, synced_at: new Date().toISOString() });
           }
 
-          // Sync data from Supabase to local IndexedDB before rendering
-          await fullSync().catch(err => console.error('Post-login sync failed:', err));
           set({ isLoading: false });
           return { success: true };
         } catch (error) {
@@ -226,20 +186,8 @@ const useAuthStore = create(
         set({ isLoading: true, error: null });
 
         if (!isSupabaseConfigured()) {
-          const demoProfile = {
-            id: 'demo-user',
-            email,
-            ...profileData,
-          };
-          set({
-            user: { id: 'demo-user', email },
-            profile: demoProfile,
-            isAuthenticated: true,
-            isLoading: false,
-          });
-          await db.profiles.put(demoProfile);
-          await seedDemoForRole(demoProfile.id, demoProfile.role || 'mother');
-          return { success: true };
+          set({ error: 'Supabase is not configured. Please check your environment settings.', isLoading: false });
+          return { success: false, error: 'Supabase is not configured.' };
         }
 
         try {
@@ -266,8 +214,6 @@ const useAuthStore = create(
               });
             }
 
-            // Sync data after registration
-            await fullSync().catch(err => console.error('Post-signup sync failed:', err));
             set({ isLoading: false });
             return { success: true };
         } catch (error) {
@@ -307,7 +253,7 @@ const useAuthStore = create(
       },
 
       /**
-       * Fetch user profile from Supabase or local DB
+       * Fetch user profile from Supabase
        */
       fetchProfile: async (userId) => {
         try {
@@ -321,19 +267,10 @@ const useAuthStore = create(
             if (error) throw error;
 
             set({ profile: data });
-            await db.profiles.put({ ...data, synced_at: new Date().toISOString() });
-          } else {
-            const localProfile = await db.profiles.get(userId);
-            if (localProfile) {
-              set({ profile: localProfile });
-            }
           }
         } catch (error) {
-          // Try local cache
-          const localProfile = await db.profiles.get(userId);
-          if (localProfile) {
-            set({ profile: localProfile });
-          }
+          console.error('Profile fetch error:', error);
+          set({ error: error.message });
         } finally {
           set({ isLoading: false });
         }

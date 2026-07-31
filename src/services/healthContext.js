@@ -1,16 +1,54 @@
-import db from '../lib/db';
+import supabase, { isSupabaseConfigured } from '../lib/supabase';
 import { GHANA_EPI_SCHEDULE, findOverdueVaccine, findNextDueVaccine } from '../constants/vaccinationSchedule';
 
 /**
  * NurtureAI — Health Context Service
  * 
- * Fetches all relevant healthcare data from IndexedDB (Dexie) for the current
+ * Fetches all relevant healthcare data from Supabase for the current
  * user and formats it as structured context that gets injected into every AI
  * prompt. This is what transforms Amina from a generic chatbot into a
  * personal healthcare companion.
  * 
  * Each role sees only the data relevant to their access level.
  */
+
+async function queryRows(table, column, value) {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from(table)
+    .select('*')
+    .eq(column, value)
+    .is('deleted_at', null);
+  if (error) {
+    console.error(`Failed to fetch ${table}:`, error);
+    return [];
+  }
+  return data || [];
+}
+
+async function queryAll(table) {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from(table)
+    .select('*')
+    .is('deleted_at', null);
+  if (error) {
+    console.error(`Failed to fetch ${table}:`, error);
+    return [];
+  }
+  return data || [];
+}
+
+async function queryById(table, id) {
+  if (!isSupabaseConfigured()) return null;
+  const { data, error } = await supabase
+    .from(table)
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) return null;
+  return data;
+}
 
 /**
  * Calculate pregnancy week from a start date (LMP or registration date).
@@ -69,7 +107,12 @@ async function buildMotherContext(profileId) {
   const context = { role: 'mother' };
 
   // 1. Mother profile
-  const mother = await db.mothers.where('profile_id').equals(profileId).first();
+  const { data: motherRows } = await supabase
+    .from('mothers')
+    .select('*')
+    .eq('profile_id', profileId)
+    .is('deleted_at', null);
+  const mother = (motherRows || [])[0];
   if (!mother) return context;
 
   context.mother = {
@@ -85,19 +128,13 @@ async function buildMotherContext(profileId) {
   };
 
   // 2. Active pregnancy
-  const pregnancies = await db.pregnancies
-    .where('mother_id').equals(mother.id)
-    .filter(p => !p.deleted_at)
-    .toArray();
+  const pregnancies = await queryRows('pregnancies', 'mother_id', mother.id);
 
   const activePregnancy = pregnancies.find(p => p.status === 'active');
 
   if (activePregnancy) {
     const week = getPregnancyWeek(activePregnancy.lmp || activePregnancy.created_at);
-    const ancVisits = await db.antenatal_visits
-      .where('pregnancy_id').equals(activePregnancy.id)
-      .filter(v => !v.deleted_at)
-      .toArray();
+    const ancVisits = await queryRows('antenatal_visits', 'pregnancy_id', activePregnancy.id);
 
     const sortedVisits = ancVisits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
     const lastVisit = sortedVisits[0];
@@ -155,28 +192,16 @@ async function buildMotherContext(profileId) {
   }
 
   // 3. Children
-  const children = await db.children
-    .where('mother_id').equals(mother.id)
-    .filter(c => !c.deleted_at)
-    .toArray();
+  const children = await queryRows('children', 'mother_id', mother.id);
 
   if (children.length > 0) {
     context.children = [];
 
     for (const child of children) {
       const ageMonths = getChildAgeMonths(child.date_of_birth || child.birth_date);
-      const childVax = await db.vaccinations
-        .where('child_id').equals(child.id)
-        .filter(v => !v.deleted_at)
-        .toArray();
-      const childGrowth = await db.growth_records
-        .where('child_id').equals(child.id)
-        .filter(g => !g.deleted_at)
-        .toArray();
-      const childMilestones = await db.milestones
-        .where('child_id').equals(child.id)
-        .filter(m => !m.deleted_at)
-        .toArray();
+      const childVax = await queryRows('vaccinations', 'child_id', child.id);
+      const childGrowth = await queryRows('growth_records', 'child_id', child.id);
+      const childMilestones = await queryRows('milestones', 'child_id', child.id);
 
       const sortedGrowth = childGrowth.sort((a, b) => new Date(a.recorded_date) - new Date(b.recorded_date));
       const latestGrowth = sortedGrowth.length > 0 ? sortedGrowth[sortedGrowth.length - 1] : null;
@@ -218,10 +243,7 @@ async function buildMotherContext(profileId) {
   }
 
   // 4. Home visits by CHW
-  const visits = await db.visits
-    .where('patient_id').equals(mother.id)
-    .filter(v => !v.deleted_at)
-    .toArray();
+  const visits = await queryRows('visits', 'patient_id', mother.id);
 
   if (visits.length > 0) {
     const sortedVisits = visits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
@@ -243,10 +265,7 @@ async function buildMotherContext(profileId) {
   }
 
   // 5. Referrals
-  const referrals = await db.referrals
-    .where('patient_id').equals(mother.id)
-    .filter(r => !r.deleted_at)
-    .toArray();
+  const referrals = await queryRows('referrals', 'patient_id', mother.id);
 
   if (referrals.length > 0) {
     context.referrals = referrals.map(r => ({
@@ -260,10 +279,8 @@ async function buildMotherContext(profileId) {
 
   // 6. Weekly journals (recent 3 for Amina context)
   if (activePregnancy) {
-    const journals = await db.weekly_journals
-      .where('pregnancy_id').equals(activePregnancy.id)
-      .reverse()
-      .sortBy('week_number');
+    const journals = await queryRows('weekly_journals', 'pregnancy_id', activePregnancy.id);
+    journals.sort((a, b) => a.week_number - b.week_number);
 
     if (journals.length > 0) {
       context.recent_journals = journals.slice(-3).map(j => ({
@@ -300,7 +317,7 @@ async function buildMotherContext(profileId) {
 
   // 7. Assigned healthcare worker
   if (mother.assigned_worker_id) {
-    const workerProfile = await db.profiles.get(mother.assigned_worker_id);
+    const workerProfile = await queryById('profiles', mother.assigned_worker_id);
     if (workerProfile) {
       context.assigned_worker = {
         name: workerProfile.full_name,
@@ -311,9 +328,7 @@ async function buildMotherContext(profileId) {
   }
 
   // 7. Recent AI conversation summaries (long-term memory)
-  const conversations = await db.ai_conversations
-    .where('user_id').equals(profileId)
-    .toArray();
+  const conversations = await queryRows('ai_conversations', 'user_id', profileId);
 
   if (conversations.length > 0) {
     const sortedConversations = conversations
@@ -373,7 +388,7 @@ async function buildMotherContext(profileId) {
 async function buildCHWContext(profileId) {
   const context = { role: 'chw' };
 
-  const profile = await db.profiles.get(profileId);
+  const profile = await queryById('profiles', profileId);
   if (profile) {
     context.worker = {
       name: profile.full_name,
@@ -383,10 +398,7 @@ async function buildCHWContext(profileId) {
   }
 
   // All mothers assigned to this CHW
-  const mothers = await db.mothers
-    .where('assigned_worker_id').equals(profileId)
-    .filter(m => !m.deleted_at)
-    .toArray();
+  const mothers = await queryRows('mothers', 'assigned_worker_id', profileId);
 
   context.assigned_mothers = mothers.map(m => ({
     name: m.full_name,
@@ -401,10 +413,7 @@ async function buildCHWContext(profileId) {
     .map(m => ({ name: m.full_name, risk: m.risk_level, community: m.community }));
 
   // Recent visits by this CHW
-  const visits = await db.visits
-    .where('worker_id').equals(profileId)
-    .filter(v => !v.deleted_at)
-    .toArray();
+  const visits = await queryRows('visits', 'worker_id', profileId);
 
   const sortedVisits = visits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
   context.recent_visits = sortedVisits.slice(0, 5).map(v => ({
@@ -415,10 +424,7 @@ async function buildCHWContext(profileId) {
   }));
 
   // Pending referrals from this CHW
-  const referrals = await db.referrals
-    .where('from_facility_id').equals(profileId)
-    .filter(r => !r.deleted_at)
-    .toArray();
+  const referrals = await queryRows('referrals', 'from_facility_id', profileId);
 
   context.pending_referrals = referrals
     .filter(r => r.status === 'pending')
@@ -438,7 +444,7 @@ async function buildCHWContext(profileId) {
 async function buildNurseContext(profileId) {
   const context = { role: 'nurse' };
 
-  const profile = await db.profiles.get(profileId);
+  const profile = await queryById('profiles', profileId);
   if (profile) {
     context.worker = {
       name: profile.full_name,
@@ -448,7 +454,7 @@ async function buildNurseContext(profileId) {
 
   // Mothers at this facility (via assigned_worker's facility or direct facility_id)
   if (profile?.facility_id) {
-    const allMothers = await db.mothers.filter(m => !m.deleted_at).toArray();
+    const allMothers = await queryAll('mothers');
     const facilityMothers = allMothers.filter(m => {
       // Check if any assigned worker is at this facility
       return m.facility_id === profile.facility_id || m.birth_facility_id === profile.facility_id;
@@ -461,10 +467,7 @@ async function buildNurseContext(profileId) {
     }));
 
     // Incoming referrals to this facility
-    const referrals = await db.referrals
-      .where('to_facility_id').equals(profile.facility_id)
-      .filter(r => !r.deleted_at)
-      .toArray();
+    const referrals = await queryRows('referrals', 'to_facility_id', profile.facility_id);
 
     context.incoming_referrals = referrals
       .filter(r => r.status === 'pending')
@@ -476,7 +479,7 @@ async function buildNurseContext(profileId) {
   }
 
   // All mothers (for general nurse access)
-  const mothers = await db.mothers.filter(m => !m.deleted_at).toArray();
+  const mothers = await queryAll('mothers');
   context.total_mothers = mothers.length;
   context.high_risk_count = mothers.filter(m => m.risk_level === 'high' || m.risk_level === 'critical').length;
 
@@ -490,7 +493,7 @@ async function buildNurseContext(profileId) {
 async function buildOverviewContext(profileId, role) {
   const context = { role };
 
-  const profile = await db.profiles.get(profileId);
+  const profile = await queryById('profiles', profileId);
   if (profile) {
     context.worker = {
       name: profile.full_name,
@@ -499,11 +502,11 @@ async function buildOverviewContext(profileId, role) {
   }
 
   // Aggregate stats
-  const mothers = await db.mothers.filter(m => !m.deleted_at).toArray();
-  const children = await db.children.filter(c => !c.deleted_at).toArray();
-  const pregnancies = await db.pregnancies.filter(p => !p.deleted_at).toArray();
+  const mothers = await queryAll('mothers');
+  const children = await queryAll('children');
+  const pregnancies = await queryAll('pregnancies');
   const activePregnancies = pregnancies.filter(p => p.status === 'active');
-  const referrals = await db.referrals.filter(r => !r.deleted_at).toArray();
+  const referrals = await queryAll('referrals');
   const pendingReferrals = referrals.filter(r => r.status === 'pending');
 
   context.stats = {
@@ -522,7 +525,7 @@ async function buildOverviewContext(profileId, role) {
       activePregnancies
         .filter(p => p.risk_level === 'high' || p.risk_level === 'critical')
         .map(async p => {
-          const mother = await db.mothers.get(p.mother_id);
+          const mother = await queryById('mothers', p.mother_id);
           return {
             mother_name: mother?.full_name || 'Unknown',
             risk: p.risk_level,

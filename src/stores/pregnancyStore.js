@@ -1,10 +1,12 @@
 import { create } from 'zustand';
-import db, { generateId } from '../lib/db';
-import { syncOrQueue } from '../lib/sync';
+import { generateId } from '../lib/db';
+import { upsertRecord, deleteRecord } from '../lib/sync';
+import supabase, { isSupabaseConfigured } from '../lib/supabase';
 
 /**
  * NurtureAI — Pregnancy Store
  * Tracks pregnancies, antenatal visits, and risk assessments.
+ * Reads and writes go directly to Supabase.
  */
 const usePregnancyStore = create((set, get) => ({
   activePregnancy: null,
@@ -15,20 +17,32 @@ const usePregnancyStore = create((set, get) => ({
 
   fetchPregnanciesByMotherId: async (motherId) => {
     set({ isLoading: true, error: null });
+    if (!isSupabaseConfigured()) {
+      set({ pregnancyHistory: [], activePregnancy: null, isLoading: false });
+      return [];
+    }
     try {
-      const pregnancies = await db.pregnancies.where('mother_id').equals(motherId).filter(p => !p.deleted_at).toArray();
+      const { data, error } = await supabase
+        .from('pregnancies')
+        .select('*')
+        .eq('mother_id', motherId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+
+      const pregnancies = data || [];
       const active = pregnancies.find(p => p.status === 'active') || null;
-      
-      set({ 
+
+      set({
         pregnancyHistory: pregnancies,
         activePregnancy: active,
-        isLoading: false 
+        isLoading: false,
       });
-      
+
       if (active) {
         await get().fetchAntenatalVisits(active.id);
       }
-      
+
       return pregnancies;
     } catch (error) {
       console.error('Failed to fetch pregnancies:', error);
@@ -38,10 +52,15 @@ const usePregnancyStore = create((set, get) => ({
   },
 
   fetchAntenatalVisits: async (pregnancyId) => {
+    if (!isSupabaseConfigured()) return [];
     try {
-      const visits = await db.antenatal_visits.where('pregnancy_id').equals(pregnancyId).toArray();
-      // Sort by date descending
-      visits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
+      const { data, error } = await supabase
+        .from('antenatal_visits')
+        .select('*')
+        .eq('pregnancy_id', pregnancyId)
+        .is('deleted_at', null);
+      if (error) throw error;
+      const visits = (data || []).sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
       set({ antenatalVisits: visits });
       return visits;
     } catch (error) {
@@ -59,16 +78,14 @@ const usePregnancyStore = create((set, get) => ({
         status: 'active',
         risk_level: 'low', // Default, should be assessed
         ...pregnancyData,
-        synced_at: null,
         created_at: new Date().toISOString(),
       };
 
-      await db.pregnancies.put(newPregnancy);
-      await syncOrQueue('pregnancies', id, 'INSERT', newPregnancy);
+      await upsertRecord('pregnancies', newPregnancy);
 
       set((state) => ({
         activePregnancy: newPregnancy,
-        pregnancyHistory: [...state.pregnancyHistory, newPregnancy],
+        pregnancyHistory: [newPregnancy, ...state.pregnancyHistory],
         antenatalVisits: [], // Reset visits for new pregnancy
         isLoading: false,
       }));
@@ -87,14 +104,11 @@ const usePregnancyStore = create((set, get) => ({
       const newVisit = {
         id,
         ...visitData,
-        synced_at: null,
         created_at: new Date().toISOString(),
       };
 
-      await db.antenatal_visits.put(newVisit);
-      await syncOrQueue('antenatal_visits', id, 'INSERT', newVisit);
+      await upsertRecord('antenatal_visits', newVisit);
 
-      // Optionally update pregnancy risk level if provided in visit
       if (visitData.assessed_risk_level) {
         await get().updatePregnancyRisk(visitData.pregnancy_id, visitData.assessed_risk_level);
       }
@@ -113,7 +127,7 @@ const usePregnancyStore = create((set, get) => ({
 
   updatePregnancyRisk: async (pregnancyId, newRiskLevel) => {
     try {
-      const existing = await db.pregnancies.get(pregnancyId);
+      const existing = getExisting(get(), pregnancyId);
       if (!existing) return;
 
       const updated = {
@@ -122,8 +136,7 @@ const usePregnancyStore = create((set, get) => ({
         updated_at: new Date().toISOString()
       };
 
-      await db.pregnancies.put(updated);
-      await syncOrQueue('pregnancies', pregnancyId, 'UPDATE', updated);
+      await upsertRecord('pregnancies', updated);
 
       set((state) => ({
         activePregnancy: state.activePregnancy?.id === pregnancyId ? updated : state.activePregnancy,
@@ -136,11 +149,10 @@ const usePregnancyStore = create((set, get) => ({
 
   updatePregnancy: async (id, updates) => {
     try {
-      const existing = await db.pregnancies.get(id);
+      const existing = getExisting(get(), id);
       if (!existing) throw new Error('Pregnancy not found');
       const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
-      await db.pregnancies.put(updated);
-      await syncOrQueue('pregnancies', id, 'UPDATE', updated);
+      await upsertRecord('pregnancies', updated);
       set((state) => ({
         activePregnancy: state.activePregnancy?.id === id ? updated : state.activePregnancy,
         pregnancyHistory: state.pregnancyHistory.map(p => p.id === id ? updated : p),
@@ -154,11 +166,10 @@ const usePregnancyStore = create((set, get) => ({
 
   updateAntenatalVisit: async (id, updates) => {
     try {
-      const existing = await db.antenatal_visits.get(id);
+      const existing = get().antenatalVisits.find(v => v.id === id);
       if (!existing) throw new Error('Visit not found');
       const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
-      await db.antenatal_visits.put(updated);
-      await syncOrQueue('antenatal_visits', id, 'UPDATE', updated);
+      await upsertRecord('antenatal_visits', updated);
       set((state) => ({
         antenatalVisits: state.antenatalVisits.map(v => v.id === id ? updated : v),
       }));
@@ -171,8 +182,7 @@ const usePregnancyStore = create((set, get) => ({
 
   deleteAntenatalVisit: async (id) => {
     try {
-      await db.antenatal_visits.delete(id);
-      await syncOrQueue('antenatal_visits', id, 'DELETE', { id });
+      await deleteRecord('antenatal_visits', id);
       set((state) => ({
         antenatalVisits: state.antenatalVisits.filter(v => v.id !== id),
       }));
@@ -185,11 +195,10 @@ const usePregnancyStore = create((set, get) => ({
 
   softDelete: async (id) => {
     try {
-      const existing = await db.pregnancies.get(id);
+      const existing = getExisting(get(), id);
       if (!existing) throw new Error('Pregnancy not found');
-      const updated = { ...existing, deleted_at: new Date().toISOString() };
-      await db.pregnancies.put(updated);
-      await syncOrQueue('pregnancies', id, 'UPDATE', updated);
+      const updated = { ...existing, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      await upsertRecord('pregnancies', updated);
       set((state) => ({
         pregnancyHistory: state.pregnancyHistory.filter(p => p.id !== id),
         activePregnancy: state.activePregnancy?.id === id ? null : state.activePregnancy,
@@ -202,11 +211,10 @@ const usePregnancyStore = create((set, get) => ({
 
   restore: async (id) => {
     try {
-      const existing = await db.pregnancies.get(id);
+      const existing = getExisting(get(), id);
       if (!existing) throw new Error('Pregnancy not found');
-      const updated = { ...existing, deleted_at: null };
-      await db.pregnancies.put(updated);
-      await syncOrQueue('pregnancies', id, 'UPDATE', updated);
+      const updated = { ...existing, deleted_at: null, updated_at: new Date().toISOString() };
+      await upsertRecord('pregnancies', updated);
       return { success: true };
     } catch (error) {
       return { success: false, error: error.message };
@@ -214,8 +222,14 @@ const usePregnancyStore = create((set, get) => ({
   },
 
   fetchArchived: async () => {
+    if (!isSupabaseConfigured()) return [];
     try {
-      return await db.pregnancies.where('deleted_at').notEqual(null).toArray();
+      const { data, error } = await supabase
+        .from('pregnancies')
+        .select('*')
+        .not('deleted_at', 'is', null);
+      if (error) throw error;
+      return data || [];
     } catch (error) {
       return [];
     }
@@ -232,5 +246,9 @@ const usePregnancyStore = create((set, get) => ({
     error: null,
   }),
 }));
+
+function getExisting(state, pregnancyId) {
+  return state.pregnancyHistory.find(p => p.id === pregnancyId) || state.activePregnancy;
+}
 
 export default usePregnancyStore;

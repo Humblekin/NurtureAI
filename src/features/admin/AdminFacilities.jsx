@@ -8,7 +8,6 @@ import Badge from '../../components/ui/Badge';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 import Modal from '../../components/ui/Modal';
-import db from '../../lib/db';
 
 export const AdminFacilities = () => {
   const [facilities, setFacilities] = useState([]);
@@ -25,21 +24,18 @@ export const AdminFacilities = () => {
   const loadFacilities = async () => {
     setIsLoading(true);
     try {
-      if (isSupabaseConfigured()) {
-        const { data, error } = await supabase
-          .from('facilities')
-          .select('*')
-          .order('name');
-        if (error) throw error;
-        setFacilities(data || []);
-      } else {
-        const local = await db.facilities.toArray();
-        setFacilities(local);
+      if (!isSupabaseConfigured()) {
+        setIsLoading(false);
+        return;
       }
+      const { data, error } = await supabase
+        .from('facilities')
+        .select('*')
+        .order('name');
+      if (error) throw error;
+      setFacilities(data || []);
     } catch (err) {
       console.error('Failed to load facilities:', err);
-      const local = await db.facilities.toArray();
-      setFacilities(local);
     } finally {
       setIsLoading(false);
     }
@@ -48,18 +44,14 @@ export const AdminFacilities = () => {
   const handleAddFacility = async () => {
     if (!newFacility.name) return;
     try {
-      if (isSupabaseConfigured()) {
-        const { error } = await supabase.from('facilities').insert({
-          name: newFacility.name,
-          type: newFacility.type,
-          phone: newFacility.phone,
-          address: newFacility.address,
-        });
-        if (error) throw error;
-      } else {
-        const id = crypto.randomUUID();
-        await db.facilities.put({ id, ...newFacility, created_at: new Date().toISOString() });
-      }
+      if (!isSupabaseConfigured()) return;
+      const { error } = await supabase.from('facilities').insert({
+        name: newFacility.name,
+        type: newFacility.type,
+        phone: newFacility.phone,
+        address: newFacility.address,
+      });
+      if (error) throw error;
       setNewFacility({ name: '', type: 'clinic', phone: '', address: '' });
       setShowAddModal(false);
       loadFacilities();

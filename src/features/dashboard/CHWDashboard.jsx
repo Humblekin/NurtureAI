@@ -1,14 +1,12 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Users, Activity, AlertTriangle, CheckCircle2, Baby } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import useAuthStore from '../../stores/authStore';
 import useMotherStore from '../../stores/motherStore';
 import useVisitStore from '../../stores/visitStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
-import db from '../../lib/db';
 
 export const CHWDashboard = () => {
   const { profile } = useAuthStore();
@@ -22,13 +20,8 @@ export const CHWDashboard = () => {
     }
   }, [profile?.id, fetchMothers, fetchVisitsByWorker]);
 
-  const totalPatients = useLiveQuery(() =>
-    db.mothers.filter(m => !m.deleted_at).count()
-  ) ?? mothers.length;
-
-  const totalVisits = useLiveQuery(() =>
-    db.visits.filter(v => !v.deleted_at).count()
-  ) ?? visits.length;
+  const totalPatients = mothers.length;
+  const totalVisits = visits.length;
 
   const highRiskMothers = mothers.filter(m => m.risk_level === 'high' || m.risk_level === 'critical');
   const today = new Date().toISOString().split('T')[0];

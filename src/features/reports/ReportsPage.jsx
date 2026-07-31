@@ -4,7 +4,7 @@ import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import Spinner from '../../components/ui/Spinner';
 import useAuthStore from '../../stores/authStore';
-import db from '../../lib/db';
+import supabase, { isSupabaseConfigured } from '../../lib/supabase';
 
 export const ReportsPage = () => {
   const { profile } = useAuthStore();
@@ -17,56 +17,57 @@ export const ReportsPage = () => {
 
   const loadStats = async () => {
     try {
+      if (!isSupabaseConfigured()) {
+        setIsLoading(false);
+        return;
+      }
+
       const isAdminOrDistrict = profile?.role === 'admin' || profile?.role === 'district_officer';
       const isNurseOrDoctor = profile?.role === 'nurse' || profile?.role === 'doctor';
 
-      // Scope queries by facility for nurse/doctor, all for admin/district
-      let mothersQuery = db.mothers.filter(m => !m.deleted_at);
-      let pregnanciesQuery = db.pregnancies.filter(p => !p.deleted_at);
-      let childrenQuery = db.children.filter(c => !c.deleted_at);
-      let visitsQuery = db.visits.filter(v => !v.deleted_at);
-      let referralsQuery = db.referrals;
-      let vaccinationsQuery = db.vaccinations;
-
-      if (isNurseOrDoctor && profile?.facility_id) {
-        mothersQuery = mothersQuery.filter(m => m.facility_id === profile.facility_id);
-        pregnanciesQuery = pregnanciesQuery.filter(p => {
-          return mothersQuery; // We'll filter after fetching
-        });
-        // For simplicity, fetch mothers first then filter related records by mother_id
-      }
+      const fetchAll = async (table) => {
+        const { data } = await supabase.from(table).select('*').is('deleted_at', null);
+        return data || [];
+      };
 
       const [mothers, pregnancies, children, visits, referrals, vaccinations] = await Promise.all([
-        mothersQuery.toArray(),
-        pregnanciesQuery.toArray(),
-        childrenQuery.toArray(),
-        visitsQuery.toArray(),
-        referralsQuery.toArray(),
-        vaccinationsQuery.toArray(),
+        fetchAll('mothers'),
+        fetchAll('pregnancies'),
+        fetchAll('children'),
+        fetchAll('visits'),
+        fetchAll('referrals'),
+        fetchAll('vaccinations'),
       ]);
 
       // For nurse/doctor: filter pregnancies/children to only those belonging to scoped mothers
       const scopedMotherIds = isNurseOrDoctor && profile?.facility_id
-        ? mothers.map(m => m.id)
+        ? mothers.filter(m => m.facility_id === profile.facility_id).map(m => m.id)
         : null;
+      const scopedMothers = scopedMotherIds ? mothers.filter(m => scopedMotherIds.includes(m.id)) : mothers;
       const scopedPregnancies = scopedMotherIds
         ? pregnancies.filter(p => scopedMotherIds.includes(p.mother_id))
         : pregnancies;
       const scopedChildren = scopedMotherIds
         ? children.filter(c => scopedMotherIds.includes(c.mother_id))
         : children;
+      const scopedVisits = scopedMotherIds
+        ? visits.filter(v => scopedMotherIds.includes(v.patient_id))
+        : visits;
+      const scopedVaccinations = scopedChildren.length > 0
+        ? vaccinations.filter(v => scopedChildren.some(c => c.id === v.child_id))
+        : vaccinations;
 
       const activePregnancies = scopedPregnancies.filter(p => p.status === 'active');
-      const highRiskMothers = mothers.filter(m => m.risk_level === 'high' || m.risk_level === 'critical');
+      const highRiskMothers = scopedMothers.filter(m => m.risk_level === 'high' || m.risk_level === 'critical');
       const pendingReferrals = referrals.filter(r => r.status === 'pending');
       const urgentReferrals = referrals.filter(r => r.urgency === 'urgent' || r.urgency === 'emergency');
 
       const thisMonth = new Date().toISOString().slice(0, 7);
-      const thisMonthVisits = visits.filter(v => v.visit_date?.startsWith(thisMonth));
-      const thisMonthVaccinations = vaccinations.filter(v => v.date_given?.startsWith(thisMonth));
+      const thisMonthVisits = scopedVisits.filter(v => v.visit_date?.startsWith(thisMonth));
+      const thisMonthVaccinations = scopedVaccinations.filter(v => v.date_given?.startsWith(thisMonth));
 
       // Visit type breakdown
-      const visitTypes = visits.reduce((acc, v) => {
+      const visitTypes = scopedVisits.reduce((acc, v) => {
         acc[v.visit_type] = (acc[v.visit_type] || 0) + 1;
         return acc;
       }, {});
@@ -78,16 +79,16 @@ export const ReportsPage = () => {
       }, {});
 
       setStats({
-        totalMothers: mothers.length,
+        totalMothers: scopedMothers.length,
         activePregnancies: activePregnancies.length,
         highRiskMothers: highRiskMothers.length,
         totalChildren: scopedChildren.length,
-        totalVisits: visits.length,
+        totalVisits: scopedVisits.length,
         thisMonthVisits: thisMonthVisits.length,
         totalReferrals: referrals.length,
         pendingReferrals: pendingReferrals.length,
         urgentReferrals: urgentReferrals.length,
-        totalVaccinations: vaccinations.length,
+        totalVaccinations: scopedVaccinations.length,
         thisMonthVaccinations: thisMonthVaccinations.length,
         visitTypes,
         referralStatuses,

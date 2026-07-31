@@ -8,7 +8,7 @@ import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
-import db from '../../lib/db';
+import supabase, { isSupabaseConfigured } from '../../lib/supabase';
 
 export const MotherHealth = () => {
   const { profile } = useAuthStore();
@@ -32,19 +32,30 @@ export const MotherHealth = () => {
   }, [currentMother?.id]);
 
   const loadData = async () => {
+    if (!isSupabaseConfigured()) return;
     try {
-      const [pregData, childData] = await Promise.all([
-        db.pregnancies.where('mother_id').equals(currentMother.id).toArray(),
-        db.children.where('mother_id').equals(currentMother.id).toArray(),
-      ]);
-      setPregnancies(pregData);
-      setChildren(childData);
+      const { data: pregData } = await supabase
+        .from('pregnancies')
+        .select('*')
+        .eq('mother_id', currentMother.id)
+        .is('deleted_at', null);
+      const { data: childData } = await supabase
+        .from('children')
+        .select('*')
+        .eq('mother_id', currentMother.id)
+        .is('deleted_at', null);
+      setPregnancies(pregData || []);
+      setChildren(childData || []);
       // Scope antenatal visits to this mother's pregnancies only
-      const pregIds = pregData.map(p => p.id);
+      const pregIds = (pregData || []).map(p => p.id);
       const anvData = pregIds.length > 0
-        ? await db.antenatal_visits.where('pregnancy_id').anyOf(pregIds).toArray()
-        : [];
-      setAntenatalVisits(anvData);
+        ? await supabase
+            .from('antenatal_visits')
+            .select('*')
+            .in('pregnancy_id', pregIds)
+            .is('deleted_at', null)
+        : { data: [] };
+      setAntenatalVisits(anvData.data || []);
     } catch (err) {
       console.error('Failed to load health data:', err);
     }

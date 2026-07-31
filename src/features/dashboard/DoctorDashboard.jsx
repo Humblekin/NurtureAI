@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Stethoscope, Users, AlertTriangle, ClipboardList, Activity, ArrowRight } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import useAuthStore from '../../stores/authStore';
 import useMotherStore from '../../stores/motherStore';
 import useReferralStore from '../../stores/referralStore';
@@ -9,7 +8,6 @@ import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
-import db from '../../lib/db';
 
 export const DoctorDashboard = () => {
   const { profile } = useAuthStore();
@@ -23,9 +21,7 @@ export const DoctorDashboard = () => {
     }
   }, [profile?.facility_id, fetchMothers, fetchIncomingReferrals]);
 
-  const totalPatients = useLiveQuery(() =>
-    db.mothers.filter(m => !m.deleted_at).count()
-  ) ?? mothers.length;
+  const totalPatients = mothers.length;
 
   const highRisk = mothers.filter(m => m.risk_level === 'high' || m.risk_level === 'critical');
   const pendingReferrals = referrals.filter(r => r.status === 'pending');

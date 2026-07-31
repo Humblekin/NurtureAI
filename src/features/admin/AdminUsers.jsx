@@ -7,7 +7,6 @@ import Input from '../../components/ui/Input';
 import Badge from '../../components/ui/Badge';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
-import db from '../../lib/db';
 
 export const AdminUsers = () => {
   const [users, setUsers] = useState([]);
@@ -22,22 +21,18 @@ export const AdminUsers = () => {
   const loadUsers = async () => {
     setIsLoading(true);
     try {
-      if (isSupabaseConfigured()) {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .order('created_at', { ascending: false });
-        if (error) throw error;
-        setUsers(data || []);
-      } else {
-        const localUsers = await db.profiles.toArray();
-        setUsers(localUsers);
+      if (!isSupabaseConfigured()) {
+        setIsLoading(false);
+        return;
       }
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setUsers(data || []);
     } catch (err) {
       console.error('Failed to load users:', err);
-      // Fallback to local
-      const localUsers = await db.profiles.toArray();
-      setUsers(localUsers);
     } finally {
       setIsLoading(false);
     }

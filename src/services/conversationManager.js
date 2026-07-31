@@ -1,4 +1,5 @@
-import db from '../lib/db';
+import { generateId } from '../lib/db';
+import { upsertRecord } from '../lib/sync';
 
 export const CONVERSATION_STATES = {
   IDLE: 'idle',
@@ -292,8 +293,8 @@ export function createConversationManager(deps) {
         summaryParts.push(`... and ${userMessages.length - 3} more questions`);
       }
 
-      await db.ai_conversations.add({
-        id: `conv-${userProfile.id}-${Date.now()}`,
+      await upsertRecord('ai_conversations', {
+        id: generateId(),
         user_id: userProfile.id,
         summary: summaryParts.join(' '),
         topics,
@@ -301,7 +302,6 @@ export function createConversationManager(deps) {
         last_message: assistantMessages[assistantMessages.length - 1]?.content?.substring(0, 200) || '',
         started_at: conversationStartTime || new Date().toISOString(),
         created_at: new Date().toISOString(),
-        synced_at: null,
       });
     } catch (err) {
       console.warn('[ConversationManager] Failed to save conversation summary:', err);

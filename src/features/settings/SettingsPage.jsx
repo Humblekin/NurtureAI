@@ -4,41 +4,28 @@ import useAuthStore, { ROLE_LABELS } from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
-import { processSyncQueue } from '../../lib/sync';
-import db from '../../lib/db';
 import supabase, { isSupabaseConfigured } from '../../lib/supabase';
 
 export const SettingsPage = () => {
   const { profile, signOut, user, setProfile } = useAuthStore();
   const { theme, toggleTheme } = useAppStore();
   const [notifications, setNotifications] = useState(true);
-  const [syncStatus, setSyncStatus] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isChangingRole, setIsChangingRole] = useState(false);
-
-  const handleForceSync = async () => {
-    setSyncStatus('syncing');
-    try {
-      const result = await processSyncQueue();
-      if (result?.errorCount > 0) {
-        setSyncStatus(`Synced with ${result.errorCount} errors`);
-      } else {
-        setSyncStatus(`Synced ${result?.successCount || 0} records`);
-      }
-    } catch (err) {
-      setSyncStatus('Sync failed');
-    }
-    setTimeout(() => setSyncStatus(null), 3000);
-  };
 
   const handleExportData = async () => {
     setIsExporting(true);
     try {
+      if (!isSupabaseConfigured()) {
+        setIsExporting(false);
+        return;
+      }
       const tables = ['mothers', 'pregnancies', 'antenatal_visits', 'children', 'vaccinations', 'growth_records', 'visits', 'referrals'];
       const exportData = {};
 
       for (const table of tables) {
-        exportData[table] = await db.table(table).toArray();
+        const { data } = await supabase.from(table).select('*');
+        exportData[table] = data || [];
       }
 
       exportData.metadata = {
@@ -83,8 +70,6 @@ export const SettingsPage = () => {
           .eq('id', profile.id);
         if (error) throw error;
       }
-      // Update locally
-      await db.profiles.update(profile.id, { role: newRole });
       setProfile({ ...profile, role: newRole });
       alert(`Role changed to "${ROLE_LABELS[newRole]}". Refresh to see the new sidebar.`);
     } catch (err) {
@@ -175,16 +160,10 @@ export const SettingsPage = () => {
           <CardBody className="flex-col gap-4">
             <div>
               <p className="body-sm" style={{ color: 'var(--text-secondary)' }}>
-                Your data is stored locally and syncs when online.
+                Your data is saved directly to the secure cloud database.
               </p>
             </div>
-            {syncStatus && (
-              <p className="body-sm" style={{ color: syncStatus.includes('failed') || syncStatus.includes('errors') ? 'var(--color-danger-500)' : 'var(--color-success-500)' }}>
-                {syncStatus}
-              </p>
-            )}
             <div className="flex gap-3">
-              <Button variant="outline" size="sm" onClick={handleForceSync}>Force Sync</Button>
               <Button variant="outline" size="sm" onClick={handleExportData} disabled={isExporting}>
                 {isExporting ? 'Exporting...' : 'Export Data'}
               </Button>

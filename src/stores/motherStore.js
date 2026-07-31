@@ -1,12 +1,13 @@
 import { create } from 'zustand';
-import db, { generateId } from '../lib/db';
-import { syncOrQueue } from '../lib/sync';
+import { generateId } from '../lib/db';
+import { upsertRecord } from '../lib/sync';
+import supabase, { isSupabaseConfigured } from '../lib/supabase';
 
 /**
  * NurtureAI — Mother Store
- * Manages Mother/Caregiver profile data and interactions with the local database.
+ * Manages Mother/Caregiver profile data. Reads and writes go directly to Supabase.
  */
-const useMotherStore = create((set, get) => ({
+const useMotherStore = create((set) => ({
   mothers: [],
   currentMother: null,
   isLoading: false,
@@ -15,22 +16,42 @@ const useMotherStore = create((set, get) => ({
   // Fetch all mothers (usually for CHW/Nurse view)
   fetchMothers: async () => {
     set({ isLoading: true, error: null });
+    if (!isSupabaseConfigured()) {
+      set({ mothers: [], isLoading: false });
+      return [];
+    }
     try {
-      const mothers = await db.mothers.filter(m => !m.deleted_at).toArray();
-      set({ mothers, isLoading: false });
+      const { data, error } = await supabase
+        .from('mothers')
+        .select('*')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      set({ mothers: data || [], isLoading: false });
+      return data || [];
     } catch (error) {
       console.error('Failed to fetch mothers:', error);
       set({ error: error.message, isLoading: false });
+      return [];
     }
   },
 
   // Fetch a specific mother by profile ID
   fetchMotherByProfileId: async (profileId) => {
     set({ isLoading: true, error: null });
+    if (!isSupabaseConfigured()) {
+      set({ currentMother: null, isLoading: false });
+      return null;
+    }
     try {
-      const mother = await db.mothers.where('profile_id').equals(profileId).first();
-      set({ currentMother: mother || null, isLoading: false });
-      return mother;
+      const { data, error } = await supabase
+        .from('mothers')
+        .select('*')
+        .eq('profile_id', profileId)
+        .maybeSingle();
+      if (error) throw error;
+      set({ currentMother: data || null, isLoading: false });
+      return data || null;
     } catch (error) {
       console.error('Failed to fetch mother:', error);
       set({ error: error.message, isLoading: false });
@@ -46,19 +67,13 @@ const useMotherStore = create((set, get) => ({
       const newMother = {
         id,
         ...motherData,
-        synced_at: null, // Indicates it needs syncing
         created_at: new Date().toISOString(),
       };
 
-      // Save to local IndexedDB
-      await db.mothers.put(newMother);
+      await upsertRecord('mothers', newMother);
 
-      // Queue for Supabase sync
-      await syncOrQueue('mothers', id, 'INSERT', newMother);
-
-      // Update local state
       set((state) => ({
-        mothers: [...state.mothers, newMother],
+        mothers: [newMother, ...state.mothers],
         currentMother: newMother,
         isLoading: false,
       }));
@@ -75,22 +90,15 @@ const useMotherStore = create((set, get) => ({
   updateMother: async (id, updates) => {
     set({ isLoading: true, error: null });
     try {
-      const existing = await db.mothers.get(id);
-      if (!existing) throw new Error('Mother not found locally');
-
+      const existing = getExisting(get(), id);
       const updatedMother = {
         ...existing,
         ...updates,
         updated_at: new Date().toISOString(),
       };
 
-      // Save locally
-      await db.mothers.put(updatedMother);
+      await upsertRecord('mothers', updatedMother);
 
-      // Queue sync
-      await syncOrQueue('mothers', id, 'UPDATE', updatedMother);
-
-      // Update state
       set((state) => ({
         mothers: state.mothers.map(m => m.id === id ? updatedMother : m),
         currentMother: state.currentMother?.id === id ? updatedMother : state.currentMother,
@@ -107,11 +115,9 @@ const useMotherStore = create((set, get) => ({
 
   softDelete: async (id) => {
     try {
-      const existing = await db.mothers.get(id);
-      if (!existing) throw new Error('Mother not found');
-      const updated = { ...existing, deleted_at: new Date().toISOString() };
-      await db.mothers.put(updated);
-      await syncOrQueue('mothers', id, 'UPDATE', updated);
+      const existing = getExisting(get(), id);
+      const updated = { ...existing, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      await upsertRecord('mothers', updated);
       set((state) => ({
         mothers: state.mothers.filter(m => m.id !== id),
         currentMother: state.currentMother?.id === id ? null : state.currentMother,
@@ -126,13 +132,11 @@ const useMotherStore = create((set, get) => ({
 
   restore: async (id) => {
     try {
-      const existing = await db.mothers.get(id);
-      if (!existing) throw new Error('Mother not found');
-      const updated = { ...existing, deleted_at: null };
-      await db.mothers.put(updated);
-      await syncOrQueue('mothers', id, 'UPDATE', updated);
+      const existing = getExisting(get(), id);
+      const updated = { ...existing, deleted_at: null, updated_at: new Date().toISOString() };
+      await upsertRecord('mothers', updated);
       set((state) => ({
-        mothers: [...state.mothers, updated],
+        mothers: [updated, ...state.mothers],
       }));
       return { success: true };
     } catch (error) {
@@ -143,9 +147,14 @@ const useMotherStore = create((set, get) => ({
   },
 
   fetchArchived: async () => {
+    if (!isSupabaseConfigured()) return [];
     try {
-      const archived = await db.mothers.where('deleted_at').notEqual(null).toArray();
-      return archived;
+      const { data, error } = await supabase
+        .from('mothers')
+        .select('*')
+        .not('deleted_at', 'is', null);
+      if (error) throw error;
+      return data || [];
     } catch (error) {
       console.error('Failed to fetch archived mothers:', error);
       return [];
@@ -162,5 +171,11 @@ const useMotherStore = create((set, get) => ({
     error: null,
   }),
 }));
+
+function getExisting(state, id) {
+  const existing = state.mothers.find(m => m.id === id) || state.currentMother;
+  if (!existing) throw new Error('Mother not found');
+  return existing;
+}
 
 export default useMotherStore;

@@ -4,7 +4,7 @@ import { ArrowLeft, Activity, ExternalLink, AlertTriangle } from 'lucide-react';
 import useReferralStore from '../../stores/referralStore';
 import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
-import db from '../../lib/db';
+import supabase, { isSupabaseConfigured } from '../../lib/supabase';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
@@ -38,8 +38,15 @@ export const ReferralForm = () => {
     async function loadFacilities() {
       setLoadingFacilities(true);
       try {
-        const local = await db.facilities.toArray();
-        setFacilities(local);
+        if (isSupabaseConfigured()) {
+          const { data, error } = await supabase
+            .from('facilities')
+            .select('*')
+            .is('deleted_at', null)
+            .order('name');
+          if (error) throw error;
+          setFacilities(data || []);
+        }
       } catch (err) {
         console.error('Failed to load facilities:', err);
       }

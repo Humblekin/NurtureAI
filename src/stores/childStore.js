@@ -1,10 +1,12 @@
 import { create } from 'zustand';
-import db, { generateId } from '../lib/db';
-import { syncOrQueue } from '../lib/sync';
+import { generateId } from '../lib/db';
+import { upsertRecord, deleteRecord } from '../lib/sync';
+import supabase, { isSupabaseConfigured } from '../lib/supabase';
 
 /**
  * NurtureAI — Child Store
  * Tracks child health, vaccinations, growth, and milestones.
+ * Reads and writes go directly to Supabase.
  */
 const useChildStore = create((set, get) => ({
   children: [],
@@ -16,8 +18,18 @@ const useChildStore = create((set, get) => ({
 
   fetchAllChildren: async () => {
     set({ isLoading: true, error: null });
+    if (!isSupabaseConfigured()) {
+      set({ children: [], isLoading: false });
+      return [];
+    }
     try {
-      const children = await db.children.filter(c => !c.deleted_at).toArray();
+      const { data, error } = await supabase
+        .from('children')
+        .select('*')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const children = data || [];
       set({ children, isLoading: false });
       children.forEach(child => {
         get().fetchVaccinations(child.id);
@@ -33,16 +45,26 @@ const useChildStore = create((set, get) => ({
 
   fetchChildrenByMotherId: async (motherId) => {
     set({ isLoading: true, error: null });
+    if (!isSupabaseConfigured()) {
+      set({ children: [], isLoading: false });
+      return [];
+    }
     try {
-      const children = await db.children.where('mother_id').equals(motherId).filter(c => !c.deleted_at).toArray();
+      const { data, error } = await supabase
+        .from('children')
+        .select('*')
+        .eq('mother_id', motherId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const children = data || [];
       set({ children, isLoading: false });
-      
-      // Pre-fetch related data for all children
+
       children.forEach(child => {
         get().fetchVaccinations(child.id);
         get().fetchGrowthRecords(child.id);
       });
-      
+
       return children;
     } catch (error) {
       console.error('Failed to fetch children:', error);
@@ -63,15 +85,13 @@ const useChildStore = create((set, get) => ({
       const newChild = {
         id,
         ...childData,
-        synced_at: null,
         created_at: new Date().toISOString(),
       };
 
-      await db.children.put(newChild);
-      await syncOrQueue('children', id, 'INSERT', newChild);
+      await upsertRecord('children', newChild);
 
       set((state) => ({
-        children: [...state.children, newChild],
+        children: [newChild, ...state.children],
         isLoading: false,
       }));
 
@@ -85,11 +105,9 @@ const useChildStore = create((set, get) => ({
   updateChild: async (id, updates) => {
     set({ isLoading: true, error: null });
     try {
-      const existing = await db.children.get(id);
-      if (!existing) throw new Error('Child not found locally');
+      const existing = getExistingChild(get(), id);
       const updatedChild = { ...existing, ...updates, updated_at: new Date().toISOString() };
-      await db.children.put(updatedChild);
-      await syncOrQueue('children', id, 'UPDATE', updatedChild);
+      await upsertRecord('children', updatedChild);
       set((state) => ({
         children: state.children.map(c => c.id === id ? updatedChild : c),
         currentChild: state.currentChild?.id === id ? updatedChild : state.currentChild,
@@ -105,8 +123,15 @@ const useChildStore = create((set, get) => ({
   // ---- Vaccinations ----
 
   fetchVaccinations: async (childId) => {
+    if (!isSupabaseConfigured()) return [];
     try {
-      const vax = await db.vaccinations.where('child_id').equals(childId).toArray();
+      const { data, error } = await supabase
+        .from('vaccinations')
+        .select('*')
+        .eq('child_id', childId)
+        .is('deleted_at', null);
+      if (error) throw error;
+      const vax = data || [];
       set((state) => ({
         vaccinations: { ...state.vaccinations, [childId]: vax }
       }));
@@ -125,12 +150,10 @@ const useChildStore = create((set, get) => ({
         id,
         child_id: childId,
         ...vaxData,
-        synced_at: null,
         created_at: new Date().toISOString(),
       };
 
-      await db.vaccinations.put(newVax);
-      await syncOrQueue('vaccinations', id, 'INSERT', newVax);
+      await upsertRecord('vaccinations', newVax);
 
       set((state) => ({
         vaccinations: {
@@ -149,11 +172,9 @@ const useChildStore = create((set, get) => ({
 
   updateVaccination: async (id, childId, updates) => {
     try {
-      const existing = await db.vaccinations.get(id);
-      if (!existing) throw new Error('Vaccination not found');
+      const existing = getExistingVax(get(), id, childId);
       const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
-      await db.vaccinations.put(updated);
-      await syncOrQueue('vaccinations', id, 'UPDATE', updated);
+      await upsertRecord('vaccinations', updated);
       set((state) => ({
         vaccinations: {
           ...state.vaccinations,
@@ -169,8 +190,7 @@ const useChildStore = create((set, get) => ({
 
   deleteVaccination: async (id, childId) => {
     try {
-      await db.vaccinations.delete(id);
-      await syncOrQueue('vaccinations', id, 'DELETE', { id });
+      await deleteRecord('vaccinations', id);
       set((state) => ({
         vaccinations: {
           ...state.vaccinations,
@@ -187,9 +207,15 @@ const useChildStore = create((set, get) => ({
   // ---- Growth Records ----
 
   fetchGrowthRecords: async (childId) => {
+    if (!isSupabaseConfigured()) return [];
     try {
-      const records = await db.growth_records.where('child_id').equals(childId).toArray();
-      records.sort((a, b) => new Date(a.recorded_date) - new Date(b.recorded_date));
+      const { data, error } = await supabase
+        .from('growth_records')
+        .select('*')
+        .eq('child_id', childId)
+        .is('deleted_at', null);
+      if (error) throw error;
+      const records = (data || []).sort((a, b) => new Date(a.recorded_date) - new Date(b.recorded_date));
       set((state) => ({
         growthRecords: { ...state.growthRecords, [childId]: records }
       }));
@@ -208,12 +234,10 @@ const useChildStore = create((set, get) => ({
         id,
         child_id: childId,
         ...growthData,
-        synced_at: null,
         created_at: new Date().toISOString(),
       };
 
-      await db.growth_records.put(newRecord);
-      await syncOrQueue('growth_records', id, 'INSERT', newRecord);
+      await upsertRecord('growth_records', newRecord);
 
       set((state) => ({
         growthRecords: {
@@ -232,11 +256,9 @@ const useChildStore = create((set, get) => ({
 
   updateGrowthRecord: async (id, childId, updates) => {
     try {
-      const existing = await db.growth_records.get(id);
-      if (!existing) throw new Error('Growth record not found');
+      const existing = getExistingGrowth(get(), id, childId);
       const updated = { ...existing, ...updates, updated_at: new Date().toISOString() };
-      await db.growth_records.put(updated);
-      await syncOrQueue('growth_records', id, 'UPDATE', updated);
+      await upsertRecord('growth_records', updated);
       set((state) => ({
         growthRecords: {
           ...state.growthRecords,
@@ -252,8 +274,7 @@ const useChildStore = create((set, get) => ({
 
   deleteGrowthRecord: async (id, childId) => {
     try {
-      await db.growth_records.delete(id);
-      await syncOrQueue('growth_records', id, 'DELETE', { id });
+      await deleteRecord('growth_records', id);
       set((state) => ({
         growthRecords: {
           ...state.growthRecords,
@@ -269,11 +290,9 @@ const useChildStore = create((set, get) => ({
 
   softDelete: async (id) => {
     try {
-      const existing = await db.children.get(id);
-      if (!existing) throw new Error('Child not found');
-      const updated = { ...existing, deleted_at: new Date().toISOString() };
-      await db.children.put(updated);
-      await syncOrQueue('children', id, 'UPDATE', updated);
+      const existing = getExistingChild(get(), id);
+      const updated = { ...existing, deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      await upsertRecord('children', updated);
       set((state) => ({
         children: state.children.filter(c => c.id !== id),
         currentChild: state.currentChild?.id === id ? null : state.currentChild,
@@ -287,11 +306,9 @@ const useChildStore = create((set, get) => ({
 
   restore: async (id) => {
     try {
-      const existing = await db.children.get(id);
-      if (!existing) throw new Error('Child not found');
-      const updated = { ...existing, deleted_at: null };
-      await db.children.put(updated);
-      await syncOrQueue('children', id, 'UPDATE', updated);
+      const existing = getExistingChild(get(), id);
+      const updated = { ...existing, deleted_at: null, updated_at: new Date().toISOString() };
+      await upsertRecord('children', updated);
       return { success: true };
     } catch (error) {
       set({ error: error.message });
@@ -300,8 +317,14 @@ const useChildStore = create((set, get) => ({
   },
 
   fetchArchived: async () => {
+    if (!isSupabaseConfigured()) return [];
     try {
-      return await db.children.where('deleted_at').notEqual(null).toArray();
+      const { data, error } = await supabase
+        .from('children')
+        .select('*')
+        .not('deleted_at', 'is', null);
+      if (error) throw error;
+      return data || [];
     } catch (error) {
       return [];
     }
@@ -319,5 +342,23 @@ const useChildStore = create((set, get) => ({
     error: null,
   }),
 }));
+
+function getExistingChild(state, id) {
+  const existing = state.children.find(c => c.id === id) || state.currentChild;
+  if (!existing) throw new Error('Child not found');
+  return existing;
+}
+
+function getExistingVax(state, id, childId) {
+  const existing = (state.vaccinations[childId] || []).find(v => v.id === id);
+  if (!existing) throw new Error('Vaccination not found');
+  return existing;
+}
+
+function getExistingGrowth(state, id, childId) {
+  const existing = (state.growthRecords[childId] || []).find(g => g.id === id);
+  if (!existing) throw new Error('Growth record not found');
+  return existing;
+}
 
 export default useChildStore;

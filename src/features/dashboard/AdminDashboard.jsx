@@ -1,28 +1,35 @@
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useEffect, useState } from 'react';
 import { Activity, Users, MapPin, Database } from 'lucide-react';
 import { Card, CardBody } from '../../components/ui/Card';
-import db from '../../lib/db';
+import supabase, { isSupabaseConfigured } from '../../lib/supabase';
 
 export const AdminDashboard = () => {
-  const totalUsers = useLiveQuery(() => db.profiles.count()) ?? 0;
-  const activeFacilities = useLiveQuery(() => db.facilities.filter(f => !f.deleted_at).count()) ?? 0;
-  const aiInteractions = useLiveQuery(() => db.ai_conversations.count()) ?? 0;
+  const [totalUsers, setTotalUsers] = useState(0);
+  const [activeFacilities, setActiveFacilities] = useState(0);
+  const [aiInteractions, setAiInteractions] = useState(0);
+  const [totalDataRecords, setTotalDataRecords] = useState(0);
 
-  const syncQueueCount = useLiveQuery(() => db.sync_queue.count()) ?? 0;
-  const totalDataRecords = useLiveQuery(async () => {
-    const counts = await Promise.all([
-      db.mothers.filter(m => !m.deleted_at).count(),
-      db.pregnancies.filter(p => !p.deleted_at).count(),
-      db.children.filter(c => !c.deleted_at).count(),
-      db.visits.filter(v => !v.deleted_at).count(),
-      db.referrals.filter(r => !r.deleted_at).count(),
-    ]);
-    return counts.reduce((sum, c) => sum + c, 0);
-  }) ?? 0;
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
 
-  const syncHealth = totalDataRecords > 0
-    ? Math.max(0, 100 - (syncQueueCount / totalDataRecords * 100))
-    : 100;
+    supabase.from('profiles').select('id').then(({ data }) => setTotalUsers(data?.length || 0)).catch(() => {});
+    supabase.from('facilities').select('id').is('deleted_at', null)
+      .then(({ data }) => setActiveFacilities(data?.length || 0)).catch(() => {});
+    supabase.from('ai_conversations').select('id').then(({ data }) => setAiInteractions(data?.length || 0)).catch(() => {});
+
+    Promise.all([
+      supabase.from('mothers').select('id').is('deleted_at', null),
+      supabase.from('pregnancies').select('id').is('deleted_at', null),
+      supabase.from('children').select('id').is('deleted_at', null),
+      supabase.from('visits').select('id').is('deleted_at', null),
+      supabase.from('referrals').select('id').is('deleted_at', null),
+    ])
+      .then((results) => {
+        const total = results.reduce((sum, { data }) => sum + (data?.length || 0), 0);
+        setTotalDataRecords(total);
+      })
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="page-content fade-in">
@@ -69,10 +76,10 @@ export const AdminDashboard = () => {
         <Card>
           <CardBody>
             <div className="flex-between">
-              <span className="body-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Sync Health</span>
-              <Database size={16} style={{ color: syncHealth > 90 ? 'var(--color-success-500)' : syncHealth > 50 ? 'var(--color-warning-500)' : 'var(--color-danger-500)' }} />
+              <span className="body-sm font-medium" style={{ color: 'var(--text-secondary)' }}>Total Records</span>
+              <Database size={16} style={{ color: 'var(--color-success-500)' }} />
             </div>
-            <h2 className="heading-2" style={{ marginTop: 'var(--space-2)' }}>{Math.min(100, Math.round(syncHealth * 10) / 10)}%</h2>
+            <h2 className="heading-2" style={{ marginTop: 'var(--space-2)' }}>{totalDataRecords}</h2>
           </CardBody>
         </Card>
       </div>

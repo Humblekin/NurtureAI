@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Heart, Calendar, Baby, MessageCircle, Map, ClipboardList } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import useAuthStore from '../../stores/authStore';
-import useAppStore from '../../stores/appStore';
 import useMotherStore from '../../stores/motherStore';
 import usePregnancyStore from '../../stores/pregnancyStore';
 import useChildStore from '../../stores/childStore';
@@ -12,7 +11,6 @@ import Badge from '../../components/ui/Badge';
 import { Link } from 'react-router-dom';
 import PregnancyChoiceModal from '../pregnancies/PregnancyChoiceModal';
 import { getMotherProfile, getMotherPregnancies, getMotherChildren } from '../../services/motherProfileService';
-import db from '../../lib/db';
 
 function calculateWeek(lastMenstrualDate) {
   if (!lastMenstrualDate) return null;
@@ -52,50 +50,42 @@ function hasVaccineDue(childId, vaccinations) {
 
 export const MotherDashboard = () => {
   const { profile } = useAuthStore();
-  const syncStatus = useAppStore((s) => s.syncStatus);
   const { fetchMotherByProfileId } = useMotherStore();
   const { activePregnancy, antenatalVisits, fetchPregnanciesByMotherId } = usePregnancyStore();
   const { children, vaccinations, fetchChildrenByMotherId } = useChildStore();
   const navigate = useNavigate();
   const [showPregnancyChoice, setShowPregnancyChoice] = useState(false);
-  const prevSyncStatus = useRef('idle');
   const [dataLoaded, setDataLoaded] = useState(false);
 
   const loadAllData = useCallback(async (userId) => {
-    // Try IndexedDB first (fast, works offline)
     const mother = await fetchMotherByProfileId(userId);
     if (mother) {
-      console.log('[Dashboard] Loaded from IndexedDB, mother:', mother.id);
+      console.log('[Dashboard] Loaded mother from Supabase:', mother.id);
       fetchPregnanciesByMotherId(mother.id);
       fetchChildrenByMotherId(mother.id);
       setDataLoaded(true);
       return;
     }
 
-    // Fallback: query Supabase directly
-    console.log('[Dashboard] IndexedDB miss, querying Supabase directly');
+    // Fallback: query Supabase directly via service
     const { data: remoteMother, error } = await getMotherProfile(userId);
     if (error) {
       console.error('[Dashboard] Supabase query failed:', error);
       return;
     }
     if (remoteMother) {
-      console.log('[Dashboard] Loaded from Supabase, mother:', remoteMother.id);
-      await db.mothers.put({ ...remoteMother, synced_at: new Date().toISOString() });
+      console.log('[Dashboard] Loaded mother from Supabase:', remoteMother.id);
       await fetchMotherByProfileId(userId);
 
       const { data: pregnancies } = await getMotherPregnancies(remoteMother.id);
       if (pregnancies?.length > 0) {
-        await db.pregnancies.bulkPut(pregnancies.map(p => ({ ...p, synced_at: new Date().toISOString() })));
+        fetchPregnanciesByMotherId(remoteMother.id);
       }
 
       const { data: childrenData } = await getMotherChildren(remoteMother.id);
       if (childrenData?.length > 0) {
-        await db.children.bulkPut(childrenData.map(c => ({ ...c, synced_at: new Date().toISOString() })));
+        fetchChildrenByMotherId(remoteMother.id);
       }
-
-      fetchPregnanciesByMotherId(remoteMother.id);
-      fetchChildrenByMotherId(remoteMother.id);
     }
 
     setDataLoaded(true);
@@ -106,14 +96,6 @@ export const MotherDashboard = () => {
       loadAllData(profile.id);
     }
   }, [profile?.id, dataLoaded, loadAllData]);
-
-  // Re-fetch ALL data after sync completes (e.g. after login on a new device)
-  useEffect(() => {
-    if (prevSyncStatus.current === 'syncing' && syncStatus === 'synced') {
-      loadAllData(profile?.id);
-    }
-    prevSyncStatus.current = syncStatus;
-  }, [syncStatus, profile?.id, loadAllData]);
 
   const pregnancyWeek = activePregnancy?.lmp
     ? calculateWeek(activePregnancy.lmp)

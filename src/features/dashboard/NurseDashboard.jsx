@@ -1,14 +1,12 @@
 import { useEffect } from 'react';
 import { AlertCircle, Users, Activity } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { useLiveQuery } from 'dexie-react-hooks';
 import useAuthStore from '../../stores/authStore';
 import useMotherStore from '../../stores/motherStore';
 import useReferralStore from '../../stores/referralStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
-import db from '../../lib/db';
 
 export const NurseDashboard = () => {
   const { profile } = useAuthStore();
@@ -22,9 +20,7 @@ export const NurseDashboard = () => {
     }
   }, [profile?.facility_id, fetchMothers, fetchIncomingReferrals]);
 
-  const totalPatients = useLiveQuery(() =>
-    db.mothers.filter(m => !m.deleted_at).count()
-  ) ?? mothers.length;
+  const totalPatients = mothers.length;
 
   const highRiskMothers = mothers.filter(m => m.risk_level === 'high' || m.risk_level === 'critical');
   const pendingReferrals = referrals.filter(r => r.status === 'pending');

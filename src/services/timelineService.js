@@ -1,13 +1,24 @@
-import db from '../lib/db';
+import supabase, { isSupabaseConfigured } from '../lib/supabase';
 import { GHANA_EPI_SCHEDULE, findOverdueVaccine } from '../constants/vaccinationSchedule';
 
 /**
  * NurtureAI — Timeline Service
  *
- * Builds a unified timeline of health events from IndexedDB data.
+ * Builds a unified timeline of health events from Supabase data.
  * Merges pregnancy milestones, ANC visits, vaccinations, growth records,
  * child health events, and AI insights into a single sorted event stream.
  */
+
+async function queryRows(table, column, value) {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from(table)
+    .select('*')
+    .eq(column, value)
+    .is('deleted_at', null);
+  if (error) return [];
+  return data || [];
+}
 
 const TOTAL_PREGNANCY_WEEKS = 40;
 
@@ -91,13 +102,23 @@ function formatDateShort(dateStr) {
  * Build the pregnancy timeline from a mother's active pregnancy data.
  */
 export async function buildPregnancyTimeline(motherId) {
-  const mother = await db.mothers.where('profile_id').equals(motherId).first();
+  if (!isSupabaseConfigured()) return { events: [], progress: null };
+
+  const { data: motherRows } = await supabase
+    .from('mothers')
+    .select('*')
+    .eq('profile_id', motherId)
+    .is('deleted_at', null);
+  const mother = (motherRows || [])[0];
   if (!mother) return { events: [], progress: null };
 
-  const pregnancy = await db.pregnancies
-    .where('mother_id').equals(mother.id)
-    .filter(p => !p.deleted_at && p.status === 'active')
-    .first();
+  const { data: pregnancyRows } = await supabase
+    .from('pregnancies')
+    .select('*')
+    .eq('mother_id', mother.id)
+    .eq('status', 'active')
+    .is('deleted_at', null);
+  const pregnancy = (pregnancyRows || [])[0];
 
   if (!pregnancy) return { events: [], progress: null };
 
@@ -145,9 +166,7 @@ export async function buildPregnancyTimeline(motherId) {
     }
   });
 
-  const journals = await db.weekly_journals
-    .where('pregnancy_id').equals(pregnancy.id)
-    .toArray();
+  const journals = await queryRows('weekly_journals', 'pregnancy_id', pregnancy.id);
 
   journals.forEach(j => {
     events.push({
@@ -168,10 +187,7 @@ export async function buildPregnancyTimeline(motherId) {
     });
   });
 
-  const ancVisits = await db.antenatal_visits
-    .where('pregnancy_id').equals(pregnancy.id)
-    .filter(v => !v.deleted_at)
-    .toArray();
+  const ancVisits = await queryRows('antenatal_visits', 'pregnancy_id', pregnancy.id);
 
   ancVisits.forEach(visit => {
     const visitWeek = lmp
@@ -194,10 +210,7 @@ export async function buildPregnancyTimeline(motherId) {
     });
   });
 
-  const visits = await db.visits
-    .where('patient_id').equals(mother.id)
-    .filter(v => !v.deleted_at)
-    .toArray();
+  const visits = await queryRows('visits', 'patient_id', mother.id);
 
   visits.forEach(visit => {
     events.push({
@@ -215,10 +228,7 @@ export async function buildPregnancyTimeline(motherId) {
     });
   });
 
-  const referrals = await db.referrals
-    .where('patient_id').equals(mother.id)
-    .filter(r => !r.deleted_at)
-    .toArray();
+  const referrals = await queryRows('referrals', 'patient_id', mother.id);
 
   referrals.forEach(ref => {
     events.push({
@@ -281,7 +291,14 @@ export async function buildPregnancyTimeline(motherId) {
  * Build the child timeline from a child's health records.
  */
 export async function buildChildTimeline(childId) {
-  const child = await db.children.get(childId);
+  if (!isSupabaseConfigured()) return { events: [], progress: null };
+
+  const { data: child } = await supabase
+    .from('children')
+    .select('*')
+    .eq('id', childId)
+    .is('deleted_at', null)
+    .maybeSingle();
   if (!child) return { events: [], progress: null };
 
   const ageWeeks = calculateChildAgeWeeks(child.date_of_birth);
@@ -304,10 +321,7 @@ export async function buildChildTimeline(childId) {
     data: child,
   });
 
-  const vaccinations = await db.vaccinations
-    .where('child_id').equals(child.id)
-    .filter(v => !v.deleted_at)
-    .toArray();
+  const vaccinations = await queryRows('vaccinations', 'child_id', child.id);
 
   const vaxNames = new Set(vaccinations.map(v => v.vaccine_name));
 
@@ -359,10 +373,7 @@ export async function buildChildTimeline(childId) {
     });
   });
 
-  const growthRecords = await db.growth_records
-    .where('child_id').equals(child.id)
-    .filter(g => !g.deleted_at)
-    .toArray();
+  const growthRecords = await queryRows('growth_records', 'child_id', child.id);
 
   growthRecords.forEach(gr => {
     const grAgeDays = child.date_of_birth
@@ -390,10 +401,7 @@ export async function buildChildTimeline(childId) {
     });
   });
 
-  const childVisits = await db.visits
-    .where('patient_id').equals(child.id)
-    .filter(v => !v.deleted_at)
-    .toArray();
+  const childVisits = await queryRows('visits', 'patient_id', child.id);
 
   childVisits.forEach(visit => {
     events.push({

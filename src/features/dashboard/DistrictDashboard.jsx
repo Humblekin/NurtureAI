@@ -1,6 +1,6 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Building2, Users, Activity, TrendingUp, MapPin, FileText } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import useAuthStore from '../../stores/authStore';
 import useMotherStore from '../../stores/motherStore';
 import useReferralStore from '../../stores/referralStore';
@@ -8,21 +8,29 @@ import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
-import db from '../../lib/db';
+import supabase, { isSupabaseConfigured } from '../../lib/supabase';
 
 export const DistrictDashboard = () => {
   const { profile } = useAuthStore();
   const { mothers, fetchMothers, isLoading } = useMotherStore();
   const { referrals, fetchOutgoingReferrals } = useReferralStore();
+  const [facilityCount, setFacilityCount] = useState(0);
+  const [workerCount, setWorkerCount] = useState(0);
 
-  const facilityCount = useLiveQuery(() => db.facilities.filter(f => !f.deleted_at).count()) ?? 0;
-  const workerCount = useLiveQuery(() => {
-    return db.profiles.where('role').anyOf(['chw', 'nurse', 'doctor']).count();
-  }) ?? 0;
-
-  if (mothers.length === 0 && !isLoading) {
+  useEffect(() => {
     fetchMothers();
-  }
+    if (profile?.id) {
+      fetchOutgoingReferrals(profile.id);
+    }
+    if (isSupabaseConfigured()) {
+      supabase.from('facilities').select('id').is('deleted_at', null)
+        .then(({ data }) => setFacilityCount(data?.length || 0))
+        .catch(() => setFacilityCount(0));
+      supabase.from('profiles').select('id').in('role', ['chw', 'nurse', 'doctor'])
+        .then(({ data }) => setWorkerCount(data?.length || 0))
+        .catch(() => setWorkerCount(0));
+    }
+  }, [profile?.id, fetchMothers, fetchOutgoingReferrals]);
 
   const highRisk = mothers.filter(m => m.risk_level === 'high' || m.risk_level === 'critical');
   const pendingReferrals = referrals.filter(r => r.status === 'pending');

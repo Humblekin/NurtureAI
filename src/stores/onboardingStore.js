@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { OnboardingEngine } from '../services/onboardingEngine';
-import db, { generateId } from '../lib/db';
-import { syncOrQueue } from '../lib/sync';
+import { generateId } from '../lib/db';
+import { upsertRecord } from '../lib/sync';
 import useMotherStore from './motherStore';
 import usePregnancyStore from './pregnancyStore';
 import useChildStore from './childStore';
@@ -10,7 +10,7 @@ import useChildStore from './childStore';
  * NurtureAI — Onboarding Store
  *
  * Manages the conversational onboarding flow for new mothers.
- * Orchestrates the OnboardingEngine, saves data to IndexedDB, and syncs to Supabase.
+ * Orchestrates the OnboardingEngine, saves data directly to Supabase.
  */
 
 const useOnboardingStore = create((set, get) => ({
@@ -149,8 +149,7 @@ const useOnboardingStore = create((set, get) => ({
         patient_id: motherId,
         created_at: new Date().toISOString(),
       };
-      await db.notifications.put(welcomeNotification);
-      await syncOrQueue('notifications', notificationId, 'INSERT', welcomeNotification);
+      await upsertRecord('notifications', welcomeNotification);
 
       set({
         isSaving: false,

@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
-import { setupAutoSync, onSyncStatusChange, requeueAllUnsynced } from '../../lib/sync';
 import Header from './Header';
 import Sidebar from './Sidebar';
 import BottomNav from './BottomNav';
@@ -16,8 +15,6 @@ export const AppShell = () => {
   const { isAuthenticated, isLoading, initialize } = useAuthStore();
   const initTheme = useAppStore((state) => state.initTheme);
   const setOnline = useAppStore((state) => state.setOnline);
-  const setSyncStatus = useAppStore((state) => state.setSyncStatus);
-  const setPendingSyncCount = useAppStore((state) => state.setPendingSyncCount);
   const navigate = useNavigate();
   const location = useLocation();
   const initialized = useRef(false);
@@ -28,8 +25,6 @@ export const AppShell = () => {
 
     initTheme();
     initialize();
-    setupAutoSync();
-    requeueAllUnsynced();
 
     const handleOnline = () => setOnline(true);
     const handleOffline = () => setOnline(false);
@@ -37,17 +32,11 @@ export const AppShell = () => {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    // Wire up sync status to appStore
-    const unsubSync = onSyncStatusChange((status) => {
-      setSyncStatus(status);
-    });
-
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
-      unsubSync();
     };
-  }, [initTheme, initialize, setOnline, setSyncStatus, setPendingSyncCount]);
+  }, [initTheme, initialize, setOnline]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated && !location.pathname.startsWith('/auth')) {

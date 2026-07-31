@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Navigate } from 'react-router-dom';
 import useAuthStore from '../../stores/authStore';
 import Spinner from '../../components/ui/Spinner';
-import db from '../../lib/db';
+import supabase, { isSupabaseConfigured } from '../../lib/supabase';
 
 const ROLE_HOME = {
   mother: '/mother/dashboard',
@@ -28,15 +28,25 @@ export const RoleRedirect = () => {
       // For mother role, check if they have a mother record
       if (profile.role === 'mother') {
         try {
-          const mother = await db.mothers.where('profile_id').equals(profile.id).first();
-          if (!mother) {
-            // New mother — needs onboarding
-            setTarget('/mother/welcome');
+          if (isSupabaseConfigured()) {
+            const { data, error } = await supabase
+              .from('mothers')
+              .select('id')
+              .eq('profile_id', profile.id)
+              .is('deleted_at', null)
+              .maybeSingle();
+            if (error) throw error;
+            if (!data) {
+              // New mother — needs onboarding
+              setTarget('/mother/welcome');
+            } else {
+              setTarget(ROLE_HOME[profile.role] || '/auth/login');
+            }
           } else {
-            setTarget(ROLE_HOME[profile.role] || '/auth/login');
+            setTarget('/mother/welcome');
           }
         } catch {
-          // If DB check fails, send to onboarding (safe fallback)
+          // If check fails, send to onboarding (safe fallback)
           setTarget('/mother/welcome');
         }
       } else {

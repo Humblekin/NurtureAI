@@ -1,4 +1,5 @@
-import db from '../lib/db';
+import supabase, { isSupabaseConfigured } from '../lib/supabase';
+import { upsertRecord } from '../lib/sync';
 import { GHANA_EPI_SCHEDULE } from '../constants/vaccinationSchedule';
 
 /**
@@ -15,6 +16,26 @@ import { GHANA_EPI_SCHEDULE } from '../constants/vaccinationSchedule';
 
 const CHILD_AGE_LIMIT_MONTHS = 60; // 5 years
 
+async function queryRows(table, column, value) {
+  if (!isSupabaseConfigured()) return [];
+  const { data, error } = await supabase
+    .from(table)
+    .select('*')
+    .eq(column, value)
+    .is('deleted_at', null);
+  if (error) return [];
+  return data || [];
+}
+
+async function queryFirst(table, column, value, extraFilter = null) {
+  if (!isSupabaseConfigured()) return null;
+  let q = supabase.from(table).select('*').eq(column, value).is('deleted_at', null);
+  if (extraFilter) q = q.eq(extraFilter.column, extraFilter.value);
+  const { data, error } = await q.maybeSingle();
+  if (error) return null;
+  return data;
+}
+
 /**
  * Check for mothers with active pregnancies that have missed ANC visits.
  * Recommended: at least 4 ANC visits, monthly in first 2 trimesters, twice in 3rd.
@@ -23,20 +44,14 @@ const CHILD_AGE_LIMIT_MONTHS = 60; // 5 years
 async function checkMissedANC(profileId) {
   const notifications = [];
 
-  const mother = await db.mothers.where('profile_id').equals(profileId).first();
+  const mother = await queryFirst('mothers', 'profile_id', profileId);
   if (!mother) return notifications;
 
-  const activePregnancy = await db.pregnancies
-    .where('mother_id').equals(mother.id)
-    .filter(p => !p.deleted_at && p.status === 'active')
-    .first();
+  const activePregnancy = await queryFirst('pregnancies', 'mother_id', mother.id, { column: 'status', value: 'active' });
 
   if (!activePregnancy) return notifications;
 
-  const ancVisits = await db.antenatal_visits
-    .where('pregnancy_id').equals(activePregnancy.id)
-    .filter(v => !v.deleted_at)
-    .toArray();
+  const ancVisits = await queryRows('antenatal_visits', 'pregnancy_id', activePregnancy.id);
 
   // Calculate pregnancy week from LMP (preferred) or created_at (fallback)
   const start = new Date(activePregnancy.lmp || activePregnancy.created_at);
@@ -115,12 +130,9 @@ async function checkOverdueVaccinations(profileId) {
 
   let children = [];
   if (profileId) {
-    const mother = await db.mothers.where('profile_id').equals(profileId).first();
+    const mother = await queryFirst('mothers', 'profile_id', profileId);
     if (mother) {
-      children = await db.children
-        .where('mother_id').equals(mother.id)
-        .filter(c => !c.deleted_at)
-        .toArray();
+      children = await queryRows('children', 'mother_id', mother.id);
     }
   }
   // If no profileId, return empty — never load all children globally
@@ -129,10 +141,7 @@ async function checkOverdueVaccinations(profileId) {
     const ageMonths = getChildAgeMonths(child.date_of_birth || child.birth_date);
     if (ageMonths === null || ageMonths > CHILD_AGE_LIMIT_MONTHS) continue;
 
-    const vaccinations = await db.vaccinations
-      .where('child_id').equals(child.id)
-      .filter(v => !v.deleted_at)
-      .toArray();
+    const vaccinations = await queryRows('vaccinations', 'child_id', child.id);
 
     const vaxNames = new Set(vaccinations.map(v => v.vaccine_name));
 
@@ -169,12 +178,9 @@ async function checkOverdueGrowthMonitoring(profileId) {
 
   let children = [];
   if (profileId) {
-    const mother = await db.mothers.where('profile_id').equals(profileId).first();
+    const mother = await queryFirst('mothers', 'profile_id', profileId);
     if (mother) {
-      children = await db.children
-        .where('mother_id').equals(mother.id)
-        .filter(c => !c.deleted_at)
-        .toArray();
+      children = await queryRows('children', 'mother_id', mother.id);
     }
   }
 
@@ -182,10 +188,7 @@ async function checkOverdueGrowthMonitoring(profileId) {
     const ageMonths = getChildAgeMonths(child.date_of_birth || child.birth_date);
     if (ageMonths === null) continue;
 
-    const growthRecords = await db.growth_records
-      .where('child_id').equals(child.id)
-      .filter(g => !g.deleted_at)
-      .toArray();
+    const growthRecords = await queryRows('growth_records', 'child_id', child.id);
 
     if (growthRecords.length === 0 && ageMonths > 1) {
       notifications.push({
@@ -229,14 +232,11 @@ async function checkOverdueGrowthMonitoring(profileId) {
 async function checkNutritionTracking(profileId) {
   const notifications = [];
 
-  const mother = await db.mothers.where('profile_id').equals(profileId).first();
+  const mother = await queryFirst('mothers', 'profile_id', profileId);
   if (!mother) return notifications;
 
   // Check for nutrition-related activities in recent visits
-  const recentVisits = await db.visits
-    .where('patient_id').equals(mother.id)
-    .filter(v => !v.deleted_at)
-    .toArray();
+  const recentVisits = await queryRows('visits', 'patient_id', mother.id);
 
   const sortedVisits = recentVisits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
   const lastVisit = sortedVisits[0];
@@ -268,21 +268,17 @@ async function checkNutritionTracking(profileId) {
 async function checkInactiveMothers(scope = {}) {
   const notifications = [];
 
-  let query = db.mothers.filter(m => !m.deleted_at);
-  if (scope.facilityId) {
-    query = query.filter(m => m.facility_id === scope.facilityId);
-  }
-  if (scope.assignedWorkerId) {
-    query = query.filter(m => m.assigned_worker_id === scope.assignedWorkerId);
-  }
-  const mothers = await query.toArray();
+  if (!isSupabaseConfigured()) return notifications;
+
+  let q = supabase.from('mothers').select('*').is('deleted_at', null);
+  if (scope.facilityId) q = q.eq('facility_id', scope.facilityId);
+  if (scope.assignedWorkerId) q = q.eq('assigned_worker_id', scope.assignedWorkerId);
+  const { data: mothers, error } = await q;
+  if (error) return notifications;
 
   for (const mother of mothers) {
     // Check if there are any recent visits or activity
-    const recentVisits = await db.visits
-      .where('patient_id').equals(mother.id)
-      .filter(v => !v.deleted_at)
-      .toArray();
+    const recentVisits = await queryRows('visits', 'patient_id', mother.id);
 
     const sortedVisits = recentVisits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
     const lastVisit = sortedVisits[0];
@@ -314,17 +310,20 @@ async function checkPendingReferrals(profileId, facilityId) {
 
   let referrals;
   if (facilityId) {
-    referrals = await db.referrals
-      .where('to_facility_id').equals(facilityId)
-      .filter(r => !r.deleted_at && r.status === 'pending')
-      .toArray();
+    referrals = await queryRows('referrals', 'to_facility_id', facilityId);
   } else {
-    referrals = await db.referrals
-      .filter(r => !r.deleted_at && r.status === 'pending')
-      .toArray();
+    if (!isSupabaseConfigured()) return notifications;
+    const { data, error } = await supabase
+      .from('referrals')
+      .select('*')
+      .is('deleted_at', null);
+    if (error) return notifications;
+    referrals = data || [];
   }
 
   for (const ref of referrals) {
+    if (ref.status !== 'pending') continue;
+
     const daysSinceCreated = Math.floor(
       (new Date() - new Date(ref.created_at)) / (1000 * 60 * 60 * 24)
     );
@@ -358,18 +357,12 @@ async function checkPendingReferrals(profileId, facilityId) {
 export async function generateAminaGreeting(profile) {
   if (!profile || profile.role !== 'mother') return null;
 
-  const mother = await db.mothers.where('profile_id').equals(profile.id).first();
+  const mother = await queryFirst('mothers', 'profile_id', profile.id);
   if (!mother) return null;
 
-  const activePregnancy = await db.pregnancies
-    .where('mother_id').equals(mother.id)
-    .filter(p => !p.deleted_at && p.status === 'active')
-    .first();
+  const activePregnancy = await queryFirst('pregnancies', 'mother_id', mother.id, { column: 'status', value: 'active' });
 
-  const children = await db.children
-    .where('mother_id').equals(mother.id)
-    .filter(c => !c.deleted_at)
-    .toArray();
+  const children = await queryRows('children', 'mother_id', mother.id);
 
   const now = new Date();
   const hour = now.getHours();
@@ -382,10 +375,7 @@ export async function generateAminaGreeting(profile) {
     voiceGreeting += `You are now ${week} weeks pregnant. `;
 
     // Check for upcoming ANC
-    const ancVisits = await db.antenatal_visits
-      .where('pregnancy_id').equals(activePregnancy.id)
-      .filter(v => !v.deleted_at)
-      .toArray();
+    const ancVisits = await queryRows('antenatal_visits', 'pregnancy_id', activePregnancy.id);
 
     const sortedVisits = ancVisits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
     const lastVisit = sortedVisits[0];
@@ -444,8 +434,8 @@ export async function runReminderEngine(profile) {
       allNotifications.push(...inactive, ...pendingRef);
     }
 
-    // Store notifications in IndexedDB (local-only, derived from synced health data)
-    if (allNotifications.length > 0) {
+    // Store notifications directly in Supabase
+    if (allNotifications.length > 0 && isSupabaseConfigured()) {
       const toStore = allNotifications.map((n, i) => ({
         ...n,
         id: `reminder-${profile.id}-${Date.now()}-${i}`,
@@ -453,7 +443,9 @@ export async function runReminderEngine(profile) {
         created_at: new Date().toISOString(),
         read: false,
       }));
-      await db.notifications.bulkPut(toStore);
+      for (const notification of toStore) {
+        await upsertRecord('notifications', notification);
+      }
     }
   } catch (error) {
     console.error('Reminder engine error:', error);
@@ -468,12 +460,13 @@ export async function runReminderEngine(profile) {
  */
 export async function getUnreadNotifications(userId) {
   try {
-    if (userId) {
-      return await db.notifications
-        .filter(n => !n.read && n.user_id === userId)
-        .toArray();
-    }
-    return await db.notifications.filter(n => !n.read).toArray();
+    if (!isSupabaseConfigured()) return [];
+    let q = supabase.from('notifications').select('*').eq('read', false);
+    if (userId) q = q.eq('user_id', userId);
+    q = q.order('created_at', { ascending: false });
+    const { data, error } = await q;
+    if (error) return [];
+    return data || [];
   } catch {
     return [];
   }
@@ -484,7 +477,8 @@ export async function getUnreadNotifications(userId) {
  */
 export async function markNotificationRead(id) {
   try {
-    await db.notifications.update(id, { read: true });
+    if (!isSupabaseConfigured()) return;
+    await supabase.from('notifications').update({ read: true }).eq('id', id);
   } catch (error) {
     console.error('Failed to mark notification read:', error);
   }
@@ -496,13 +490,10 @@ export async function markNotificationRead(id) {
  */
 export async function markAllRead(userId) {
   try {
-    let unread;
-    if (userId) {
-      unread = await db.notifications.filter(n => !n.read && n.user_id === userId).toArray();
-    } else {
-      unread = await db.notifications.filter(n => !n.read).toArray();
-    }
-    await Promise.all(unread.map(n => db.notifications.update(n.id, { read: true })));
+    if (!isSupabaseConfigured()) return;
+    let q = supabase.from('notifications').update({ read: true }).eq('read', false);
+    if (userId) q = q.eq('user_id', userId);
+    await q;
   } catch (error) {
     console.error('Failed to mark all notifications read:', error);
   }
