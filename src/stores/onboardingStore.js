@@ -146,6 +146,7 @@ const useOnboardingStore = create((set, get) => ({
         title: 'Welcome to NurtureAI!',
         message: `Hi ${motherProfile.full_name}! Your health profile has been set up. Amina is here to support you throughout your pregnancy journey.`,
         read: false,
+        user_id: engine.profileId,
         patient_id: motherId,
         created_at: new Date().toISOString(),
       };
