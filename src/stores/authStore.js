@@ -38,6 +38,7 @@ export const ROLE_LABELS = {
 };
 
 let authListenerUnsubscribed = false;
+let intentionalSignOut = false;
 
 const useAuthStore = create(
   persist(
@@ -118,21 +119,33 @@ const useAuthStore = create(
                 set({ user: session.user, session, isAuthenticated: true });
               }
             } else if (event === 'SIGNED_OUT') {
-              // Clear ALL data stores to prevent data leaking between users
-              useMotherStore.getState().reset();
-              usePregnancyStore.getState().reset();
-              useChildStore.getState().reset();
-              useTimelineStore.getState().reset();
-              useNotificationStore.getState().reset();
-              useOnboardingStore.getState().reset();
+              if (intentionalSignOut) {
+                // Clear ALL data stores to prevent data leaking between users
+                useMotherStore.getState().reset();
+                usePregnancyStore.getState().reset();
+                useChildStore.getState().reset();
+                useTimelineStore.getState().reset();
+                useNotificationStore.getState().reset();
+                useOnboardingStore.getState().reset();
 
-              set({
-                user: null,
-                profile: null,
-                session: null,
-                isAuthenticated: false,
-              });
-              localStorage.removeItem('nurtureai-auth');
+                set({
+                  user: null,
+                  profile: null,
+                  session: null,
+                  isAuthenticated: false,
+                });
+                localStorage.removeItem('nurtureai-auth');
+              } else {
+                // Forced sign-out (token refresh failed, etc.)
+                // Don't clear local data — just mark as unauthenticated
+                // The user can re-authenticate without losing unsynced data
+                console.warn('[Auth] Session lost (forced sign-out). Local data preserved.');
+                set({
+                  session: null,
+                  isAuthenticated: false,
+                });
+              }
+              intentionalSignOut = false;
             }
           });
           authListenerUnsubscribed = true;
@@ -264,6 +277,8 @@ const useAuthStore = create(
        * Sign out
        */
       signOut: async () => {
+        intentionalSignOut = true;
+
         if (isSupabaseConfigured()) {
           await supabase.auth.signOut();
         }
@@ -285,6 +300,7 @@ const useAuthStore = create(
         });
         // Clear persisted state
         localStorage.removeItem('nurtureai-auth');
+        intentionalSignOut = false;
       },
 
       /**
