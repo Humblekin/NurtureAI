@@ -2,10 +2,17 @@
 -- NurtureAI — Full Supabase Schema
 -- Run this in Supabase SQL Editor
 -- Safe to re-run (drops old policies/triggers first)
+--
+-- Regenerated from the LIVE database (project egfdluvekjygfsnxczqi) on 2026-08-01.
+-- Includes soft-delete columns (deleted_at), latest NOT NULL constraints,
+-- and the newer columns (preferred_language, ai_conversations summary/topics/
+-- message_count/last_message/started_at, notifications user_id/child_name/
+-- voice_message/referral_id/assign_to_worker).
 -- ============================================
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Drop existing triggers first (safe re-run)
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
@@ -22,6 +29,7 @@ DROP TRIGGER IF EXISTS update_facilities_updated_at ON facilities;
 DROP TRIGGER IF EXISTS update_districts_updated_at ON districts;
 DROP TRIGGER IF EXISTS update_milestones_updated_at ON milestones;
 DROP TRIGGER IF EXISTS update_ai_conversations_updated_at ON ai_conversations;
+DROP TRIGGER IF EXISTS update_notifications_updated_at ON notifications;
 DROP TRIGGER IF EXISTS update_weekly_journals_updated_at ON weekly_journals;
 
 -- Drop existing functions
@@ -42,6 +50,7 @@ DROP FUNCTION IF EXISTS public.user_role() CASCADE;
 -- DROP TABLE IF EXISTS pregnancies CASCADE;
 -- DROP TABLE IF EXISTS mothers CASCADE;
 -- DROP TABLE IF EXISTS profiles CASCADE;
+-- DROP TABLE IF EXISTS notifications CASCADE;
 -- DROP TABLE IF EXISTS facilities CASCADE;
 -- DROP TABLE IF EXISTS districts CASCADE;
 
@@ -50,10 +59,11 @@ DROP FUNCTION IF EXISTS public.user_role() CASCADE;
 -- ============================================
 CREATE TABLE IF NOT EXISTS districts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  name TEXT NOT NULL,
-  region TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  name TEXT,
+  region TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -61,13 +71,14 @@ CREATE TABLE IF NOT EXISTS districts (
 -- ============================================
 CREATE TABLE IF NOT EXISTS facilities (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  name TEXT NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('hospital', 'clinic', 'chps', 'health_post')),
-  district_id UUID REFERENCES districts(id),
-  phone TEXT,
-  address TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  name TEXT,
+  type TEXT CHECK (type IN ('hospital', 'clinic', 'chps', 'health_post')),
+  district_id UUID NOT NULL REFERENCES districts(id),
+  phone TEXT NOT NULL,
+  address TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -75,14 +86,16 @@ CREATE TABLE IF NOT EXISTS facilities (
 -- ============================================
 CREATE TABLE IF NOT EXISTS profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  full_name TEXT NOT NULL,
-  phone TEXT,
-  role TEXT NOT NULL CHECK (role IN ('mother', 'chw', 'nurse', 'doctor', 'district_officer', 'admin')),
-  facility_id UUID REFERENCES facilities(id),
-  community TEXT,
-  avatar_url TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  full_name TEXT,
+  phone TEXT NOT NULL,
+  role TEXT CHECK (role IN ('mother', 'chw', 'nurse', 'doctor', 'district_officer', 'admin')),
+  facility_id UUID NOT NULL REFERENCES facilities(id),
+  community TEXT NOT NULL,
+  avatar_url TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  preferred_language TEXT NOT NULL
 );
 
 -- ============================================
@@ -90,18 +103,21 @@ CREATE TABLE IF NOT EXISTS profiles (
 -- ============================================
 CREATE TABLE IF NOT EXISTS mothers (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  profile_id UUID REFERENCES profiles(id),
-  full_name TEXT NOT NULL,
-  phone TEXT,
-  date_of_birth DATE,
-  community TEXT,
-  blood_group TEXT CHECK (blood_group IN ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')),
-  medical_history TEXT,
-  risk_level TEXT DEFAULT 'low' CHECK (risk_level IN ('low', 'medium', 'high', 'critical')),
-  assigned_worker_id UUID REFERENCES profiles(id),
-  edd DATE,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  profile_id UUID NOT NULL REFERENCES profiles(id),
+  full_name TEXT,
+  phone TEXT NOT NULL,
+  date_of_birth DATE NOT NULL,
+  community TEXT NOT NULL,
+  blood_group TEXT NOT NULL CHECK (blood_group IN ('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')),
+  medical_history TEXT NOT NULL,
+  risk_level TEXT NOT NULL DEFAULT 'low' CHECK (risk_level IN ('low', 'medium', 'high', 'critical')),
+  assigned_worker_id UUID NOT NULL REFERENCES profiles(id),
+  edd DATE NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  facility_id UUID NOT NULL REFERENCES facilities(id),
+  birth_facility_id UUID NOT NULL REFERENCES facilities(id)
 );
 
 -- ============================================
@@ -109,16 +125,17 @@ CREATE TABLE IF NOT EXISTS mothers (
 -- ============================================
 CREATE TABLE IF NOT EXISTS pregnancies (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  mother_id UUID REFERENCES mothers(id) ON DELETE CASCADE,
-  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'completed', 'miscarried', 'aborted')),
-  risk_level TEXT DEFAULT 'low' CHECK (risk_level IN ('low', 'medium', 'high', 'critical')),
-  lmp DATE,
-  edd DATE,
-  gravida INTEGER DEFAULT 1,
-  para INTEGER DEFAULT 0,
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  mother_id UUID NOT NULL REFERENCES mothers(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed', 'miscarried', 'aborted')),
+  risk_level TEXT NOT NULL DEFAULT 'low' CHECK (risk_level IN ('low', 'medium', 'high', 'critical')),
+  lmp DATE NOT NULL,
+  edd DATE NOT NULL,
+  gravida INTEGER NOT NULL DEFAULT 1,
+  para INTEGER NOT NULL DEFAULT 0,
+  notes TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -126,19 +143,20 @@ CREATE TABLE IF NOT EXISTS pregnancies (
 -- ============================================
 CREATE TABLE IF NOT EXISTS antenatal_visits (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  pregnancy_id UUID REFERENCES pregnancies(id) ON DELETE CASCADE,
-  visit_date DATE NOT NULL DEFAULT CURRENT_DATE,
-  visit_number INTEGER,
-  gestational_age INTEGER,
-  weight NUMERIC(5,2),
-  blood_pressure TEXT,
-  fundal_height NUMERIC(5,2),
-  fetal_heart_rate INTEGER,
-  symptoms TEXT,
-  notes TEXT,
-  assessed_risk_level TEXT CHECK (assessed_risk_level IN ('low', 'medium', 'high', 'critical')),
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  pregnancy_id UUID NOT NULL REFERENCES pregnancies(id) ON DELETE CASCADE,
+  visit_date DATE DEFAULT CURRENT_DATE,
+  visit_number INTEGER NOT NULL,
+  gestational_age INTEGER NOT NULL,
+  weight NUMERIC(5,2) NOT NULL,
+  blood_pressure TEXT NOT NULL,
+  fundal_height NUMERIC(5,2) NOT NULL,
+  fetal_heart_rate INTEGER NOT NULL,
+  symptoms TEXT NOT NULL,
+  notes TEXT NOT NULL,
+  assessed_risk_level TEXT NOT NULL CHECK (assessed_risk_level IN ('low', 'medium', 'high', 'critical')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -146,15 +164,16 @@ CREATE TABLE IF NOT EXISTS antenatal_visits (
 -- ============================================
 CREATE TABLE IF NOT EXISTS children (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  mother_id UUID REFERENCES mothers(id),
-  full_name TEXT NOT NULL,
-  date_of_birth DATE NOT NULL,
-  gender TEXT NOT NULL CHECK (gender IN ('male', 'female')),
-  birth_weight NUMERIC(4,2),
-  birth_facility TEXT,
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  mother_id UUID NOT NULL REFERENCES mothers(id),
+  full_name TEXT,
+  date_of_birth DATE,
+  gender TEXT CHECK (gender IN ('male', 'female')),
+  birth_weight NUMERIC(4,2) NOT NULL,
+  birth_facility TEXT NOT NULL,
+  notes TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -162,15 +181,16 @@ CREATE TABLE IF NOT EXISTS children (
 -- ============================================
 CREATE TABLE IF NOT EXISTS vaccinations (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  child_id UUID REFERENCES children(id) ON DELETE CASCADE,
-  vaccine_name TEXT NOT NULL,
-  date_given DATE NOT NULL DEFAULT CURRENT_DATE,
-  dose INTEGER DEFAULT 1,
-  batch_number TEXT,
-  administered_by UUID REFERENCES profiles(id),
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  child_id UUID NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+  vaccine_name TEXT,
+  date_given DATE DEFAULT CURRENT_DATE,
+  dose INTEGER NOT NULL DEFAULT 1,
+  batch_number TEXT NOT NULL,
+  administered_by UUID NOT NULL REFERENCES profiles(id),
+  notes TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -178,15 +198,16 @@ CREATE TABLE IF NOT EXISTS vaccinations (
 -- ============================================
 CREATE TABLE IF NOT EXISTS growth_records (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  child_id UUID REFERENCES children(id) ON DELETE CASCADE,
-  recorded_date DATE NOT NULL DEFAULT CURRENT_DATE,
-  weight_kg NUMERIC(5,2),
-  height_cm NUMERIC(5,2),
-  head_circumference_cm NUMERIC(5,2),
-  muac_cm NUMERIC(4,2),
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  child_id UUID NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+  recorded_date DATE DEFAULT CURRENT_DATE,
+  weight_kg NUMERIC(5,2) NOT NULL,
+  height_cm NUMERIC(5,2) NOT NULL,
+  head_circumference_cm NUMERIC(5,2) NOT NULL,
+  muac_cm NUMERIC(4,2) NOT NULL,
+  notes TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -194,12 +215,13 @@ CREATE TABLE IF NOT EXISTS growth_records (
 -- ============================================
 CREATE TABLE IF NOT EXISTS milestones (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  child_id UUID REFERENCES children(id) ON DELETE CASCADE,
-  milestone_type TEXT NOT NULL,
-  achieved_date DATE,
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  child_id UUID NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+  milestone_type TEXT,
+  achieved_date DATE NOT NULL,
+  notes TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -207,16 +229,17 @@ CREATE TABLE IF NOT EXISTS milestones (
 -- ============================================
 CREATE TABLE IF NOT EXISTS visits (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  worker_id UUID REFERENCES profiles(id),
-  patient_id UUID NOT NULL,
-  patient_type TEXT NOT NULL CHECK (patient_type IN ('mother', 'child')),
-  visit_type TEXT NOT NULL CHECK (visit_type IN ('home', 'facility', 'follow_up', 'emergency')),
-  visit_date DATE NOT NULL DEFAULT CURRENT_DATE,
-  notes TEXT,
-  findings TEXT,
-  actions_taken TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  worker_id UUID NOT NULL REFERENCES profiles(id),
+  patient_id UUID,
+  patient_type TEXT CHECK (patient_type IN ('mother', 'child')),
+  visit_type TEXT CHECK (visit_type IN ('home', 'facility', 'follow_up', 'emergency')),
+  visit_date DATE DEFAULT CURRENT_DATE,
+  notes TEXT NOT NULL,
+  findings TEXT NOT NULL,
+  actions_taken TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -224,17 +247,18 @@ CREATE TABLE IF NOT EXISTS visits (
 -- ============================================
 CREATE TABLE IF NOT EXISTS referrals (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  patient_id UUID NOT NULL,
-  patient_type TEXT NOT NULL CHECK (patient_type IN ('mother', 'child')),
-  from_facility_id UUID REFERENCES facilities(id),
-  to_facility_id UUID REFERENCES facilities(id),
-  from_worker_id UUID REFERENCES profiles(id),
-  urgency TEXT DEFAULT 'routine' CHECK (urgency IN ('routine', 'soon', 'urgent', 'emergency')),
-  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'completed', 'rejected')),
-  reason TEXT,
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  patient_id UUID,
+  patient_type TEXT CHECK (patient_type IN ('mother', 'child')),
+  from_facility_id UUID NOT NULL REFERENCES facilities(id),
+  to_facility_id UUID NOT NULL REFERENCES facilities(id),
+  from_worker_id UUID NOT NULL REFERENCES profiles(id),
+  urgency TEXT NOT NULL DEFAULT 'routine' CHECK (urgency IN ('routine', 'soon', 'urgent', 'emergency')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'completed', 'rejected')),
+  reason TEXT NOT NULL,
+  notes TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -242,10 +266,16 @@ CREATE TABLE IF NOT EXISTS referrals (
 -- ============================================
 CREATE TABLE IF NOT EXISTS ai_conversations (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES profiles(id),
-  messages JSONB DEFAULT '[]',
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  user_id UUID NOT NULL REFERENCES profiles(id),
+  messages JSONB NOT NULL DEFAULT '[]',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  summary TEXT NOT NULL,
+  topics TEXT[] NOT NULL,
+  message_count INTEGER NOT NULL,
+  last_message TEXT NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL
 );
 
 -- ============================================
@@ -253,24 +283,25 @@ CREATE TABLE IF NOT EXISTS ai_conversations (
 -- ============================================
 CREATE TABLE IF NOT EXISTS weekly_journals (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES profiles(id),
-  pregnancy_id UUID REFERENCES pregnancies(id) ON DELETE CASCADE,
-  week_number INTEGER NOT NULL,
-  entry_date DATE NOT NULL DEFAULT CURRENT_DATE,
-  mother_feeling TEXT,
-  baby_movement TEXT,
-  symptoms TEXT,
-  mood TEXT,
-  sleep_quality TEXT,
-  nutrition_notes TEXT,
-  water_intake TEXT,
-  exercise_notes TEXT,
-  medication_notes TEXT,
-  weight NUMERIC(5,2),
-  blood_pressure TEXT,
-  additional_notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  user_id UUID NOT NULL REFERENCES profiles(id),
+  pregnancy_id UUID NOT NULL REFERENCES pregnancies(id) ON DELETE CASCADE,
+  week_number INTEGER,
+  entry_date DATE DEFAULT CURRENT_DATE,
+  mother_feeling TEXT NOT NULL,
+  baby_movement TEXT NOT NULL,
+  symptoms TEXT NOT NULL,
+  mood TEXT NOT NULL,
+  sleep_quality TEXT NOT NULL,
+  nutrition_notes TEXT NOT NULL,
+  water_intake TEXT NOT NULL,
+  exercise_notes TEXT NOT NULL,
+  medication_notes TEXT NOT NULL,
+  weight NUMERIC(5,2) NOT NULL,
+  blood_pressure TEXT NOT NULL,
+  additional_notes TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -278,13 +309,20 @@ CREATE TABLE IF NOT EXISTS weekly_journals (
 -- ============================================
 CREATE TABLE IF NOT EXISTS notifications (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  type TEXT NOT NULL,
-  priority TEXT DEFAULT 'low' CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
-  title TEXT NOT NULL,
-  message TEXT,
-  read BOOLEAN DEFAULT false,
+  type TEXT,
+  priority TEXT NOT NULL DEFAULT 'low' CHECK (priority IN ('low', 'medium', 'high', 'urgent', 'critical')),
+  title TEXT,
+  message TEXT NOT NULL,
+  read BOOLEAN NOT NULL DEFAULT false,
   patient_id UUID NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ,
+  user_id UUID NOT NULL REFERENCES profiles(id),
+  child_name TEXT NOT NULL,
+  voice_message TEXT NOT NULL,
+  referral_id UUID NOT NULL,
+  assign_to_worker UUID NOT NULL REFERENCES profiles(id),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ============================================
@@ -341,44 +379,59 @@ DO $$
 BEGIN
   -- Profiles
   DROP POLICY IF EXISTS "Profiles: public read" ON profiles;
+  DROP POLICY IF EXISTS "Profiles: insert own" ON profiles;
   DROP POLICY IF EXISTS "Profiles: update own" ON profiles;
   DROP POLICY IF EXISTS "Profiles: admin manage" ON profiles;
   -- Mothers
   DROP POLICY IF EXISTS "Mothers: health workers read all" ON mothers;
   DROP POLICY IF EXISTS "Mothers: mothers read own" ON mothers;
   DROP POLICY IF EXISTS "Mothers: insert for health workers" ON mothers;
+  DROP POLICY IF EXISTS "Mothers: mothers insert own" ON mothers;
   DROP POLICY IF EXISTS "Mothers: update for health workers" ON mothers;
+  DROP POLICY IF EXISTS "Mothers: mothers update own" ON mothers;
   DROP POLICY IF EXISTS "Mothers: delete for admin" ON mothers;
   -- Pregnancies
   DROP POLICY IF EXISTS "Pregnancies: read access" ON pregnancies;
   DROP POLICY IF EXISTS "Pregnancies: insert for health workers" ON pregnancies;
+  DROP POLICY IF EXISTS "Pregnancies: mothers insert own" ON pregnancies;
   DROP POLICY IF EXISTS "Pregnancies: update for health workers" ON pregnancies;
+  DROP POLICY IF EXISTS "Pregnancies: mothers update own" ON pregnancies;
   DROP POLICY IF EXISTS "Pregnancies: delete for admin" ON pregnancies;
   -- Antenatal Visits
   DROP POLICY IF EXISTS "ANV: read access" ON antenatal_visits;
   DROP POLICY IF EXISTS "ANV: insert for health workers" ON antenatal_visits;
+  DROP POLICY IF EXISTS "ANV: mothers insert own" ON antenatal_visits;
   DROP POLICY IF EXISTS "ANV: update for health workers" ON antenatal_visits;
+  DROP POLICY IF EXISTS "ANV: mothers update own" ON antenatal_visits;
   DROP POLICY IF EXISTS "ANV: delete for health workers" ON antenatal_visits;
   -- Children
   DROP POLICY IF EXISTS "Children: health workers read all" ON children;
   DROP POLICY IF EXISTS "Children: mothers read own" ON children;
   DROP POLICY IF EXISTS "Children: insert for health workers" ON children;
+  DROP POLICY IF EXISTS "Children: mothers insert own" ON children;
   DROP POLICY IF EXISTS "Children: update for health workers" ON children;
+  DROP POLICY IF EXISTS "Children: mothers update own" ON children;
   DROP POLICY IF EXISTS "Children: delete for health workers" ON children;
   -- Vaccinations
   DROP POLICY IF EXISTS "Vax: read access" ON vaccinations;
   DROP POLICY IF EXISTS "Vax: insert for health workers" ON vaccinations;
+  DROP POLICY IF EXISTS "Vax: mothers insert own" ON vaccinations;
   DROP POLICY IF EXISTS "Vax: update for health workers" ON vaccinations;
+  DROP POLICY IF EXISTS "Vax: mothers update own" ON vaccinations;
   DROP POLICY IF EXISTS "Vax: delete for health workers" ON vaccinations;
   -- Growth Records
   DROP POLICY IF EXISTS "Growth: read access" ON growth_records;
   DROP POLICY IF EXISTS "Growth: insert for health workers" ON growth_records;
+  DROP POLICY IF EXISTS "Growth: mothers insert own" ON growth_records;
   DROP POLICY IF EXISTS "Growth: update for health workers" ON growth_records;
+  DROP POLICY IF EXISTS "Growth: mothers update own" ON growth_records;
   DROP POLICY IF EXISTS "Growth: delete for health workers" ON growth_records;
   -- Milestones
   DROP POLICY IF EXISTS "Milestones: read access" ON milestones;
   DROP POLICY IF EXISTS "Milestones: insert for health workers" ON milestones;
+  DROP POLICY IF EXISTS "Milestones: mothers insert own" ON milestones;
   DROP POLICY IF EXISTS "Milestones: update for health workers" ON milestones;
+  DROP POLICY IF EXISTS "Milestones: mothers update own" ON milestones;
   DROP POLICY IF EXISTS "Milestones: delete for admin" ON milestones;
   -- Visits
   DROP POLICY IF EXISTS "Visits: read own" ON visits;
@@ -386,11 +439,17 @@ BEGIN
   DROP POLICY IF EXISTS "Visits: insert own" ON visits;
   DROP POLICY IF EXISTS "Visits: update own" ON visits;
   DROP POLICY IF EXISTS "Visits: admin update all" ON visits;
+  DROP POLICY IF EXISTS "Visits: mothers read own" ON visits;
   -- Referrals
   DROP POLICY IF EXISTS "Referrals: read access" ON referrals;
   DROP POLICY IF EXISTS "Referrals: insert for health workers" ON referrals;
   DROP POLICY IF EXISTS "Referrals: update for health workers" ON referrals;
   DROP POLICY IF EXISTS "Referrals: delete for admin" ON referrals;
+  DROP POLICY IF EXISTS "Referrals: mothers read own" ON referrals;
+  -- Notifications
+  DROP POLICY IF EXISTS "Notifications: read own" ON notifications;
+  DROP POLICY IF EXISTS "Notifications: insert own" ON notifications;
+  DROP POLICY IF EXISTS "Notifications: update own" ON notifications;
   -- AI
   DROP POLICY IF EXISTS "AI: read own" ON ai_conversations;
   DROP POLICY IF EXISTS "AI: insert own" ON ai_conversations;
@@ -672,13 +731,14 @@ CREATE POLICY "Districts: admin manage" ON districts FOR ALL
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, full_name, phone, role, community)
+  INSERT INTO public.profiles (id, full_name, phone, role, community, preferred_language)
   VALUES (
     NEW.id,
     COALESCE(NEW.raw_user_meta_data->>'full_name', 'User'),
     COALESCE(NEW.raw_user_meta_data->>'phone', ''),
     COALESCE(NEW.raw_user_meta_data->>'role', 'chw'),
-    COALESCE(NEW.raw_user_meta_data->>'community', '')
+    COALESCE(NEW.raw_user_meta_data->>'community', ''),
+    COALESCE(NEW.raw_user_meta_data->>'preferred_language', 'en')
   );
   RETURN NEW;
 END;
@@ -708,7 +768,7 @@ CREATE TRIGGER update_children_updated_at BEFORE UPDATE ON children FOR EACH ROW
 CREATE TRIGGER update_vaccinations_updated_at BEFORE UPDATE ON vaccinations FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_growth_records_updated_at BEFORE UPDATE ON growth_records FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_visits_updated_at BEFORE UPDATE ON visits FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-CREATE TRIGGER update_referrals_updat +ed_at BEFORE UPDATE ON referrals FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER update_referrals_updated_at BEFORE UPDATE ON referrals FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_facilities_updated_at BEFORE UPDATE ON facilities FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_districts_updated_at BEFORE UPDATE ON districts FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_milestones_updated_at BEFORE UPDATE ON milestones FOR EACH ROW EXECUTE FUNCTION update_updated_at();

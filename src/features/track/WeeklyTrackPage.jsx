@@ -262,7 +262,7 @@ export default function WeeklyTrackPage() {
   const {
     journals, currentJournal,
     fetchJournalsByPregnancy, fetchCurrentWeek,
-    saveJournal, updateJournal, requeueUnsynced,
+    saveJournal, updateJournal,
   } = useWeeklyJournalStore();
   const prevSyncStatus = useRef('idle');
 
@@ -291,9 +291,8 @@ export default function WeeklyTrackPage() {
     if (activePregnancy?.id && pregnancyWeek) {
       fetchJournalsByPregnancy(activePregnancy.id);
       fetchCurrentWeek(activePregnancy.id, pregnancyWeek);
-      requeueUnsynced();
     }
-  }, [activePregnancy?.id, pregnancyWeek, fetchJournalsByPregnancy, fetchCurrentWeek, requeueUnsynced]);
+  }, [activePregnancy?.id, pregnancyWeek, fetchJournalsByPregnancy, fetchCurrentWeek]);
 
   // Re-fetch journals after sync completes
   useEffect(() => {
