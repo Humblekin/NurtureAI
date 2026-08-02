@@ -2,9 +2,8 @@ export function createVAD(audioStream, options = {}) {
   const {
     onSpeechStart,
     onSpeechEnd,
-    threshold = 0.015,
-    silenceTimeoutMs = 500,
-    minSpeechMs = 80,
+    silenceTimeoutMs = 800,
+    minSpeechMs = 100,
   } = options;
 
   let audioContext = null;
@@ -17,12 +16,17 @@ export function createVAD(audioStream, options = {}) {
   let speechStart = 0;
   let destroyed = false;
 
+  let noiseFloor = 0.01;
+  const MIN_NOISE_FLOOR = 0.005;
+  const MAX_NOISE_FLOOR = 0.05;
+  const SNR_MULTIPLIER = 2.5;
+
   function start() {
     if (destroyed) return;
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     source = audioContext.createMediaStreamSource(audioStream);
     analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
+    analyser.fftSize = 512;
     analyser.smoothingTimeConstant = 0.8;
     source.connect(analyser);
     dataArray = new Uint8Array(analyser.frequencyBinCount);
@@ -40,7 +44,17 @@ export function createVAD(audioStream, options = {}) {
     const rms = Math.sqrt(sum / dataArray.length);
     const now = performance.now();
 
-    if (rms > threshold) {
+    if (rms < noiseFloor) {
+      noiseFloor = noiseFloor * 0.99 + rms * 0.01;
+    } else if (!speaking) {
+      noiseFloor = noiseFloor * 0.999 + rms * 0.001;
+    }
+    noiseFloor = Math.max(MIN_NOISE_FLOOR, Math.min(noiseFloor, MAX_NOISE_FLOOR));
+
+    const dynamicThreshold = noiseFloor * SNR_MULTIPLIER;
+    const isLoud = rms > dynamicThreshold && rms > 0.015;
+
+    if (isLoud) {
       if (!speaking) {
         if (speechStart === 0) speechStart = now;
         if (now - speechStart >= minSpeechMs) {

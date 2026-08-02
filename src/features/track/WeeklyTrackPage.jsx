@@ -7,6 +7,7 @@ import useMotherStore from '../../stores/motherStore';
 import usePregnancyStore from '../../stores/pregnancyStore';
 import useWeeklyJournalStore from '../../stores/weeklyJournalStore';
 import { calculateWeeksFromLMP } from '../../services/timelineService';
+import VoiceRecorder from '../../components/ui/VoiceRecorder';
 import styles from './WeeklyTrack.module.css';
 
 const FEELINGS = [
@@ -62,6 +63,11 @@ function EntryCard({ entry, onEdit }) {
       <div className={styles.entryDetails}>
         {entry.baby_movement && <span>Movement: {entry.baby_movement}</span>}
         {entry.symptoms && <span>Symptoms: {entry.symptoms}</span>}
+        {entry.voice_note_url && (
+          <div style={{ marginTop: '8px' }}>
+            <audio controls src={entry.voice_note_url} style={{ height: '32px', width: '100%' }} />
+          </div>
+        )}
       </div>
       <button className={styles.editBtn} onClick={() => onEdit(entry)}>
         <Edit3 size={14} /> Edit
@@ -84,6 +90,7 @@ function CheckInForm({ weekNumber, initialData, onSave, onCancel, isSaving }) {
     weight: '',
     blood_pressure: '',
     additional_notes: '',
+    voice_note_url: '',
     ...(initialData || {}),
   });
 
@@ -242,6 +249,15 @@ function CheckInForm({ weekNumber, initialData, onSave, onCancel, isSaving }) {
         />
       </div>
 
+      <div className={styles.fieldGroup}>
+        <label className={styles.fieldLabel}>Voice Note</label>
+        <VoiceRecorder 
+          existingAudioUrl={form.voice_note_url}
+          onRecordingComplete={(blob, url) => handleChange('voice_note_url', url)}
+          onRecordingDelete={() => handleChange('voice_note_url', '')}
+        />
+      </div>
+
       <div className={styles.formActions}>
         {onCancel && (
           <button type="button" className={styles.cancelBtn} onClick={onCancel}>Cancel</button>
@@ -311,12 +327,14 @@ export default function WeeklyTrackPage() {
     if (!activePregnancy || !pregnancyWeek) return;
     setIsSaving(true);
 
+    const { voice_note_url, ...dataToSync } = formData;
+
     const journalData = {
       user_id: profile.id,
       pregnancy_id: activePregnancy.id,
       week_number: pregnancyWeek,
       entry_date: new Date().toISOString(),
-      ...formData,
+      ...dataToSync,
     };
 
     if (editEntry) {

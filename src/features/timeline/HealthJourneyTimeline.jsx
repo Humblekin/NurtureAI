@@ -7,6 +7,7 @@ import {
   Sun, Gift, UserCheck, ArrowRightCircle, Apple, Cake, Check
 } from 'lucide-react';
 import useTimelineStore from '../../stores/timelineStore';
+import useAuthStore from '../../stores/authStore';
 import { formatDate } from '../../services/timelineService';
 import styles from './HealthJourneyTimeline.module.css';
 
@@ -392,6 +393,8 @@ export default function HealthJourneyTimeline({ profileId, childIds = [] }) {
     showCelebration, celebrationEvent, dismissCelebration,
     buildAllTimelines, buildPregnancyTimeline
   } = useTimelineStore();
+  const { profile } = useAuthStore();
+  const role = profile?.role || 'mother';
 
   const childIdsKey = childIds.join(',');
   const childCount = childIds.length;
@@ -431,13 +434,18 @@ export default function HealthJourneyTimeline({ profileId, childIds = [] }) {
     return <TimelineEmpty />;
   }
 
+  const visibleEvents = allEvents.filter(e => {
+    if (e.isRiskFlag && role === 'mother') return false;
+    return true;
+  });
+
   return (
     <div className={styles.timelineWrapper}>
       <div className={styles.timelineHeader}>
         <div className={styles.timelineHeaderLeft}>
           <h2 className={styles.timelineTitle}>Your Health Journey</h2>
           <p className={styles.timelineSubtitle}>
-            {allEvents.length} events recorded
+            {visibleEvents.length} events recorded
           </p>
         </div>
         <button className={styles.jumpToCurrent} onClick={scrollToCurrent}>
@@ -450,14 +458,14 @@ export default function HealthJourneyTimeline({ profileId, childIds = [] }) {
 
       <div className={styles.timelineContainer} ref={timelineRef}>
         <AnimatePresence mode="popLayout">
-          {allEvents.map((event, index) => (
+          {visibleEvents.map((event, index) => (
             <TimelineNode
               key={event.id}
               event={event}
               isExpanded={expandedEventId === event.id}
               onToggle={toggleExpandEvent}
               isFirst={index === 0}
-              isLast={index === allEvents.length - 1}
+              isLast={index === visibleEvents.length - 1}
             />
           ))}
         </AnimatePresence>

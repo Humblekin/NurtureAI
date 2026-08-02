@@ -172,6 +172,7 @@ export function useVoiceConversation() {
   const sttRef = useRef(null);
   const vadRef = useRef(null);
   const initStartedRef = useRef(false);
+  const textBufferRef = useRef('');
 
   const isListening = voiceState === CONVERSATION_STATES.LISTENING;
   const isSpeaking = voiceState === CONVERSATION_STATES.SPEAKING;
@@ -246,14 +247,15 @@ export function useVoiceConversation() {
   function startRecognition() {
     stopRecognition();
     setTranscript('');
+    textBufferRef.current = '';
     const recognition = createSpeechRecognition({
       language,
       onInterim: (text) => {
-        setTranscript(text);
+        setTranscript(textBufferRef.current + (textBufferRef.current && text ? ' ' : '') + text);
       },
       onFinal: (text) => {
-        setTranscript('');
-        managerRef.current?.onFinalTranscript(text);
+        textBufferRef.current += (textBufferRef.current && text ? ' ' : '') + text;
+        setTranscript(textBufferRef.current);
       },
       onError: (err) => {
         console.error('[Hook] STT error:', err);
@@ -279,6 +281,12 @@ export function useVoiceConversation() {
         managerRef.current?.vadSpeechStart();
       },
       onSpeechEnd: () => {
+        const finalSentence = textBufferRef.current.trim();
+        textBufferRef.current = '';
+        setTranscript('');
+        if (finalSentence) {
+          managerRef.current?.onFinalTranscript(finalSentence);
+        }
         managerRef.current?.vadSpeechEnd();
       },
     });

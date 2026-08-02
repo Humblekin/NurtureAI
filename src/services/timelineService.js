@@ -98,6 +98,33 @@ function formatDateShort(dateStr) {
   });
 }
 
+function checkHighRisk(bloodPressure, symptoms) {
+  let isRisk = false;
+  let reasons = [];
+
+  if (bloodPressure) {
+    const parts = bloodPressure.split('/');
+    if (parts.length === 2) {
+      const sys = parseInt(parts[0], 10);
+      const dia = parseInt(parts[1], 10);
+      if (sys >= 140 || dia >= 90) {
+        isRisk = true;
+        reasons.push(`High BP (${bloodPressure})`);
+      }
+    }
+  }
+
+  if (symptoms) {
+    const s = symptoms.toLowerCase();
+    if (s.includes('bleeding') || s.includes('fever') || s.includes('severe pain') || s.includes('blur') || s.includes('dizzy')) {
+      isRisk = true;
+      reasons.push('High-risk symptom');
+    }
+  }
+
+  return { isRisk, reason: reasons.join(', ') };
+}
+
 /**
  * Build the pregnancy timeline from a mother's active pregnancy data.
  */
@@ -185,6 +212,25 @@ export async function buildPregnancyTimeline(motherId) {
       status: 'completed',
       data: j,
     });
+
+    const risk = checkHighRisk(j.blood_pressure, j.symptoms);
+    if (risk.isRisk) {
+      events.push({
+        id: `risk-journal-${j.id}`,
+        type: 'risk_flag',
+        category: 'anc', // Group with ANC/medical events
+        date: j.entry_date || j.created_at,
+        week: j.week_number,
+        label: 'Clinical Risk Flag',
+        description: `Flagged from check-in: ${risk.reason}`,
+        icon: 'AlertTriangle',
+        color: 'danger',
+        completed: false,
+        status: 'active',
+        isRiskFlag: true,
+        data: j,
+      });
+    }
   });
 
   const ancVisits = await queryRows('antenatal_visits', 'pregnancy_id', pregnancy.id);
@@ -208,6 +254,25 @@ export async function buildPregnancyTimeline(motherId) {
       status: 'completed',
       data: visit,
     });
+
+    const risk = checkHighRisk(visit.blood_pressure, visit.symptoms || visit.notes);
+    if (risk.isRisk) {
+      events.push({
+        id: `risk-anc-${visit.id}`,
+        type: 'risk_flag',
+        category: 'anc',
+        date: visit.visit_date,
+        week: visitWeek,
+        label: 'Clinical Risk Flag',
+        description: `Flagged from ANC visit: ${risk.reason}`,
+        icon: 'AlertTriangle',
+        color: 'danger',
+        completed: false,
+        status: 'active',
+        isRiskFlag: true,
+        data: visit,
+      });
+    }
   });
 
   const visits = await queryRows('visits', 'patient_id', mother.id);
