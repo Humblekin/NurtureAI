@@ -263,7 +263,10 @@ export function useVoiceConversation() {
         textBufferRef.current += (textBufferRef.current && text ? ' ' : '') + text;
         lastInterimRef.current = textBufferRef.current;
         setTranscript(textBufferRef.current);
-        if (pendingSendRef.current) {
+        // Send when VAD already ended the utterance, or when STT finalized
+        // the text after the VAD timer already fired (late final — otherwise
+        // the user's first utterance is silently dropped and they repeat it).
+        if (pendingSendRef.current || (!vadRef.current?.isCurrentlySpeaking?.() && textBufferRef.current)) {
           sendBufferedTranscript();
         }
       },
@@ -316,10 +319,6 @@ export function useVoiceConversation() {
         clearTimeout(pendingSendTimerRef.current);
         pendingSendTimerRef.current = setTimeout(() => {
           sendBufferedTranscript();
-          if (managerRef.current?.getState?.() === CONVERSATION_STATES.LISTENING) {
-            stopRecognition();
-            startRecognition();
-          }
         }, 2500);
       },
     });
