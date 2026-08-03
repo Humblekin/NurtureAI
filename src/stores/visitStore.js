@@ -8,7 +8,7 @@ import supabase, { isSupabaseConfigured } from '../lib/supabase';
  * Tracks general health worker visits (home visits, facility visits).
  * Reads and writes go directly to Supabase.
  */
-const useVisitStore = create((set) => ({
+const useVisitStore = create((set, get) => ({
   visits: [],
   isLoading: false,
   error: null,

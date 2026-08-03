@@ -8,7 +8,7 @@ import supabase, { isSupabaseConfigured } from '../lib/supabase';
  * Tracks patient referrals between facilities and CHWs.
  * Reads and writes go directly to Supabase.
  */
-const useReferralStore = create((set) => ({
+const useReferralStore = create((set, get) => ({
   referrals: [],
   isLoading: false,
   error: null,

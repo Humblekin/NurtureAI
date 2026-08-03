@@ -56,7 +56,13 @@ const STEPS = [
     fields: [
       { name: 'existing_conditions', label: 'Existing medical conditions', labelDag: 'Cututtukan da ke tattare', type: 'textarea', required: false, placeholder: 'e.g. diabetes, asthma, sickle cell' },
       { name: 'current_medications', label: 'Current medications or supplements', labelDag: 'Magungunan da ke tattare', type: 'textarea', required: false, placeholder: 'e.g. iron tablets, folic acid' },
-      { name: 'blood_group', label: 'Blood group', labelDag: 'Irin jini', type: 'text', required: false, placeholder: 'e.g. O positive' },
+      { name: 'blood_group', label: 'Blood group', labelDag: 'Irin jini', type: 'select', required: false, options: [
+        { value: '', label: 'Select blood group' },
+        { value: 'A+', label: 'A+' }, { value: 'A-', label: 'A-' },
+        { value: 'B+', label: 'B+' }, { value: 'B-', label: 'B-' },
+        { value: 'AB+', label: 'AB+' }, { value: 'AB-', label: 'AB-' },
+        { value: 'O+', label: 'O+' }, { value: 'O-', label: 'O-' },
+      ] },
     ],
   },
   {

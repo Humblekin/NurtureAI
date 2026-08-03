@@ -1,4 +1,5 @@
 import { chatCompletion } from '../lib/groq';
+import { normalizeBloodGroup } from '../lib/bloodGroup';
 
 /**
  * NurtureAI — Onboarding Conversation Engine
@@ -562,7 +563,7 @@ Rules:
       date_of_birth: d.date_of_birth || null,
       phone: null, // Set from registration
       community: d.community || null,
-      blood_group: d.blood_group || null,
+      blood_group: normalizeBloodGroup(d.blood_group),
       medical_history: [
         d.existing_conditions,
         d.current_medications ? `Current medications: ${d.current_medications}` : null,

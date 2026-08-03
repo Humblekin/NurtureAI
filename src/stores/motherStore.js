@@ -1,13 +1,14 @@
 import { create } from 'zustand';
 import { generateId } from '../lib/db';
 import { upsertRecord } from '../lib/sync';
+import { withNormalizedBloodGroup } from '../lib/bloodGroup';
 import supabase, { isSupabaseConfigured } from '../lib/supabase';
 
 /**
  * NurtureAI — Mother Store
  * Manages Mother/Caregiver profile data. Reads and writes go directly to Supabase.
  */
-const useMotherStore = create((set) => ({
+const useMotherStore = create((set, get) => ({
   mothers: [],
   currentMother: null,
   isLoading: false,
@@ -66,7 +67,7 @@ const useMotherStore = create((set) => ({
       const id = generateId();
       const newMother = {
         id,
-        ...motherData,
+        ...withNormalizedBloodGroup(motherData),
         created_at: new Date().toISOString(),
       };
 
@@ -93,7 +94,7 @@ const useMotherStore = create((set) => ({
       const existing = getExisting(get(), id);
       const updatedMother = {
         ...existing,
-        ...updates,
+        ...withNormalizedBloodGroup(updates),
         updated_at: new Date().toISOString(),
       };
 

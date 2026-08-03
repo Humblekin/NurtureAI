@@ -3,7 +3,7 @@ import { generateId } from '../lib/db';
 import { upsertRecord } from '../lib/sync';
 import supabase, { isSupabaseConfigured } from '../lib/supabase';
 
-const useWeeklyJournalStore = create((set) => ({
+const useWeeklyJournalStore = create((set, get) => ({
   journals: [],
   currentJournal: null,
   isLoading: false,

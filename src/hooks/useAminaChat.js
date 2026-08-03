@@ -379,7 +379,11 @@ export function useVoiceConversation() {
       sendToAI: async (apiMessages, opts) => chatCompletion(apiMessages, opts),
 
       speakText: async (text, signal) => {
+        vadRef.current?.setEnabled?.(false);
         await browserSpeak(text, { signal });
+        if (managerRef.current?.getState?.() === CONVERSATION_STATES.LISTENING) {
+          vadRef.current?.setEnabled?.(true);
+        }
       },
 
       stopSpeech: () => { browserStopSpeaking(); },
