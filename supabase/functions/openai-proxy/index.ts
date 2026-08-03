@@ -9,7 +9,7 @@ const GROQ_BASE = "https://api.groq.com/openai/v1"
 
 console.log("[AI-Proxy] Function loaded")
 
-const DEFAULT_MODEL = "openai/gpt-oss-120b"
+const DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
 function corsHeaders(origin: string): Record<string, string> {
   return {

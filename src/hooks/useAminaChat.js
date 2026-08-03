@@ -173,6 +173,9 @@ export function useVoiceConversation() {
   const vadRef = useRef(null);
   const initStartedRef = useRef(false);
   const textBufferRef = useRef('');
+  const lastInterimRef = useRef('');
+  const pendingSendRef = useRef(false);
+  const pendingSendTimerRef = useRef(null);
 
   const isListening = voiceState === CONVERSATION_STATES.LISTENING;
   const isSpeaking = voiceState === CONVERSATION_STATES.SPEAKING;
@@ -248,14 +251,21 @@ export function useVoiceConversation() {
     stopRecognition();
     setTranscript('');
     textBufferRef.current = '';
+    lastInterimRef.current = '';
     const recognition = createSpeechRecognition({
       language,
       onInterim: (text) => {
-        setTranscript(textBufferRef.current + (textBufferRef.current && text ? ' ' : '') + text);
+        const combined = textBufferRef.current + (textBufferRef.current && text ? ' ' : '') + text;
+        lastInterimRef.current = combined;
+        setTranscript(combined);
       },
       onFinal: (text) => {
         textBufferRef.current += (textBufferRef.current && text ? ' ' : '') + text;
+        lastInterimRef.current = textBufferRef.current;
         setTranscript(textBufferRef.current);
+        if (pendingSendRef.current) {
+          sendBufferedTranscript();
+        }
       },
       onError: (err) => {
         console.error('[Hook] STT error:', err);
@@ -273,6 +283,27 @@ export function useVoiceConversation() {
     }
   }
 
+  // ---- Pending transcript send (coordinates VAD silence with STT finalization) ----
+  function clearPendingSend() {
+    pendingSendRef.current = false;
+    clearTimeout(pendingSendTimerRef.current);
+    pendingSendTimerRef.current = null;
+  }
+
+  function sendBufferedTranscript() {
+    pendingSendRef.current = false;
+    clearTimeout(pendingSendTimerRef.current);
+    pendingSendTimerRef.current = null;
+    const finalSentence = textBufferRef.current.trim() || lastInterimRef.current.trim();
+    textBufferRef.current = '';
+    lastInterimRef.current = '';
+    setTranscript('');
+    managerRef.current?.vadSpeechEnd();
+    if (finalSentence) {
+      managerRef.current?.onFinalTranscript(finalSentence);
+    }
+  }
+
   // ---- VAD Lifecycle ----
   function startVAD(stream) {
     destroyVAD();
@@ -281,13 +312,15 @@ export function useVoiceConversation() {
         managerRef.current?.vadSpeechStart();
       },
       onSpeechEnd: () => {
-        const finalSentence = textBufferRef.current.trim();
-        textBufferRef.current = '';
-        setTranscript('');
-        if (finalSentence) {
-          managerRef.current?.onFinalTranscript(finalSentence);
-        }
-        managerRef.current?.vadSpeechEnd();
+        pendingSendRef.current = true;
+        clearTimeout(pendingSendTimerRef.current);
+        pendingSendTimerRef.current = setTimeout(() => {
+          sendBufferedTranscript();
+          if (managerRef.current?.getState?.() === CONVERSATION_STATES.LISTENING) {
+            stopRecognition();
+            startRecognition();
+          }
+        }, 2500);
       },
     });
     vad.start();
@@ -295,6 +328,7 @@ export function useVoiceConversation() {
   }
 
   function destroyVAD() {
+    clearPendingSend();
     if (vadRef.current) {
       vadRef.current.stop();
       vadRef.current = null;
@@ -312,6 +346,19 @@ export function useVoiceConversation() {
                voiceState === CONVERSATION_STATES.IDLE ||
                voiceState === CONVERSATION_STATES.ERROR) {
       stopRecognition();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceState]);
+
+  // ---- Keep VAD aligned with conversation state ----
+  // Only detect the user's voice while LISTENING. During PROCESSING/SPEAKING
+  // (and other states) Amina's own TTS would be picked up by the mic and
+  // wrongly treated as a barge-in, aborting her response.
+  useEffect(() => {
+    if (voiceState === CONVERSATION_STATES.LISTENING) {
+      vadRef.current?.setEnabled?.(true);
+    } else {
+      vadRef.current?.setEnabled?.(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceState]);

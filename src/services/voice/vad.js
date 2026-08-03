@@ -15,6 +15,8 @@ export function createVAD(audioStream, options = {}) {
   let silenceStart = 0;
   let speechStart = 0;
   let destroyed = false;
+  let enabled = false;
+  let graceUntil = 0;
 
   let noiseFloor = 0.01;
   const MIN_NOISE_FLOOR = 0.005;
@@ -33,8 +35,26 @@ export function createVAD(audioStream, options = {}) {
     poll();
   }
 
+  // Enable/disable voice detection. When disabled (e.g. while Amina is
+  // speaking) the analyser loop keeps running but ignores audio, so her own
+  // TTS output picked up by the mic is never mistaken for the user speaking.
+  // On enable, a short grace period ignores residual TTS audio.
+  function setEnabled(value) {
+    const next = !!value;
+    if (enabled === next) return;
+    enabled = next;
+    speaking = false;
+    silenceStart = 0;
+    speechStart = 0;
+    graceUntil = enabled ? performance.now() + 400 : 0;
+  }
+
   function poll() {
     if (destroyed) return;
+    if (!enabled || performance.now() < graceUntil) {
+      rafId = requestAnimationFrame(poll);
+      return;
+    }
     analyser.getByteTimeDomainData(dataArray);
     let sum = 0;
     for (let i = 0; i < dataArray.length; i++) {
@@ -92,5 +112,5 @@ export function createVAD(audioStream, options = {}) {
     return speaking;
   }
 
-  return { start, stop, isCurrentlySpeaking };
+  return { start, stop, setEnabled, isCurrentlySpeaking };
 }
