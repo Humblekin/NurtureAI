@@ -1,5 +1,6 @@
 import supabase, { isSupabaseConfigured } from '../lib/supabase';
 import { upsertRecord } from '../lib/sync';
+import { calculateWeeksFromLMP } from '../lib/pregnancy';
 import { GHANA_EPI_SCHEDULE } from '../constants/vaccinationSchedule';
 
 /**
@@ -115,6 +116,32 @@ async function checkMissedANC(profileId) {
       voice_message: weeksPregnant >= 42
         ? `${mother.full_name}, you are past your due date at ${weeksPregnant} weeks. Please contact your healthcare provider immediately.`
         : `${mother.full_name}, you are at week ${weeksPregnant}. Please discuss your delivery plan with your healthcare provider.`,
+    });
+  }
+
+  return notifications;
+}
+
+async function checkMissingWeeklyJournal(profileId) {
+  const notifications = [];
+  const mother = await queryFirst('mothers', 'profile_id', profileId);
+  if (!mother) return notifications;
+
+  const activePregnancy = await queryFirst('pregnancies', 'mother_id', mother.id, { column: 'status', value: 'active' });
+  if (!activePregnancy) return notifications;
+
+  const weeksPregnant = calculateWeeksFromLMP(activePregnancy.lmp || activePregnancy.created_at);
+  if (!weeksPregnant) return notifications;
+
+  const currentJournal = await queryFirst('weekly_journals', 'pregnancy_id', activePregnancy.id, { column: 'week_number', value: weeksPregnant });
+  if (!currentJournal) {
+    notifications.push({
+      type: 'weekly_journal_missing',
+      priority: 'medium',
+      title: 'Weekly Check-in Needed',
+      message: `${mother.full_name}, please complete your week ${weeksPregnant} health check-in so Amina can support you with the right care guidance this week.`,
+      patient_id: mother.id,
+      voice_message: `${mother.full_name}, please complete your week ${weeksPregnant} health check-in. This helps Amina support your pregnancy journey.`,
     });
   }
 
@@ -417,10 +444,11 @@ export async function runReminderEngine(profile) {
     // Role-specific checks
     if (profile.role === 'mother') {
       const anc = await checkMissedANC(profile.id);
+      const journal = await checkMissingWeeklyJournal(profile.id);
       const vax = await checkOverdueVaccinations(profile.id);
       const growth = await checkOverdueGrowthMonitoring(profile.id);
       const nutrition = await checkNutritionTracking(profile.id);
-      allNotifications.push(...anc, ...vax, ...growth, ...nutrition);
+      allNotifications.push(...anc, ...journal, ...vax, ...growth, ...nutrition);
     } else if (profile.role === 'chw') {
       const inactive = await checkInactiveMothers({ assignedWorkerId: profile.id });
       const pendingRef = await checkPendingReferrals(profile.id, null);

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { generateId } from '../lib/db';
 import { upsertRecord, deleteRecord } from '../lib/sync';
+import { calculateWeeksFromLMP } from '../lib/pregnancy';
 import supabase, { isSupabaseConfigured } from '../lib/supabase';
 
 /**

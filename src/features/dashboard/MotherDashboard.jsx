@@ -5,19 +5,19 @@ import useAuthStore from '../../stores/authStore';
 import useMotherStore from '../../stores/motherStore';
 import usePregnancyStore from '../../stores/pregnancyStore';
 import useChildStore from '../../stores/childStore';
+import useWeeklyJournalStore from '../../stores/weeklyJournalStore';
 import { Card, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import { Link } from 'react-router-dom';
 import PregnancyChoiceModal from '../pregnancies/PregnancyChoiceModal';
 import { getMotherProfile, getMotherPregnancies, getMotherChildren } from '../../services/motherProfileService';
+import { findOverdueVaccine } from '../../constants/vaccinationSchedule';
+import { GHANA_ANC_PROTOCOL } from '../../constants/ancProtocol';
+import { calculateWeeksFromLMP } from '../../lib/pregnancy';
 
 function calculateWeek(lastMenstrualDate) {
-  if (!lastMenstrualDate) return null;
-  const lmp = new Date(lastMenstrualDate);
-  const today = new Date();
-  const diffDays = Math.floor((today - lmp) / (1000 * 60 * 60 * 24));
-  return Math.floor(diffDays / 7);
+  return calculateWeeksFromLMP(lastMenstrualDate);
 }
 
 function getTrimester(week) {
@@ -38,14 +38,25 @@ function calculateAge(birthDate) {
   return years === 1 ? '1 year' : `${years} years`;
 }
 
+function getAgeMonths(birthDate) {
+  if (!birthDate) return null;
+  const birth = new Date(birthDate);
+  const now = new Date();
+  return Math.max(0, (now.getFullYear() - birth.getFullYear()) * 12 + (now.getMonth() - birth.getMonth()));
+}
+
 function getSexLabel(sex) {
   if (!sex) return '';
   return sex === 'male' ? 'Male' : 'Female';
 }
 
-function hasVaccineDue(childId, vaccinations) {
-  const vax = vaccinations?.[childId] || [];
-  return vax.some(v => v.status === 'due' || v.status === 'overdue');
+function hasVaccineDue(child, vaccinations) {
+  if (!child?.date_of_birth) return false;
+  const vax = vaccinations?.[child.id] || [];
+  const vaxNames = new Set(vax.map(v => v.vaccine_name));
+  const ageMonths = getAgeMonths(child.date_of_birth);
+  if (ageMonths === null) return false;
+  return !!findOverdueVaccine(ageMonths, vaxNames);
 }
 
 export const MotherDashboard = () => {
@@ -53,16 +64,20 @@ export const MotherDashboard = () => {
   const { fetchMotherByProfileId } = useMotherStore();
   const { activePregnancy, antenatalVisits, fetchPregnanciesByMotherId } = usePregnancyStore();
   const { children, vaccinations, fetchChildrenByMotherId } = useChildStore();
+  const { fetchJournalsByPregnancy, journals } = useWeeklyJournalStore();
   const navigate = useNavigate();
   const [showPregnancyChoice, setShowPregnancyChoice] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [nextVisitDate, setNextVisitDate] = useState(null);
+  const [nextVisitLabel, setNextVisitLabel] = useState(null);
+  const [currentWeekMissingJournal, setCurrentWeekMissingJournal] = useState(false);
 
   const loadAllData = useCallback(async (userId) => {
     const mother = await fetchMotherByProfileId(userId);
     if (mother) {
       console.log('[Dashboard] Loaded mother from Supabase:', mother.id);
-      fetchPregnanciesByMotherId(mother.id);
-      fetchChildrenByMotherId(mother.id);
+      await fetchPregnanciesByMotherId(mother.id);
+      await fetchChildrenByMotherId(mother.id);
       setDataLoaded(true);
       return;
     }
@@ -97,19 +112,49 @@ export const MotherDashboard = () => {
     }
   }, [profile?.id, dataLoaded, loadAllData]);
 
+  useEffect(() => {
+    if (activePregnancy?.id) {
+      fetchJournalsByPregnancy(activePregnancy.id);
+    }
+  }, [activePregnancy?.id, fetchJournalsByPregnancy]);
+
   const pregnancyWeek = activePregnancy?.lmp
     ? calculateWeek(activePregnancy.lmp)
     : null;
   const trimester = getTrimester(pregnancyWeek);
   const riskLevel = activePregnancy?.risk_level || 'low';
 
-  const nextVisit = antenatalVisits?.length > 0
-    ? antenatalVisits
-        .filter(v => new Date(v.visit_date) > new Date())
-        .sort((a, b) => new Date(a.visit_date) - new Date(b.visit_date))[0]
-    : null;
+  const nextVisit = nextVisitDate
+    ? { visit_date: nextVisitDate, visit_type: nextVisitLabel }
+    : antenatalVisits?.length > 0
+      ? antenatalVisits
+          .filter(v => new Date(v.visit_date) > new Date())
+          .sort((a, b) => new Date(a.visit_date) - new Date(b.visit_date))[0]
+      : null;
 
-  const dueVaccines = children?.filter(child => hasVaccineDue(child.id, vaccinations)).length || 0;
+  const dueVaccines = children?.filter(child => hasVaccineDue(child, vaccinations)).length || 0;
+  const weeklyTrackingStatus = currentWeekMissingJournal ? 'Missing this week’s check-in' : 'Weekly health tracking up to date';
+  const nextVisitType = nextVisit?.visit_type || nextVisitLabel || 'Antenatal Checkup';
+
+  useEffect(() => {
+    if (!activePregnancy?.id || pregnancyWeek === null) return;
+
+    const lmp = new Date(activePregnancy.lmp);
+    const today = new Date();
+    const nextProtocol = GHANA_ANC_PROTOCOL.find((item) => item.week >= pregnancyWeek);
+
+    if (nextProtocol) {
+      const nextDate = new Date(lmp);
+      nextDate.setDate(nextDate.getDate() + nextProtocol.week * 7);
+      if (nextDate > today || nextProtocol.week === pregnancyWeek) {
+        setNextVisitDate(nextDate.toISOString());
+        setNextVisitLabel(nextProtocol.contact);
+      }
+    }
+
+    const currentJournal = journals.find((j) => j.week_number === pregnancyWeek);
+    setCurrentWeekMissingJournal(!currentJournal);
+  }, [activePregnancy?.id, activePregnancy?.lmp, pregnancyWeek, journals]);
 
   return (
     <div className="page-content fade-in">
@@ -177,14 +222,17 @@ export const MotherDashboard = () => {
                     {new Date(nextVisit.visit_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                   </p>
                   <p className="body-sm" style={{ color: 'var(--text-secondary)' }}>
-                    {nextVisit.visit_type === 'anc1' ? 'ANC Booking' : nextVisit.visit_type === 'anc2' ? 'ANC Visit' : nextVisit.visit_type === 'anc3' ? 'ANC Visit' : nextVisit.visit_type === 'anc4' ? 'ANC Visit' : 'Antenatal Checkup'}
+                    {nextVisitType}
                   </p>
                 </>
               ) : (
                 <>
-                  <p className="body-sm" style={{ color: 'var(--text-tertiary)' }}>No visits scheduled</p>
+                  <p className="body-sm" style={{ color: 'var(--text-tertiary)' }}>No scheduled protocol visit available</p>
                 </>
               )}
+              <p className="body-sm" style={{ marginTop: '0.75rem', color: currentWeekMissingJournal ? 'var(--color-danger-700)' : 'var(--color-success-700)' }}>
+                {weeklyTrackingStatus}
+              </p>
             </div>
             <Link to="/mother/pregnancy">
               <Button size="sm" variant="outline" fullWidth>View Details</Button>
@@ -276,7 +324,7 @@ export const MotherDashboard = () => {
                     </p>
                   </div>
                   <div>
-                    {hasVaccineDue(child.id, vaccinations) ? (
+                    {hasVaccineDue(child, vaccinations) ? (
                       <Badge variant="warning" dot>Vaccine Due</Badge>
                     ) : (
                       <Badge variant="success" solid size="sm">Up to Date</Badge>

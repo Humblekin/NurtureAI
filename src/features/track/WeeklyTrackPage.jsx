@@ -6,7 +6,9 @@ import useAppStore from '../../stores/appStore';
 import useMotherStore from '../../stores/motherStore';
 import usePregnancyStore from '../../stores/pregnancyStore';
 import useWeeklyJournalStore from '../../stores/weeklyJournalStore';
+import useTimelineStore from '../../stores/timelineStore';
 import { calculateWeeksFromLMP } from '../../services/timelineService';
+import { generateId } from '../../lib/db';
 import VoiceRecorder from '../../components/ui/VoiceRecorder';
 import styles from './WeeklyTrack.module.css';
 
@@ -327,20 +329,35 @@ export default function WeeklyTrackPage() {
     if (!activePregnancy || !pregnancyWeek) return;
     setIsSaving(true);
 
-    const { voice_note_url, ...dataToSync } = formData;
-
     const journalData = {
+      id: editEntry?.id || generateId(),
       user_id: profile.id,
       pregnancy_id: activePregnancy.id,
       week_number: pregnancyWeek,
       entry_date: new Date().toISOString(),
-      ...dataToSync,
+      mother_feeling: formData.mother_feeling || '',
+      baby_movement: formData.baby_movement || '',
+      symptoms: formData.symptoms || '',
+      mood: formData.mood || '',
+      sleep_quality: formData.sleep_quality || '',
+      nutrition_notes: formData.nutrition_notes || '',
+      water_intake: formData.water_intake || '',
+      exercise_notes: formData.exercise_notes || '',
+      medication_notes: formData.medication_notes || '',
+      weight: formData.weight ? Number(formData.weight) : null,
+      blood_pressure: formData.blood_pressure || '',
+      additional_notes: formData.additional_notes || '',
+      voice_note_url: formData.voice_note_url || null,
     };
 
     if (editEntry) {
       await updateJournal(editEntry.id, journalData);
     } else {
       await saveJournal(journalData);
+    }
+
+    if (profile?.id) {
+      await useTimelineStore.getState().buildPregnancyTimeline(profile.id);
     }
 
     setIsSaving(false);

@@ -1,5 +1,7 @@
 import supabase, { isSupabaseConfigured } from '../lib/supabase';
+import { calculateWeeksFromLMP } from '../lib/pregnancy';
 import { GHANA_EPI_SCHEDULE, findOverdueVaccine } from '../constants/vaccinationSchedule';
+import { WEEKLY_SELF_CARE, getProtocolContact, getCurrentContact } from '../constants/ancProtocol';
 
 /**
  * NurtureAI — Timeline Service
@@ -48,14 +50,6 @@ const CHILD_MILESTONES = [
   { ageWeeks: 36, label: '9-Month Checkup', icon: 'Stethoscope', color: 'info', category: 'child' },
   { ageWeeks: 52, label: 'First Birthday', icon: 'Cake', color: 'secondary', category: 'child', celebration: true },
 ];
-
-function calculateWeeksFromLMP(lmp) {
-  if (!lmp) return null;
-  const start = new Date(lmp);
-  const now = new Date();
-  const diffDays = Math.floor((now - start) / (1000 * 60 * 60 * 24));
-  return Math.max(1, Math.floor(diffDays / 7));
-}
 
 function calculateChildAgeWeeks(birthDate) {
   if (!birthDate) return null;
@@ -135,8 +129,8 @@ export async function buildPregnancyTimeline(motherId) {
     .from('mothers')
     .select('*')
     .eq('profile_id', motherId)
-    .is('deleted_at', null);
-  const mother = (motherRows || [])[0];
+    .order('created_at', { ascending: true });
+  const mother = (motherRows || []).find(m => !m.deleted_at) || (motherRows || [])[0];
   if (!mother) return { events: [], progress: null };
 
   const { data: pregnancyRows } = await supabase
@@ -149,7 +143,7 @@ export async function buildPregnancyTimeline(motherId) {
 
   if (!pregnancy) return { events: [], progress: null };
 
-  const lmp = pregnancy.lmp;
+  const lmp = pregnancy.lmp || pregnancy.created_at;
   const currentWeek = calculateWeeksFromLMP(lmp);
   const trimester = getTrimester(currentWeek);
   const progress = currentWeek ? Math.min(100, Math.round((currentWeek / TOTAL_PREGNANCY_WEEKS) * 100)) : 0;
@@ -160,10 +154,10 @@ export async function buildPregnancyTimeline(motherId) {
     id: `pregnancy-start-${pregnancy.id}`,
     type: 'milestone',
     category: 'pregnancy',
-    date: pregnancy.created_at,
+    date: lmp,
     week: 0,
-    label: 'Pregnancy Registered',
-    description: `Pregnancy registered. EDD: ${formatDate(pregnancy.edd)}`,
+    label: 'Journey Begins',
+    description: `Your pregnancy journey begins${pregnancy.edd ? ` • EDD: ${formatDate(pregnancy.edd)}` : ''}`,
     icon: 'Heart',
     color: 'primary',
     completed: true,
@@ -310,6 +304,13 @@ export async function buildPregnancyTimeline(motherId) {
       data: ref,
     });
   });
+
+  const careSuggestions = generateWeeklyCareSuggestions(
+    { currentWeek, totalWeeks: TOTAL_PREGNANCY_WEEKS, trimester },
+    ancVisits,
+    lmp
+  );
+  events.push(...careSuggestions);
 
   events.sort((a, b) => new Date(b.date) - new Date(a.date));
 
@@ -526,6 +527,98 @@ export async function buildChildTimeline(childId) {
       totalGrowthChecks: growthRecords.length,
     },
   };
+}
+
+/**
+ * Generate Amina's weekly care suggestions — the institutional (GHS/WHO)
+ * actions recommended for the current pregnancy week. Rendered in the
+ * timeline as AI insight cards with an action checklist.
+ */
+export function generateWeeklyCareSuggestions(progress, ancVisits, lmp) {
+  if (!progress?.currentWeek) return [];
+
+  const currentWeek = progress.currentWeek;
+  const suggestions = [];
+
+  const dateAtWeek = (week) => {
+    if (!lmp) return new Date().toISOString();
+    const d = new Date(lmp);
+    d.setDate(d.getDate() + week * 7);
+    return d.toISOString();
+  };
+
+  const hasVisitAt = (targetWeek) => {
+    if (!lmp) return false;
+    const lmpMs = new Date(lmp).getTime();
+    return (ancVisits || []).some((v) => {
+      if (!v.visit_date) return false;
+      const vWeek = Math.floor((new Date(v.visit_date).getTime() - lmpMs) / (1000 * 60 * 60 * 24 * 7));
+      return Math.abs(vWeek - targetWeek) <= 2;
+    });
+  };
+
+  const contact = getProtocolContact(currentWeek);
+
+  if (contact) {
+    const completed = hasVisitAt(contact.week);
+    suggestions.push({
+      id: `care-contact-${contact.week}-${currentWeek}`,
+      type: 'ai_insight',
+      subtype: 'care_plan',
+      category: 'ai',
+      week: currentWeek,
+      date: dateAtWeek(currentWeek),
+      label: `Week ${currentWeek} — ${contact.contact}`,
+      description: completed
+        ? `${contact.contact} was completed at your ANC visit this week.`
+        : `${contact.contact} — your health facility recommends these for this week:`,
+      actions: contact.actions,
+      icon: 'MessageCircle',
+      color: 'accent',
+      completed,
+      status: completed ? 'completed' : 'upcoming',
+      isAI: true,
+    });
+  } else {
+    suggestions.push({
+      id: `care-selfcare-${currentWeek}`,
+      type: 'ai_insight',
+      subtype: 'care_plan',
+      category: 'ai',
+      week: currentWeek,
+      date: dateAtWeek(currentWeek),
+      label: `Week ${currentWeek} — Weekly Self-Care`,
+      description: 'Your health institution recommends these this week:',
+      actions: WEEKLY_SELF_CARE,
+      icon: 'MessageCircle',
+      color: 'accent',
+      completed: false,
+      status: 'upcoming',
+      isAI: true,
+    });
+  }
+
+  const current = getCurrentContact(currentWeek);
+  if (current && currentWeek - current.week >= 4 && !hasVisitAt(current.week)) {
+    suggestions.push({
+      id: `care-missed-${current.week}`,
+      type: 'ai_insight',
+      subtype: 'care_missed',
+      category: 'ai',
+      week: current.week,
+      date: dateAtWeek(current.week),
+      label: `Missed ${current.contact} (Week ${current.week})`,
+      description: `No ANC visit was recorded around week ${current.week}. Please visit your health facility to catch up:`,
+      actions: current.actions,
+      icon: 'AlertTriangle',
+      color: 'warning',
+      completed: false,
+      status: 'active',
+      isAI: true,
+    });
+  }
+
+  return suggestions;
 }
 
 /**

@@ -1,5 +1,6 @@
 import { chatCompletion } from '../lib/groq';
 import { normalizeBloodGroup } from '../lib/bloodGroup';
+import { calculateWeeksFromLMP, calculateEDDFromLMP } from '../lib/pregnancy';
 
 /**
  * NurtureAI — Onboarding Conversation Engine
@@ -269,21 +270,6 @@ const QUESTIONS = [
 ];
 
 // ── Helper Functions ─────────────────────────────────
-
-function calculateWeeksFromLMP(lmp) {
-  if (!lmp) return null;
-  const start = new Date(lmp);
-  const now = new Date();
-  const diffDays = Math.floor((now - start) / (1000 * 60 * 60 * 24));
-  return Math.max(1, Math.floor(diffDays / 7));
-}
-
-function calculateEDDFromLMP(lmp) {
-  if (!lmp) return null;
-  const start = new Date(lmp);
-  start.setDate(start.getDate() + 280); // 40 weeks
-  return start.toISOString().split('T')[0];
-}
 
 // ── Onboarding Engine ────────────────────────────────
 

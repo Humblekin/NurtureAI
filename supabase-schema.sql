@@ -318,10 +318,10 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at TIMESTAMPTZ,
   user_id UUID NOT NULL REFERENCES profiles(id),
-  child_name TEXT NOT NULL,
-  voice_message TEXT NOT NULL,
-  referral_id UUID NOT NULL,
-  assign_to_worker UUID NOT NULL REFERENCES profiles(id),
+  child_name TEXT,
+  voice_message TEXT,
+  referral_id UUID,
+  assign_to_worker UUID REFERENCES profiles(id),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

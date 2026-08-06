@@ -1,4 +1,5 @@
 import supabase, { isSupabaseConfigured } from '../lib/supabase';
+import { calculateWeeksFromLMP } from '../lib/pregnancy';
 import { GHANA_EPI_SCHEDULE, findOverdueVaccine, findNextDueVaccine } from '../constants/vaccinationSchedule';
 
 /**
@@ -53,14 +54,10 @@ async function queryById(table, id) {
 /**
  * Calculate pregnancy week from a start date (LMP or registration date).
  */
-function getPregnancyWeek(createdAt) {
-  if (!createdAt) return null;
-  const start = new Date(createdAt);
-  const now = new Date();
-  const diffMs = now - start;
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  const week = Math.floor(diffDays / 7);
-  return Math.min(week, 42);
+function getPregnancyWeek(startDate) {
+  if (!startDate) return null;
+  const weeks = calculateWeeksFromLMP(startDate);
+  return weeks === null ? null : Math.min(weeks, 42);
 }
 
 /**

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Syringe, Calendar } from 'lucide-react';
 import useChildStore from '../../stores/childStore';
+import useTimelineStore from '../../stores/timelineStore';
 import useAppStore from '../../stores/appStore';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
@@ -36,6 +37,7 @@ export const VaccineForm = ({ childId, initialData, onSuccess, onCancel }) => {
       : await recordVaccination(childId, formData);
     
     if (success) {
+      await useTimelineStore.getState().buildChildTimeline(childId);
       addToast({ type: 'success', message: isEdit ? 'Vaccination updated.' : 'Vaccination recorded.' });
       if (onSuccess) onSuccess();
     } else {

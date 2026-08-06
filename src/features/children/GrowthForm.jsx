@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { TrendingUp, Calendar } from 'lucide-react';
 import useChildStore from '../../stores/childStore';
+import useTimelineStore from '../../stores/timelineStore';
 import useAppStore from '../../stores/appStore';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
@@ -42,6 +43,7 @@ export const GrowthForm = ({ childId, initialData, onSuccess, onCancel }) => {
       : await recordGrowth(childId, payload);
     
     if (success) {
+      await useTimelineStore.getState().buildChildTimeline(childId);
       addToast({ type: 'success', message: isEdit ? 'Growth record updated.' : 'Growth measurement recorded.' });
       if (onSuccess) onSuccess();
     } else {

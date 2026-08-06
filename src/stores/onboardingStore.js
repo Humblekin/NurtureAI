@@ -5,6 +5,8 @@ import { upsertRecord } from '../lib/sync';
 import useMotherStore from './motherStore';
 import usePregnancyStore from './pregnancyStore';
 import useChildStore from './childStore';
+import supabase, { isSupabaseConfigured } from '../lib/supabase';
+import { calculateWeeksFromLMP } from '../lib/pregnancy';
 
 /**
  * NurtureAI — Onboarding Store
@@ -106,6 +108,23 @@ const useOnboardingStore = create((set, get) => ({
         motherProfile.phone = profileData.phone;
       }
 
+      // Best-effort: assign a community health worker to the mother
+      if (isSupabaseConfigured() && motherProfile.community) {
+        try {
+          const { data: chwRows, error: chwError } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('role', 'chw')
+            .ilike('community', `%${motherProfile.community}%`)
+            .limit(1);
+          if (!chwError && chwRows?.length > 0) {
+            motherProfile.assigned_worker_id = chwRows[0].id;
+          }
+        } catch (err) {
+          console.warn('[Onboarding] CHW lookup failed:', err);
+        }
+      }
+
       // Use motherStore to register mother (keeps store state in sync)
       const motherResult = await useMotherStore.getState().registerMother(motherProfile);
       if (!motherResult.success) {
@@ -122,6 +141,39 @@ const useOnboardingStore = create((set, get) => ({
         const pregResult = await usePregnancyStore.getState().registerPregnancy(pregnancyProfile);
         if (pregResult.success) {
           pregnancyId = pregResult.data.id;
+        }
+      }
+
+      // Create initial pregnancy weekly journal entry
+      if (pregnancyId) {
+        try {
+          const weekNumber = pregnancyProfile?.lmp
+            ? calculateWeeksFromLMP(pregnancyProfile.lmp) || 1
+            : 1;
+          const journalEntry = {
+            id: generateId(),
+            user_id: engine.profileId,
+            pregnancy_id: pregnancyId,
+            week_number: weekNumber,
+            entry_date: new Date().toISOString(),
+            mother_feeling: '',
+            baby_movement: '',
+            symptoms: '',
+            mood: '',
+            sleep_quality: '',
+            nutrition_notes: '',
+            water_intake: '',
+            exercise_notes: '',
+            medication_notes: '',
+            weight: '',
+            blood_pressure: '',
+            additional_notes: `Welcome! This entry was created during onboarding for week ${weekNumber}. Please add your weekly health notes here.`,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          await upsertRecord('weekly_journals', journalEntry);
+        } catch (err) {
+          console.warn('[Onboarding] Initial weekly journal creation failed:', err);
         }
       }
 

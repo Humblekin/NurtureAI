@@ -95,8 +95,11 @@ function MilestoneCard({ event, isExpanded, onToggle }) {
 
   return (
     <motion.div
-      className={`${styles.eventCard} ${event.isAI ? styles.aiInsightCard : ''} ${event.type === 'overdue' ? styles.overdueCard : ''} ${isExpanded ? styles.eventCardExpanded : ''}`}
-      style={event.isAI ? {
+      className={`${styles.eventCard} ${event.isAI ? styles.aiInsightCard : ''} ${event.type === 'overdue' ? styles.overdueCard : ''} ${event.subtype === 'care_missed' ? styles.careMissedCard : ''} ${isExpanded ? styles.eventCardExpanded : ''}`}
+      style={event.subtype === 'care_missed' ? {
+        '--card-accent': 'var(--color-warning-400)',
+        '--card-bg': 'var(--color-warning-50)',
+      } : event.isAI ? {
         '--card-accent': 'var(--color-accent-400)',
         '--card-bg': 'var(--color-accent-50)',
       } : event.type === 'overdue' ? {
@@ -117,8 +120,8 @@ function MilestoneCard({ event, isExpanded, onToggle }) {
             <div
               className={`${styles.eventIconSmall} ${event.completed ? styles.eventIconSmallCompleted : ''} ${event.isAI ? styles.aiIconSmall : ''}`}
               style={{
-                background: event.isAI ? 'var(--color-accent-100)' : colors.bg,
-                color: event.isAI ? 'var(--color-accent-600)' : colors.icon,
+                background: event.subtype === 'care_missed' ? 'var(--color-warning-100)' : event.isAI ? 'var(--color-accent-100)' : colors.bg,
+                color: event.subtype === 'care_missed' ? 'var(--color-warning-600)' : event.isAI ? 'var(--color-accent-600)' : colors.icon,
               }}
             >
               {event.isAI ? <MessageCircle size={16} /> : <IconComponent size={16} />}
@@ -127,6 +130,16 @@ function MilestoneCard({ event, isExpanded, onToggle }) {
               <h4 className={styles.eventCardLabel}>{event.label}</h4>
               {event.description && (
                 <p className={styles.eventCardDesc}>{event.description}</p>
+              )}
+              {event.actions?.length > 0 && (
+                <ul className={styles.careActionList}>
+                  {event.actions.map((action, i) => (
+                    <li key={i} className={styles.careActionItem}>
+                      <Check size={12} className={styles.careActionCheck} />
+                      <span>{action}</span>
+                    </li>
+                  ))}
+                </ul>
               )}
               <div className={styles.eventCardMeta}>
                 {event.date && (
