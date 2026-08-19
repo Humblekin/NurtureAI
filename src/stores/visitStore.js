@@ -58,6 +58,29 @@ const useVisitStore = create((set, get) => ({
     }
   },
 
+  fetchRecentVisits: async (limit = 10) => {
+    set({ isLoading: true, error: null });
+    if (!isSupabaseConfigured()) {
+      set({ visits: [], isLoading: false });
+      return [];
+    }
+    try {
+      const { data, error } = await supabase
+        .from('visits')
+        .select('*')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      set({ visits: data || [], isLoading: false });
+      return data || [];
+    } catch (error) {
+      console.error('Failed to fetch recent visits:', error);
+      set({ error: error.message, isLoading: false });
+      return [];
+    }
+  },
+
   fetchVisitsByPatient: async (patientId) => {
     set({ isLoading: true, error: null });
     if (!isSupabaseConfigured()) {
@@ -78,6 +101,31 @@ const useVisitStore = create((set, get) => ({
       console.error('Failed to fetch patient visits:', error);
       set({ error: error.message, isLoading: false });
       return [];
+    }
+  },
+
+  // Load one visit by id (edit mode). A direct hit on /visits/:id/edit must
+  // work even when the in-memory list is empty (e.g. page refresh).
+  fetchVisitById: async (id) => {
+    set({ isLoading: true, error: null });
+    if (!isSupabaseConfigured()) {
+      set({ isLoading: false });
+      return null;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('visits')
+        .select('*')
+        .eq('id', id)
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (error) throw error;
+      set({ isLoading: false });
+      return data || null;
+    } catch (error) {
+      console.error('Failed to fetch visit:', error);
+      set({ error: error.message, isLoading: false });
+      return null;
     }
   },
 
@@ -164,6 +212,11 @@ const useVisitStore = create((set, get) => ({
       return [];
     }
   },
+  reset: () => set({
+    visits: [],
+    isLoading: false,
+    error: null,
+  }),
 }));
 
 function getExisting(state, id) {

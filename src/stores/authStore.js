@@ -7,6 +7,11 @@ import useChildStore from './childStore';
 import useTimelineStore from './timelineStore';
 import useNotificationStore from './notificationStore';
 import useOnboardingStore from './onboardingStore';
+import useVisitStore from './visitStore';
+import useReferralStore from './referralStore';
+import useWeeklyJournalStore from './weeklyJournalStore';
+import useAppStore from './appStore';
+import { clearOutbox } from '../lib/sync';
 
 /**
  * NurtureAI — Auth Store
@@ -112,6 +117,10 @@ const useAuthStore = create(
                 useTimelineStore.getState().reset();
                 useNotificationStore.getState().reset();
                 useOnboardingStore.getState().reset();
+                useVisitStore.getState().reset();
+                useReferralStore.getState().reset();
+                useWeeklyJournalStore.getState().reset();
+                useAppStore.getState().clearCurrentPatient();
 
                 set({
                   user: null,
@@ -123,10 +132,25 @@ const useAuthStore = create(
               } else {
                 // Forced sign-out (token refresh failed, etc.)
                 console.warn('[Auth] Session lost (forced sign-out). Please sign in again.');
+                // Clear ALL data stores + outbox to prevent data leaking between users
+                useMotherStore.getState().reset();
+                usePregnancyStore.getState().reset();
+                useChildStore.getState().reset();
+                useTimelineStore.getState().reset();
+                useNotificationStore.getState().reset();
+                useOnboardingStore.getState().reset();
+                useVisitStore.getState().reset();
+                useReferralStore.getState().reset();
+                useWeeklyJournalStore.getState().reset();
+                useAppStore.getState().clearCurrentPatient();
+                clearOutbox();
                 set({
+                  user: null,
+                  profile: null,
                   session: null,
                   isAuthenticated: false,
                 });
+                localStorage.removeItem('nurtureai-auth');
               }
               intentionalSignOut = false;
             }
@@ -191,11 +215,16 @@ const useAuthStore = create(
         }
 
         try {
+          // Public self-registration is always a mother. Worker/admin accounts
+          // are created by an admin through a dedicated, authorized flow.
           const { data, error } = await supabase.auth.signUp({
             email,
             password,
             options: {
-              data: profileData,
+              data: {
+                ...profileData,
+                role: ROLES.MOTHER,
+              },
             },
           });
 
@@ -239,6 +268,11 @@ const useAuthStore = create(
         useTimelineStore.getState().reset();
         useNotificationStore.getState().reset();
         useOnboardingStore.getState().reset();
+        useVisitStore.getState().reset();
+        useReferralStore.getState().reset();
+        useWeeklyJournalStore.getState().reset();
+        useAppStore.getState().clearCurrentPatient();
+        clearOutbox();
 
         set({
           user: null,

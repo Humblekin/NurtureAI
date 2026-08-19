@@ -485,6 +485,23 @@ export async function buildChildTimeline(childId) {
     });
   });
 
+  const childReferrals = await queryRows('referrals', 'patient_id', child.id);
+  childReferrals.forEach(ref => {
+    events.push({
+      id: `child-referral-${ref.id}`,
+      type: 'referral',
+      category: 'referral',
+      date: ref.created_at,
+      label: `Referral — ${ref.urgency || 'routine'}`,
+      description: ref.reason || '',
+      icon: 'ArrowRightCircle',
+      color: ref.urgency === 'emergency' ? 'danger' : 'warning',
+      completed: ref.status === 'completed',
+      status: ref.status === 'completed' ? 'completed' : ref.status === 'pending' ? 'upcoming' : 'active',
+      data: ref,
+    });
+  });
+
   events.sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const pendingActions = [];

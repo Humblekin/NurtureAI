@@ -14,7 +14,7 @@ const PORTAL_NAMES = {
 };
 
 const PORTAL_HOME = {
-  [ROLES.MOTHER]: '/mother/dashboard',
+  [ROLES.MOTHER]: '/mother/amina',
   [ROLES.CHW]: '/chw/dashboard',
   [ROLES.NURSE]: '/nurse/dashboard',
   [ROLES.DOCTOR]: '/doctor/dashboard',

@@ -1,4 +1,5 @@
 import supabase, { isSupabaseConfigured } from './supabase';
+import useAppStore from '../stores/appStore';
 
 /**
  * NurtureAI — Data Access (online + offline)
@@ -12,6 +13,7 @@ import supabase, { isSupabaseConfigured } from './supabase';
 
 const OUTBOX_KEY = 'nurtureai_outbox_v1';
 const RETRY_INTERVAL_MS = 30000;
+const MAX_ATTEMPTS = 5;
 
 function isBrowser() {
   return typeof window !== 'undefined' && typeof navigator !== 'undefined';
@@ -46,16 +48,35 @@ function isNetworkError(error) {
     || msg.includes('load failed');
 }
 
+function updateSyncCounts() {
+  if (!isBrowser()) return;
+  const count = getPendingSyncCount();
+  useAppStore.getState().setPendingSyncCount(count);
+}
+
 function enqueue(operation, tableName, recordId, data) {
-  const ops = readOutbox().filter((op) => op.table !== tableName || op.recordId !== recordId);
-  ops.push({
-    op: operation,
-    table: tableName,
-    recordId,
-    data: operation === 'UPSERT' ? data : undefined,
-    ts: Date.now(),
-  });
+  const ops = readOutbox();
+  const existingIndex = ops.findIndex((op) => op.table === tableName && op.recordId === recordId);
+  if (existingIndex >= 0) {
+    const existing = ops[existingIndex];
+    ops[existingIndex] = {
+      ...existing,
+      op: operation,
+      data: operation === 'UPSERT' ? data : undefined,
+      ts: Date.now(),
+    };
+  } else {
+    ops.push({
+      op: operation,
+      table: tableName,
+      recordId,
+      data: operation === 'UPSERT' ? data : undefined,
+      attempts: 0,
+      ts: Date.now(),
+    });
+  }
   writeOutbox(ops);
+  updateSyncCounts();
   console.warn(`[Sync] Offline — ${operation} for ${tableName}/${recordId} queued for later sync.`);
 }
 
@@ -83,16 +104,19 @@ export async function upsertRecord(tableName, data) {
 
   if (!isSupabaseConfigured() || (isBrowser() && navigator.onLine === false)) {
     enqueue('UPSERT', tableName, data.id, data);
+    useAppStore.getState().markDataChanged();
     return true;
   }
 
   try {
     const { error } = await supabase.from(tableName).upsert(data, { onConflict: 'id' });
     if (error) throw error;
+    useAppStore.getState().markDataChanged();
     return true;
   } catch (error) {
     if (isNetworkError(error)) {
       enqueue('UPSERT', tableName, data.id, data);
+      useAppStore.getState().markDataChanged();
       return true;
     }
     console.error(`[Supabase] Upsert failed for ${tableName}/${data.id}:`, error.message);
@@ -110,16 +134,19 @@ export async function upsertRecord(tableName, data) {
 export async function deleteRecord(tableName, id) {
   if (!isSupabaseConfigured() || (isBrowser() && navigator.onLine === false)) {
     enqueue('DELETE', tableName, id);
+    useAppStore.getState().markDataChanged();
     return true;
   }
 
   try {
     const { error } = await supabase.from(tableName).delete().eq('id', id);
     if (error) throw error;
+    useAppStore.getState().markDataChanged();
     return true;
   } catch (error) {
     if (isNetworkError(error)) {
       enqueue('DELETE', tableName, id);
+      useAppStore.getState().markDataChanged();
       return true;
     }
     console.error(`[Supabase] Delete failed for ${tableName}/${id}:`, error.message);
@@ -144,9 +171,12 @@ export function getPendingSyncCount() {
 }
 
 /**
- * Push queued writes to Supabase (FIFO). Permanently failing entries are
- * dropped so they don't block the queue forever; on a network error it
- * stops and keeps the rest for the next attempt.
+ * Push queued writes to Supabase (FIFO). On a network error it stops and
+ * keeps the rest for the next attempt. A write that keeps failing for other
+ * reasons (e.g. a rejected RLS rule) is never dropped — it is moved to the
+ * end of the queue so it cannot block the other pending writes, and the
+ * sync status is set to 'error' so the user is alerted that something did
+ * not reach the cloud.
  * @returns {Promise<{flushed: number, remaining: number}>}
  */
 export async function flushPendingSyncs() {
@@ -154,10 +184,27 @@ export async function flushPendingSyncs() {
     return { flushed: 0, remaining: getPendingSyncCount() };
   }
 
+  // Only sync while a user is signed in. After sign-out the outbox is
+  // cleared, but this guards the race window where a flush is in flight.
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      return { flushed: 0, remaining: getPendingSyncCount() };
+    }
+  } catch {
+    return { flushed: 0, remaining: getPendingSyncCount() };
+  }
+
   const ops = readOutbox();
-  if (ops.length === 0) return { flushed: 0, remaining: 0 };
+  if (ops.length === 0) {
+    useAppStore.getState().setSyncStatus('synced');
+    return { flushed: 0, remaining: 0 };
+  }
+
+  useAppStore.getState().setSyncStatus('syncing');
 
   let flushed = 0;
+  let hasErrors = false;
   const remaining = [];
   for (let i = 0; i < ops.length; i++) {
     const op = ops[i];
@@ -169,10 +216,22 @@ export async function flushPendingSyncs() {
         remaining.push(...ops.slice(i));
         break;
       }
-      console.error(`[Sync] Dropping failed ${op.op} for ${op.table}/${op.recordId}:`, error.message);
+      hasErrors = true;
+      const attempts = (op.attempts || 0) + 1;
+      console.error(`[Sync] Sync failed for ${op.op} ${op.table}/${op.recordId} (attempt ${attempts}/${MAX_ATTEMPTS}):`, error.message);
+      if (attempts < MAX_ATTEMPTS) {
+        remaining.push({ ...op, attempts });
+      } else {
+        // Keep the data, never drop it: park the op at the end of the queue
+        // so it doesn't block the rest, and surface a visible sync error.
+        remaining.push({ ...op, attempts, stalled: true });
+      }
     }
   }
   writeOutbox(remaining);
+  updateSyncCounts();
+
+  useAppStore.getState().setSyncStatus(hasErrors ? 'error' : 'synced');
 
   if (flushed > 0) {
     console.log(`[Sync] Synced ${flushed} pending ${flushed === 1 ? 'change' : 'changes'}.`);
@@ -181,6 +240,22 @@ export async function flushPendingSyncs() {
     console.warn(`[Sync] ${flushed} synced, ${remaining.length} still pending.`);
   }
   return { flushed, remaining: remaining.length };
+}
+
+/**
+ * Remove every queued write from this device. Called on sign-out so queued
+ * records from one user can never be pushed to the cloud under another user's
+ * session.
+ */
+export function clearOutbox() {
+  if (!isBrowser()) return;
+  try {
+    window.localStorage.removeItem(OUTBOX_KEY);
+    updateSyncCounts();
+    useAppStore.getState().setSyncStatus('idle');
+  } catch (error) {
+    console.error('[Sync] Failed to clear outbox:', error);
+  }
 }
 
 let autoFlushStarted = false;
@@ -200,4 +275,4 @@ function startAutoFlush() {
 }
 startAutoFlush();
 
-export default { upsertRecord, deleteRecord, flushPendingSyncs, getPendingSyncs, getPendingSyncCount };
+export default { upsertRecord, deleteRecord, flushPendingSyncs, getPendingSyncs, getPendingSyncCount, clearOutbox };

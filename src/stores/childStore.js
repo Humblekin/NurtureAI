@@ -31,13 +31,35 @@ const useChildStore = create((set, get) => ({
       if (error) throw error;
       const children = data || [];
       set({ children, isLoading: false });
-      children.forEach(child => {
-        get().fetchVaccinations(child.id);
-        get().fetchGrowthRecords(child.id);
-      });
+      await get().fetchChildData(children);
       return children;
     } catch (error) {
       console.error('Failed to fetch all children:', error);
+      set({ error: error.message, isLoading: false });
+      return [];
+    }
+  },
+
+  // Lightweight fetch of the children list only (no vaccinations/growth data).
+  // Used where only names are needed, e.g. to show patient names in visit lists.
+  fetchChildrenList: async () => {
+    set({ isLoading: true, error: null });
+    if (!isSupabaseConfigured()) {
+      set({ children: [], isLoading: false });
+      return [];
+    }
+    try {
+      const { data, error } = await supabase
+        .from('children')
+        .select('*')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const children = data || [];
+      set({ children, isLoading: false });
+      return children;
+    } catch (error) {
+      console.error('Failed to fetch children list:', error);
       set({ error: error.message, isLoading: false });
       return [];
     }
@@ -59,17 +81,57 @@ const useChildStore = create((set, get) => ({
       if (error) throw error;
       const children = data || [];
       set({ children, isLoading: false });
-
-      children.forEach(child => {
-        get().fetchVaccinations(child.id);
-        get().fetchGrowthRecords(child.id);
-      });
-
+      await get().fetchChildData(children);
       return children;
     } catch (error) {
       console.error('Failed to fetch children:', error);
       set({ error: error.message, isLoading: false });
       return [];
+    }
+  },
+
+  // Batch-load vaccinations and growth records for a set of children with a
+  // single IN query each, instead of firing one query per child (N+1).
+  fetchChildData: async (children) => {
+    if (!isSupabaseConfigured() || !children || children.length === 0) return;
+    const ids = children.map(c => c.id);
+    try {
+      const [vaxResult, growthResult] = await Promise.all([
+        supabase
+          .from('vaccinations')
+          .select('*')
+          .in('child_id', ids)
+          .is('deleted_at', null),
+        supabase
+          .from('growth_records')
+          .select('*')
+          .in('child_id', ids)
+          .is('deleted_at', null),
+      ]);
+      if (vaxResult.error) throw vaxResult.error;
+      if (growthResult.error) throw growthResult.error;
+
+      const vaxMap = {};
+      (vaxResult.data || []).forEach(v => {
+        (vaxMap[v.child_id] = vaxMap[v.child_id] || []).push(v);
+      });
+      Object.values(vaxMap).forEach(arr =>
+        arr.sort((a, b) => new Date(a.date_given) - new Date(b.date_given))
+      );
+      const growthMap = {};
+      (growthResult.data || []).forEach(g => {
+        (growthMap[g.child_id] = growthMap[g.child_id] || []).push(g);
+      });
+      Object.values(growthMap).forEach(arr =>
+        arr.sort((a, b) => new Date(a.recorded_date) - new Date(b.recorded_date))
+      );
+
+      set(state => ({
+        vaccinations: { ...state.vaccinations, ...vaxMap },
+        growthRecords: { ...state.growthRecords, ...growthMap },
+      }));
+    } catch (error) {
+      console.error('Failed to fetch child vaccination/growth data:', error);
     }
   },
 
@@ -131,7 +193,7 @@ const useChildStore = create((set, get) => ({
         .eq('child_id', childId)
         .is('deleted_at', null);
       if (error) throw error;
-      const vax = data || [];
+      const vax = (data || []).sort((a, b) => new Date(a.date_given) - new Date(b.date_given));
       set((state) => ({
         vaccinations: { ...state.vaccinations, [childId]: vax }
       }));
@@ -158,7 +220,7 @@ const useChildStore = create((set, get) => ({
       set((state) => ({
         vaccinations: {
           ...state.vaccinations,
-          [childId]: [...(state.vaccinations[childId] || []), newVax]
+          [childId]: [...(state.vaccinations[childId] || []), newVax].sort((a, b) => new Date(a.date_given) - new Date(b.date_given)),
         },
         isLoading: false,
       }));
@@ -283,6 +345,31 @@ const useChildStore = create((set, get) => ({
       }));
       return { success: true };
     } catch (error) {
+      set({ error: error.message });
+      return { success: false, error: error.message };
+    }
+  },
+
+  // Verify a mother-registered child record as a healthcare worker. Confirms
+  // the mother-provided details; provenance (data_source) stays untouched.
+  verifyChild: async (id, workerId) => {
+    try {
+      const existing = getExistingChild(get(), id);
+      const updated = {
+        ...existing,
+        verified: true,
+        verified_by: workerId || null,
+        verified_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      await upsertRecord('children', updated);
+      set((state) => ({
+        children: state.children.map(c => c.id === id ? updated : c),
+        currentChild: state.currentChild?.id === id ? updated : state.currentChild,
+      }));
+      return { success: true, data: updated };
+    } catch (error) {
+      console.error('Failed to verify child:', error);
       set({ error: error.message });
       return { success: false, error: error.message };
     }

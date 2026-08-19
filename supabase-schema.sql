@@ -3,11 +3,16 @@
 -- Run this in Supabase SQL Editor
 -- Safe to re-run (drops old policies/triggers first)
 --
--- Regenerated from the LIVE database (project egfdluvekjygfsnxczqi) on 2026-08-01.
--- Includes soft-delete columns (deleted_at), latest NOT NULL constraints,
--- and the newer columns (preferred_language, ai_conversations summary/topics/
--- message_count/last_message/started_at, notifications user_id/child_name/
--- voice_message/referral_id/assign_to_worker).
+-- Canonical schema. Includes the provenance reframe:
+--   * data_source / verified / verified_by / verified_at on clinical tables
+--   * mother_reports (mother-reported info awaiting worker confirmation)
+--   * district_officer read-only access
+--   * RLS restrictions: clinical tables are worker-write; mother INSERTs are
+--     forced to data_source='mother_registered' AND verified=false; mother
+--     UPDATE policies remain permissive so mothers can edit their own info
+--     without downgrading worker-verified records.
+-- Supabase migrations under supabase/migrations/ apply the same changes
+-- additively to the live project (id egfdluvekjygfsnxczqi).
 -- ============================================
 
 -- Enable UUID extension
@@ -31,13 +36,16 @@ DROP TRIGGER IF EXISTS update_milestones_updated_at ON milestones;
 DROP TRIGGER IF EXISTS update_ai_conversations_updated_at ON ai_conversations;
 DROP TRIGGER IF EXISTS update_notifications_updated_at ON notifications;
 DROP TRIGGER IF EXISTS update_weekly_journals_updated_at ON weekly_journals;
+DROP TRIGGER IF EXISTS update_mother_reports_updated_at ON mother_reports;
 
 -- Drop existing functions
 DROP FUNCTION IF EXISTS public.handle_new_user() CASCADE;
+DROP FUNCTION IF EXISTS public.claim_mother(text, text) CASCADE;
 DROP FUNCTION IF EXISTS public.update_updated_at() CASCADE;
 DROP FUNCTION IF EXISTS public.user_role() CASCADE;
 
 -- Drop existing tables (in reverse dependency order) — COMMENT OUT if you have data
+-- DROP TABLE IF EXISTS mother_reports CASCADE;
 -- DROP TABLE IF EXISTS weekly_journals CASCADE;
 -- DROP TABLE IF EXISTS ai_conversations CASCADE;
 -- DROP TABLE IF EXISTS referrals CASCADE;
@@ -89,9 +97,9 @@ CREATE TABLE IF NOT EXISTS profiles (
   full_name TEXT,
   phone TEXT NOT NULL,
   role TEXT CHECK (role IN ('mother', 'chw', 'nurse', 'doctor', 'district_officer', 'admin')),
-  facility_id UUID NOT NULL REFERENCES facilities(id),
+  facility_id UUID REFERENCES facilities(id),
   community TEXT NOT NULL,
-  avatar_url TEXT NOT NULL,
+  avatar_url TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at TIMESTAMPTZ,
@@ -117,7 +125,12 @@ CREATE TABLE IF NOT EXISTS mothers (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at TIMESTAMPTZ,
   facility_id UUID NOT NULL REFERENCES facilities(id),
-  birth_facility_id UUID NOT NULL REFERENCES facilities(id)
+  birth_facility_id UUID NOT NULL REFERENCES facilities(id),
+  data_source TEXT NOT NULL DEFAULT 'healthcare_worker'
+    CHECK (data_source IN ('healthcare_worker', 'mother_reported', 'mother_registered', 'system')),
+  verified BOOLEAN NOT NULL DEFAULT false,
+  verified_by UUID REFERENCES profiles(id),
+  verified_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -135,7 +148,12 @@ CREATE TABLE IF NOT EXISTS pregnancies (
   notes TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  deleted_at TIMESTAMPTZ
+  deleted_at TIMESTAMPTZ,
+  data_source TEXT NOT NULL DEFAULT 'healthcare_worker'
+    CHECK (data_source IN ('healthcare_worker', 'mother_reported', 'mother_registered', 'system')),
+  verified BOOLEAN NOT NULL DEFAULT false,
+  verified_by UUID REFERENCES profiles(id),
+  verified_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -156,7 +174,12 @@ CREATE TABLE IF NOT EXISTS antenatal_visits (
   assessed_risk_level TEXT NOT NULL CHECK (assessed_risk_level IN ('low', 'medium', 'high', 'critical')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  deleted_at TIMESTAMPTZ
+  deleted_at TIMESTAMPTZ,
+  data_source TEXT NOT NULL DEFAULT 'healthcare_worker'
+    CHECK (data_source IN ('healthcare_worker', 'mother_reported', 'mother_registered', 'system')),
+  verified BOOLEAN NOT NULL DEFAULT false,
+  verified_by UUID REFERENCES profiles(id),
+  verified_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -173,7 +196,12 @@ CREATE TABLE IF NOT EXISTS children (
   notes TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  deleted_at TIMESTAMPTZ
+  deleted_at TIMESTAMPTZ,
+  data_source TEXT NOT NULL DEFAULT 'healthcare_worker'
+    CHECK (data_source IN ('healthcare_worker', 'mother_reported', 'mother_registered', 'system')),
+  verified BOOLEAN NOT NULL DEFAULT false,
+  verified_by UUID REFERENCES profiles(id),
+  verified_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -190,7 +218,12 @@ CREATE TABLE IF NOT EXISTS vaccinations (
   notes TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  deleted_at TIMESTAMPTZ
+  deleted_at TIMESTAMPTZ,
+  data_source TEXT NOT NULL DEFAULT 'healthcare_worker'
+    CHECK (data_source IN ('healthcare_worker', 'mother_reported', 'mother_registered', 'system')),
+  verified BOOLEAN NOT NULL DEFAULT false,
+  verified_by UUID REFERENCES profiles(id),
+  verified_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -207,7 +240,12 @@ CREATE TABLE IF NOT EXISTS growth_records (
   notes TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  deleted_at TIMESTAMPTZ
+  deleted_at TIMESTAMPTZ,
+  data_source TEXT NOT NULL DEFAULT 'healthcare_worker'
+    CHECK (data_source IN ('healthcare_worker', 'mother_reported', 'mother_registered', 'system')),
+  verified BOOLEAN NOT NULL DEFAULT false,
+  verified_by UUID REFERENCES profiles(id),
+  verified_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -221,7 +259,12 @@ CREATE TABLE IF NOT EXISTS milestones (
   notes TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  deleted_at TIMESTAMPTZ
+  deleted_at TIMESTAMPTZ,
+  data_source TEXT NOT NULL DEFAULT 'healthcare_worker'
+    CHECK (data_source IN ('healthcare_worker', 'mother_reported', 'mother_registered', 'system')),
+  verified BOOLEAN NOT NULL DEFAULT false,
+  verified_by UUID REFERENCES profiles(id),
+  verified_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -258,7 +301,12 @@ CREATE TABLE IF NOT EXISTS referrals (
   notes TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  deleted_at TIMESTAMPTZ
+  deleted_at TIMESTAMPTZ,
+  data_source TEXT NOT NULL DEFAULT 'healthcare_worker'
+    CHECK (data_source IN ('healthcare_worker', 'mother_reported', 'mother_registered', 'system')),
+  verified BOOLEAN NOT NULL DEFAULT false,
+  verified_by UUID REFERENCES profiles(id),
+  verified_at TIMESTAMPTZ
 );
 
 -- ============================================
@@ -326,6 +374,30 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 -- ============================================
+-- 16. MOTHER REPORTS (mother-reported info awaiting
+--     worker confirmation; Amina-collected data lands here)
+-- ============================================
+CREATE TABLE IF NOT EXISTS mother_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  mother_id UUID NOT NULL REFERENCES mothers(id) ON DELETE CASCADE,
+  reporter_id UUID NOT NULL REFERENCES profiles(id),
+  report_type TEXT NOT NULL DEFAULT 'note'
+    CHECK (report_type IN ('note', 'symptom', 'measurement', 'concern', 'request')),
+  detail TEXT NOT NULL,
+  value NUMERIC,
+  unit TEXT,
+  reported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'acknowledged', 'verified', 'dismissed')),
+  verified_by UUID REFERENCES profiles(id),
+  verified_at TIMESTAMPTZ,
+  resolved_record_id UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ
+);
+
+-- ============================================
 -- INDEXES (safe to re-run)
 -- ============================================
 CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
@@ -344,6 +416,8 @@ CREATE INDEX IF NOT EXISTS idx_referrals_status ON referrals(status);
 CREATE INDEX IF NOT EXISTS idx_notifications_patient ON notifications(patient_id);
 CREATE INDEX IF NOT EXISTS idx_weekly_journals_pregnancy ON weekly_journals(pregnancy_id);
 CREATE INDEX IF NOT EXISTS idx_weekly_journals_user ON weekly_journals(user_id);
+CREATE INDEX IF NOT EXISTS idx_mother_reports_mother ON mother_reports(mother_id);
+CREATE INDEX IF NOT EXISTS idx_mother_reports_status ON mother_reports(status);
 
 -- ============================================
 -- ROW LEVEL SECURITY (RLS)
@@ -371,6 +445,7 @@ ALTER TABLE referrals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_conversations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE weekly_journals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mother_reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE facilities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE districts ENABLE ROW LEVEL SECURITY;
 
@@ -465,12 +540,42 @@ BEGIN
   DROP POLICY IF EXISTS "Facilities: admin manage" ON facilities;
   DROP POLICY IF EXISTS "Districts: public read" ON districts;
   DROP POLICY IF EXISTS "Districts: admin manage" ON districts;
+  -- Mother Reports
+  DROP POLICY IF EXISTS "MotherReports: mothers insert own" ON mother_reports;
+  DROP POLICY IF EXISTS "MotherReports: mothers read own" ON mother_reports;
+  DROP POLICY IF EXISTS "MotherReports: mothers update own" ON mother_reports;
+  DROP POLICY IF EXISTS "MotherReports: health workers read assigned" ON mother_reports;
+  DROP POLICY IF EXISTS "MotherReports: health workers update assigned" ON mother_reports;
+  -- District Officer reads
+  DROP POLICY IF EXISTS "Mothers: district read" ON mothers;
+  DROP POLICY IF EXISTS "Children: district read" ON children;
+  DROP POLICY IF EXISTS "Pregnancies: district read" ON pregnancies;
+  DROP POLICY IF EXISTS "ANV: district read" ON antenatal_visits;
+  DROP POLICY IF EXISTS "Vax: district read" ON vaccinations;
+  DROP POLICY IF EXISTS "Growth: district read" ON growth_records;
+  DROP POLICY IF EXISTS "Milestones: district read" ON milestones;
+  DROP POLICY IF EXISTS "Referrals: district read" ON referrals;
 END $$;
 
 -- Profiles
-CREATE POLICY "Profiles: public read" ON profiles FOR SELECT USING (true);
+-- Phase 5 hardening: mothers can only read their own row plus health-worker
+-- rows; health workers/admins keep read-all. Role can only change when the
+-- caller is already an admin (no self-service role escalation).
+CREATE POLICY "Profiles: public read" ON profiles FOR SELECT USING (
+  auth.uid() = id
+  OR public.user_role() IN ('chw', 'nurse', 'doctor', 'district_officer', 'admin')
+  OR role IN ('chw', 'nurse', 'doctor', 'district_officer', 'admin')
+);
 CREATE POLICY "Profiles: insert own" ON profiles FOR INSERT WITH CHECK (auth.uid() = id);
-CREATE POLICY "Profiles: update own" ON profiles FOR UPDATE USING (auth.uid() = id);
+CREATE POLICY "Profiles: update own" ON profiles FOR UPDATE
+  USING (auth.uid() = id)
+  WITH CHECK (
+    auth.uid() = id
+    AND (
+      role = (SELECT role FROM public.profiles WHERE id = auth.uid())
+      OR public.user_role() = 'admin'
+    )
+  );
 
 -- Mothers
 CREATE POLICY "Mothers: health workers read all" ON mothers
@@ -480,7 +585,11 @@ CREATE POLICY "Mothers: mothers read own" ON mothers
 CREATE POLICY "Mothers: insert for health workers" ON mothers
   FOR INSERT WITH CHECK (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
 CREATE POLICY "Mothers: mothers insert own" ON mothers
-  FOR INSERT WITH CHECK (profile_id = auth.uid());
+  FOR INSERT WITH CHECK (
+    profile_id = auth.uid()
+    AND data_source = 'mother_registered'
+    AND verified = false
+  );
 CREATE POLICY "Mothers: update for health workers" ON mothers
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
 CREATE POLICY "Mothers: mothers update own" ON mothers
@@ -500,6 +609,8 @@ CREATE POLICY "Pregnancies: insert for health workers" ON pregnancies
 CREATE POLICY "Pregnancies: mothers insert own" ON pregnancies
   FOR INSERT WITH CHECK (
     EXISTS (SELECT 1 FROM mothers WHERE id = mother_id AND profile_id = auth.uid())
+    AND data_source = 'mother_registered'
+    AND verified = false
   );
 CREATE POLICY "Pregnancies: update for health workers" ON pregnancies
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
@@ -521,20 +632,8 @@ CREATE POLICY "ANV: read access" ON antenatal_visits
   );
 CREATE POLICY "ANV: insert for health workers" ON antenatal_visits
   FOR INSERT WITH CHECK (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
-CREATE POLICY "ANV: mothers insert own" ON antenatal_visits
-  FOR INSERT WITH CHECK (
-    EXISTS (SELECT 1 FROM pregnancies p
-      JOIN mothers m ON m.id = p.mother_id
-      WHERE p.id = pregnancy_id AND m.profile_id = auth.uid())
-  );
 CREATE POLICY "ANV: update for health workers" ON antenatal_visits
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
-CREATE POLICY "ANV: mothers update own" ON antenatal_visits
-  FOR UPDATE USING (
-    EXISTS (SELECT 1 FROM pregnancies p
-      JOIN mothers m ON m.id = p.mother_id
-      WHERE p.id = pregnancy_id AND m.profile_id = auth.uid())
-  );
 CREATE POLICY "ANV: delete for health workers" ON antenatal_visits
   FOR DELETE USING (public.user_role() IN ('nurse', 'doctor', 'admin'));
 
@@ -550,6 +649,8 @@ CREATE POLICY "Children: insert for health workers" ON children
 CREATE POLICY "Children: mothers insert own" ON children
   FOR INSERT WITH CHECK (
     EXISTS (SELECT 1 FROM mothers WHERE id = mother_id AND profile_id = auth.uid())
+    AND data_source = 'mother_registered'
+    AND verified = false
   );
 CREATE POLICY "Children: update for health workers" ON children
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
@@ -571,20 +672,8 @@ CREATE POLICY "Vax: read access" ON vaccinations
   );
 CREATE POLICY "Vax: insert for health workers" ON vaccinations
   FOR INSERT WITH CHECK (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
-CREATE POLICY "Vax: mothers insert own" ON vaccinations
-  FOR INSERT WITH CHECK (
-    EXISTS (SELECT 1 FROM children c
-      JOIN mothers m ON m.id = c.mother_id
-      WHERE c.id = child_id AND m.profile_id = auth.uid())
-  );
 CREATE POLICY "Vax: update for health workers" ON vaccinations
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
-CREATE POLICY "Vax: mothers update own" ON vaccinations
-  FOR UPDATE USING (
-    EXISTS (SELECT 1 FROM children c
-      JOIN mothers m ON m.id = c.mother_id
-      WHERE c.id = child_id AND m.profile_id = auth.uid())
-  );
 CREATE POLICY "Vax: delete for health workers" ON vaccinations
   FOR DELETE USING (public.user_role() IN ('nurse', 'doctor', 'admin'));
 
@@ -599,20 +688,8 @@ CREATE POLICY "Growth: read access" ON growth_records
   );
 CREATE POLICY "Growth: insert for health workers" ON growth_records
   FOR INSERT WITH CHECK (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
-CREATE POLICY "Growth: mothers insert own" ON growth_records
-  FOR INSERT WITH CHECK (
-    EXISTS (SELECT 1 FROM children c
-      JOIN mothers m ON m.id = c.mother_id
-      WHERE c.id = child_id AND m.profile_id = auth.uid())
-  );
 CREATE POLICY "Growth: update for health workers" ON growth_records
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
-CREATE POLICY "Growth: mothers update own" ON growth_records
-  FOR UPDATE USING (
-    EXISTS (SELECT 1 FROM children c
-      JOIN mothers m ON m.id = c.mother_id
-      WHERE c.id = child_id AND m.profile_id = auth.uid())
-  );
 CREATE POLICY "Growth: delete for health workers" ON growth_records
   FOR DELETE USING (public.user_role() IN ('nurse', 'doctor', 'admin'));
 
@@ -627,20 +704,8 @@ CREATE POLICY "Milestones: read access" ON milestones
   );
 CREATE POLICY "Milestones: insert for health workers" ON milestones
   FOR INSERT WITH CHECK (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
-CREATE POLICY "Milestones: mothers insert own" ON milestones
-  FOR INSERT WITH CHECK (
-    EXISTS (SELECT 1 FROM children c
-      JOIN mothers m ON m.id = c.mother_id
-      WHERE c.id = child_id AND m.profile_id = auth.uid())
-  );
 CREATE POLICY "Milestones: update for health workers" ON milestones
   FOR UPDATE USING (public.user_role() IN ('chw', 'nurse', 'doctor', 'admin'));
-CREATE POLICY "Milestones: mothers update own" ON milestones
-  FOR UPDATE USING (
-    EXISTS (SELECT 1 FROM children c
-      JOIN mothers m ON m.id = c.mother_id
-      WHERE c.id = child_id AND m.profile_id = auth.uid())
-  );
 CREATE POLICY "Milestones: delete for admin" ON milestones
   FOR DELETE USING (public.user_role() = 'admin');
 
@@ -725,18 +790,69 @@ CREATE POLICY "Districts: public read" ON districts FOR SELECT USING (true);
 CREATE POLICY "Districts: admin manage" ON districts FOR ALL
   USING (public.user_role() = 'admin');
 
+-- District Officer — read-only aggregated access (no writes)
+CREATE POLICY "Mothers: district read" ON mothers
+  FOR SELECT USING (public.user_role() = 'district_officer');
+CREATE POLICY "Children: district read" ON children
+  FOR SELECT USING (public.user_role() = 'district_officer');
+CREATE POLICY "Pregnancies: district read" ON pregnancies
+  FOR SELECT USING (public.user_role() = 'district_officer');
+CREATE POLICY "ANV: district read" ON antenatal_visits
+  FOR SELECT USING (public.user_role() = 'district_officer');
+CREATE POLICY "Vax: district read" ON vaccinations
+  FOR SELECT USING (public.user_role() = 'district_officer');
+CREATE POLICY "Growth: district read" ON growth_records
+  FOR SELECT USING (public.user_role() = 'district_officer');
+CREATE POLICY "Milestones: district read" ON milestones
+  FOR SELECT USING (public.user_role() = 'district_officer');
+CREATE POLICY "Referrals: district read" ON referrals
+  FOR SELECT USING (public.user_role() = 'district_officer');
+
+-- Mother Reports — mother-reported info awaiting worker confirmation
+CREATE POLICY "MotherReports: mothers insert own" ON mother_reports
+  FOR INSERT WITH CHECK (
+    EXISTS (SELECT 1 FROM mothers WHERE id = mother_id AND profile_id = auth.uid())
+  );
+CREATE POLICY "MotherReports: mothers read own" ON mother_reports
+  FOR SELECT USING (
+    EXISTS (SELECT 1 FROM mothers WHERE id = mother_id AND profile_id = auth.uid())
+  );
+CREATE POLICY "MotherReports: mothers update own" ON mother_reports
+  FOR UPDATE USING (
+    EXISTS (SELECT 1 FROM mothers WHERE id = mother_id AND profile_id = auth.uid())
+  );
+CREATE POLICY "MotherReports: health workers read assigned" ON mother_reports
+  FOR SELECT USING (
+    public.user_role() IN ('chw', 'nurse', 'doctor', 'admin')
+    AND EXISTS (
+      SELECT 1 FROM mothers m WHERE m.id = mother_id
+      AND (m.assigned_worker_id = auth.uid() OR public.user_role() IN ('nurse', 'doctor', 'admin'))
+    )
+  );
+CREATE POLICY "MotherReports: health workers update assigned" ON mother_reports
+  FOR UPDATE USING (
+    public.user_role() IN ('chw', 'nurse', 'doctor', 'admin')
+    AND EXISTS (
+      SELECT 1 FROM mothers m WHERE m.id = mother_id
+      AND (m.assigned_worker_id = auth.uid() OR public.user_role() IN ('nurse', 'doctor', 'admin'))
+    )
+  );
+
 -- ============================================
 -- TRIGGER: Auto-create profile on signup
 -- ============================================
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
+  -- Public self-registration always creates a mother profile.
+  -- Worker/admin roles are assigned exclusively by an authorized admin flow
+  -- (e.g. an admin-updated profile.role), never from client-supplied metadata.
   INSERT INTO public.profiles (id, full_name, phone, role, community, preferred_language)
   VALUES (
     NEW.id,
     COALESCE(NEW.raw_user_meta_data->>'full_name', 'User'),
     COALESCE(NEW.raw_user_meta_data->>'phone', ''),
-    COALESCE(NEW.raw_user_meta_data->>'role', 'chw'),
+    'mother',
     COALESCE(NEW.raw_user_meta_data->>'community', ''),
     COALESCE(NEW.raw_user_meta_data->>'preferred_language', 'en')
   );
@@ -748,6 +864,56 @@ CREATE OR REPLACE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW
   EXECUTE FUNCTION public.handle_new_user();
+
+-- ============================================
+-- CLAIM MOTHER RECORD
+-- Links an unclaimed mother record (created by a healthcare worker before
+-- the mother had an account; profile_id IS NULL) to the mother's auth account.
+-- Called by the mother during onboarding so a second (duplicate) record is
+-- NOT created. Matching is strict: exact phone + full name (case-insensitive),
+-- the record must be unclaimed and not deleted, and the caller must not
+-- already own a mother record.
+-- ============================================
+CREATE OR REPLACE FUNCTION public.claim_mother(p_phone TEXT, p_full_name TEXT)
+RETURNS SETOF mothers
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  uid uuid := auth.uid();
+  matched uuid;
+BEGIN
+  IF uid IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  -- Caller already has a linked mother record: never claim a second one.
+  IF EXISTS (SELECT 1 FROM mothers WHERE profile_id = uid AND deleted_at IS NULL) THEN
+    RETURN;
+  END IF;
+
+  SELECT m.id INTO matched
+  FROM mothers m
+  WHERE m.deleted_at IS NULL
+    AND m.profile_id IS NULL
+    AND lower(btrim(COALESCE(m.phone, ''))) = lower(btrim(COALESCE(p_phone, '')))
+    AND lower(btrim(COALESCE(m.full_name, ''))) = lower(btrim(COALESCE(p_full_name, '')))
+  ORDER BY m.created_at ASC
+  LIMIT 1;
+
+  IF matched IS NULL THEN
+    RETURN;
+  END IF;
+
+  UPDATE mothers SET profile_id = uid, updated_at = now() WHERE id = matched;
+
+  RETURN QUERY SELECT m.* FROM mothers m WHERE m.id = matched;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.claim_mother(text, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.claim_mother(text, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.claim_mother(text, text) TO authenticated;
 
 -- ============================================
 -- TRIGGER: Auto-update updated_at
@@ -775,3 +941,4 @@ CREATE TRIGGER update_milestones_updated_at BEFORE UPDATE ON milestones FOR EACH
 CREATE TRIGGER update_ai_conversations_updated_at BEFORE UPDATE ON ai_conversations FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_notifications_updated_at BEFORE UPDATE ON notifications FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 CREATE TRIGGER update_weekly_journals_updated_at BEFORE UPDATE ON weekly_journals FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+CREATE TRIGGER update_mother_reports_updated_at BEFORE UPDATE ON mother_reports FOR EACH ROW EXECUTE FUNCTION update_updated_at();

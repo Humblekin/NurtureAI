@@ -1,12 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link, useParams } from 'react-router-dom';
 import { User, Calendar, Scale, ArrowLeft } from 'lucide-react';
 import useChildStore from '../../stores/childStore';
 import useAuthStore from '../../stores/authStore';
+import useMotherStore from '../../stores/motherStore';
 import useAppStore from '../../stores/appStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
+import { provenanceFor } from '../../lib/provenance';
 
 export const ChildForm = () => {
   const navigate = useNavigate();
@@ -14,9 +16,14 @@ export const ChildForm = () => {
   const isEdit = !!id;
   const { profile } = useAuthStore();
   const { registerChild, updateChild, isLoading, children } = useChildStore();
+  const { currentMother, fetchMotherByProfileId } = useMotherStore();
   const addToast = useAppStore((state) => state.addToast);
+  const isOnline = useAppStore((state) => state.isOnline);
   const rolePrefix = profile?.role || 'chw';
-  
+  const isMotherRole = profile?.role === 'mother';
+  const submittingRef = useRef(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const [formData, setFormData] = useState({
     mother_id: '',
     full_name: '',
@@ -28,11 +35,23 @@ export const ChildForm = () => {
   });
 
   useEffect(() => {
+    if (isMotherRole && profile?.id) {
+      fetchMotherByProfileId(profile.id);
+    }
+  }, [isMotherRole, profile?.id, fetchMotherByProfileId]);
+
+  useEffect(() => {
+    if (isMotherRole && currentMother?.id) {
+      setFormData(prev => ({ ...prev, mother_id: currentMother.id }));
+    }
+  }, [isMotherRole, currentMother?.id]);
+
+  useEffect(() => {
     if (isEdit && children.length > 0) {
       const child = children.find(c => c.id === id);
       if (child) {
         setFormData({
-          mother_id: child.mother_id || '',
+          mother_id: isMotherRole ? currentMother?.id || '' : (child.mother_id || ''),
           full_name: child.full_name || '',
           date_of_birth: child.date_of_birth || '',
           gender: child.gender || 'female',
@@ -42,7 +61,7 @@ export const ChildForm = () => {
         });
       }
     }
-  }, [id, isEdit, children]);
+  }, [id, isEdit, children, isMotherRole, currentMother?.id]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -57,12 +76,30 @@ export const ChildForm = () => {
       return;
     }
 
+    if (isMotherRole && !formData.mother_id) {
+      addToast({ type: 'error', message: 'Mother record not found. Please refresh and try again.' });
+      return;
+    }
+
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setIsSubmitting(true);
+
+    const provenance = provenanceFor(profile);
     const { success, data, error } = isEdit
       ? await updateChild(id, formData)
-      : await registerChild(formData);
+      : await registerChild({ ...formData, ...provenance });
     
+    submittingRef.current = false;
+    setIsSubmitting(false);
+
     if (success) {
-      addToast({ type: 'success', message: isEdit ? 'Child record updated.' : 'Child registered successfully.' });
+      addToast({
+        type: 'success',
+        message: isOnline
+          ? (isEdit ? 'Child record updated.' : 'Child registered successfully.')
+          : 'Child saved offline — will sync when back online.',
+      });
       navigate(isEdit ? `/${rolePrefix}/children/${id}` : `/${rolePrefix}/children`);
     } else {
       addToast({ type: 'error', title: isEdit ? 'Update failed' : 'Registration failed', message: error });
@@ -85,13 +122,15 @@ export const ChildForm = () => {
         <Card style={{ marginBottom: 'var(--space-6)', maxWidth: '600px' }}>
           <CardHeader title="Birth Details" />
           <CardBody className="flex-col gap-4">
-            <Input
-              label="Mother Profile ID (Optional link)"
-              name="mother_id"
-              placeholder="e.g. MOT-1234"
-              value={formData.mother_id}
-              onChange={handleChange}
-            />
+            {!isMotherRole && (
+              <Input
+                label="Mother Profile ID (Optional link)"
+                name="mother_id"
+                placeholder="e.g. MOT-1234"
+                value={formData.mother_id}
+                onChange={handleChange}
+              />
+            )}
             
             <div style={{ borderTop: '1px solid var(--border-default)', margin: 'var(--space-2) 0' }} />
 
@@ -170,7 +209,7 @@ export const ChildForm = () => {
           </Button>
           <Button 
             type="submit" 
-            loading={isLoading}
+            loading={isLoading || isSubmitting}
           >
             {isEdit ? 'Update Child' : 'Register Child'}
           </Button>

@@ -3,7 +3,7 @@ import {
   Home, Users, Baby, Calendar, Activity, Heart,
   FileText, Settings, HeartPulse, Stethoscope, MessageCircle, 
   ChevronLeft, ChevronRight, Archive, Building2, ClipboardList,
-  User, Map
+  User, Map, Search
 } from 'lucide-react';
 import useAuthStore, { ROLES } from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
@@ -13,18 +13,19 @@ const getNavConfig = (role) => {
   switch (role) {
     case ROLES.MOTHER:
       return [
+        { name: 'Amina', path: '/mother/amina', icon: MessageCircle },
         { name: 'Home', path: '/mother/dashboard', icon: Home },
         { name: 'Health Journey', path: '/mother/timeline', icon: Map },
         { name: 'My Pregnancy', path: '/mother/pregnancy', icon: Heart },
         { name: 'My Children', path: '/mother/children', icon: Baby },
         { name: 'Appointments', path: '/mother/appointments', icon: Calendar },
-        { name: 'Chat with Amina', path: '/shared/amina', icon: MessageCircle },
         { name: 'My Profile', path: '/shared/settings', icon: User },
       ];
 
     case ROLES.CHW:
       return [
         { name: 'Dashboard', path: '/chw/dashboard', icon: Home },
+        { name: 'Patient Search', path: '/chw/patients', icon: Search },
         { name: 'Mothers', path: '/chw/mothers', icon: Users },
         { name: 'Children', path: '/chw/children', icon: Baby },
         { name: 'Home Visits', path: '/chw/visits', icon: Calendar },
@@ -36,6 +37,7 @@ const getNavConfig = (role) => {
     case ROLES.NURSE:
       return [
         { name: 'Dashboard', path: '/nurse/dashboard', icon: Home },
+        { name: 'Patient Search', path: '/nurse/patients', icon: Search },
         { name: 'Patients', path: '/nurse/mothers', icon: Users },
         { name: 'ANC Visits', path: '/nurse/anc', icon: HeartPulse },
         { name: 'Appointments', path: '/nurse/appointments', icon: Calendar },
@@ -48,7 +50,9 @@ const getNavConfig = (role) => {
     case ROLES.DOCTOR:
       return [
         { name: 'Dashboard', path: '/doctor/dashboard', icon: Home },
+        { name: 'Patient Search', path: '/doctor/patients', icon: Search },
         { name: 'Patients', path: '/doctor/mothers', icon: Users },
+        { name: 'Visits', path: '/doctor/visits', icon: Calendar },
         { name: 'Referrals', path: '/doctor/referrals', icon: ClipboardList },
         { name: 'Reports', path: '/doctor/reports', icon: FileText },
         { name: 'Chat with Amina', path: '/shared/amina', icon: MessageCircle },

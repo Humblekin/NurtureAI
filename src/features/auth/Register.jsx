@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Mail, Lock, User, Phone, Globe, Briefcase } from 'lucide-react';
-import useAuthStore, { ROLES, ROLE_LABELS } from '../../stores/authStore';
+import { Mail, Lock, User, Phone, Globe } from 'lucide-react';
+import useAuthStore, { ROLES } from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
@@ -23,8 +23,6 @@ export const Register = () => {
   const { signUp } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
   const navigate = useNavigate();
-
-  const isMother = formData.role === ROLES.MOTHER;
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -56,27 +54,19 @@ export const Register = () => {
     e.preventDefault();
 
     const { email, password, confirmPassword, ...profileData } = formData;
+    profileData.role = ROLES.MOTHER;
 
     setIsSubmitting(true);
     const { success, error } = await signUp(email, password, profileData);
     setIsSubmitting(false);
 
     if (success) {
-      if (isMother) {
-        addToast({ type: 'success', message: 'Account created! Welcome to NurtureAI.' });
-        navigate('/mother/welcome', { replace: true });
-      } else {
-        addToast({ type: 'success', message: 'Account created successfully!' });
-        navigate('/', { replace: true });
-      }
+      addToast({ type: 'success', message: 'Account created! Welcome to NurtureAI.' });
+      navigate('/mother/welcome', { replace: true });
     } else {
       addToast({ type: 'error', title: 'Registration Failed', message: error });
     }
   };
-
-  const roleOptions = Object.entries(ROLE_LABELS).map(([value, label]) => ({
-    value, label
-  }));
 
   const languageOptions = [
     { value: 'en', label: 'English' },
@@ -169,29 +159,7 @@ export const Register = () => {
               options={languageOptions}
             />
 
-            {!isMother && (
-              <>
-                <Input
-                  label="I am a"
-                  name="role"
-                  type="select"
-                  value={formData.role}
-                  onChange={handleChange}
-                  leftIcon={<Briefcase size={18} />}
-                  options={roleOptions}
-                />
-                <Input
-                  label="Assigned Area"
-                  name="community"
-                  placeholder="e.g. Tamale South"
-                  value={formData.community}
-                  onChange={handleChange}
-                />
-              </>
-            )}
-
-            {isMother && (
-              <div style={{
+            <div style={{
                 background: 'var(--color-primary-50)',
                 color: 'var(--color-primary-800)',
                 padding: 'var(--space-4)',
@@ -202,7 +170,6 @@ export const Register = () => {
               }}>
                 <strong>Amina will guide you!</strong> After creating your account, Amina will welcome you and help set up your health profile — either through a friendly conversation or a simple form.
               </div>
-            )}
 
             <div className="flex gap-4" style={{ marginTop: 'var(--space-2)' }}>
               <Button

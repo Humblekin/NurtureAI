@@ -42,6 +42,21 @@ const useAppStore = create(
       pendingSyncCount: 0,
       setPendingSyncCount: (count) => set({ pendingSyncCount: count }),
 
+      // Currently selected patient (worker workflows). Used to scope
+      // worker-facing Amina to the record that is open. Memory-only
+      // (not persisted) and cleared on sign-out to prevent data leaking
+      // between users.
+      currentPatient: null,
+      setCurrentPatient: (patient) => set({ currentPatient: patient }),
+      clearCurrentPatient: () => set({ currentPatient: null }),
+
+      // Data-change signal: bumped whenever a clinical record is written so
+      // an open health-worker Amina session can refresh its context without a
+      // patient switch or page navigation (e.g. right after logging a visit
+      // while the chat is still open). Memory-only, never persisted.
+      dataVersion: 0,
+      markDataChanged: () => set((s) => ({ dataVersion: s.dataVersion + 1 })),
+
       // Toasts / Notifications
       toasts: [],
       addToast: (toast) => {

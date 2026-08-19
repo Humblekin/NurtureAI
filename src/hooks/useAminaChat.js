@@ -2,10 +2,21 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { chatCompletion } from '../lib/groq';
 import { createSpeechRecognition } from '../services/voice/speechRecognition';
 import { createVAD } from '../services/voice/vad';
-import { speak as browserSpeak, stopSpeaking as browserStopSpeaking, isSpeechSynthesisSupported } from '../services/voice/speechSynthesis';
+import { isSpeechSynthesisSupported } from '../services/voice/speechSynthesis';
+import { khayaTranscribe, speakText as khayaSpeakText, stopSpeech as stopAllSpeech } from '../services/voice/khayaSpeech';
+import { shouldUseKhayaAsr, shouldUseKhayaTts } from '../services/voice/khayaLanguages';
 import useAuthStore from '../stores/authStore';
+import useAppStore from '../stores/appStore';
 import { createConversationManager, CONVERSATION_STATES } from '../services/conversationManager';
 import { buildHealthContext } from '../services/healthContext';
+
+// Map internal voice-conversation error codes to friendly, user-facing text.
+function mapVoiceError(code) {
+  if (code === 'processing_error') return 'I had trouble processing that. Please try again.';
+  if (code === 'speech_error') return 'Voice recognition ran into a problem. Please try again.';
+  if (typeof code === 'string') return code;
+  return 'Something went wrong. Please try again.';
+}
 
 export { CONVERSATION_STATES };
 export const VOICE_STATES = CONVERSATION_STATES;
@@ -107,7 +118,7 @@ export function useSpeechRecognition(language = 'en') {
 // ============================================================
 // Speech Synthesis — Browser TTS for ChatMode
 // ============================================================
-export function useSpeechSynthesis(_language = 'en') {
+export function useSpeechSynthesis(language = 'en') {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
   const abortRef = useRef(null);
@@ -117,7 +128,7 @@ export function useSpeechSynthesis(_language = 'en') {
   useEffect(() => { setIsSupported(isSpeechSynthesisSupported()); }, []);
 
   const speak = useCallback(async (text) => {
-    if (!text || !isSpeechSynthesisSupported()) {
+    if (!text || (!isSpeechSynthesisSupported() && !shouldUseKhayaTts(language))) {
       setIsSpeaking(false);
       onEndRef.current?.();
       return;
@@ -129,7 +140,8 @@ export function useSpeechSynthesis(_language = 'en') {
     try {
       setIsSpeaking(true);
       onStartRef.current?.();
-      await browserSpeak(text, {
+      await khayaSpeakText(text, {
+        language,
         signal: abortRef.current.signal,
         onSpeechStart: () => setIsSpeaking(true),
         onSpeechEnd: () => { setIsSpeaking(false); onEndRef.current?.(); },
@@ -140,11 +152,11 @@ export function useSpeechSynthesis(_language = 'en') {
       setIsSpeaking(false);
       onEndRef.current?.();
     }
-  }, []);
+  }, [language]);
 
   const stop = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
-    browserStopSpeaking();
+    stopAllSpeech();
     setIsSpeaking(false);
   }, []);
 
@@ -166,6 +178,7 @@ export function useVoiceConversation() {
   const [micPermission, setMicPermission] = useState('unknown');
   const [micReady, setMicReady] = useState(false);
   const { profile } = useAuthStore();
+  const currentPatient = useAppStore((state) => state.currentPatient);
   const managerRef = useRef(null);
   const healthContextRef = useRef('');
   const streamRef = useRef(null);
@@ -176,6 +189,13 @@ export function useVoiceConversation() {
   const lastInterimRef = useRef('');
   const pendingSendRef = useRef(false);
   const pendingSendTimerRef = useRef(null);
+  const languageRef = useRef(language);
+  const khayaAsrEnabledRef = useRef(false);
+  const unmountedRef = useRef(false);
+  const recorderRef = useRef(null);
+  const recorderChunksRef = useRef([]);
+  const recordingActiveRef = useRef(false);
+  const khayaAsrInFlightRef = useRef(false);
 
   const isListening = voiceState === CONVERSATION_STATES.LISTENING;
   const isSpeaking = voiceState === CONVERSATION_STATES.SPEAKING;
@@ -195,6 +215,12 @@ export function useVoiceConversation() {
     };
     checkPerm();
   }, []);
+
+  // ---- Track Khaya ASR availability for the current language ----
+  useEffect(() => {
+    languageRef.current = language;
+    khayaAsrEnabledRef.current = shouldUseKhayaAsr(language) && typeof MediaRecorder !== 'undefined';
+  }, [language]);
 
   // ---- Request microphone access (must be called from user gesture) ----
   const requestMicPermission = useCallback(async () => {
@@ -257,11 +283,14 @@ export function useVoiceConversation() {
       onInterim: (text) => {
         const combined = textBufferRef.current + (textBufferRef.current && text ? ' ' : '') + text;
         lastInterimRef.current = combined;
-        setTranscript(combined);
+        if (!khayaAsrEnabledRef.current) setTranscript(combined);
       },
       onFinal: (text) => {
         textBufferRef.current += (textBufferRef.current && text ? ' ' : '') + text;
         lastInterimRef.current = textBufferRef.current;
+        // With Khaya ASR active the final transcript comes from the recorded
+        // audio, not the browser recognizer — it is only kept as a fallback.
+        if (khayaAsrEnabledRef.current) return;
         setTranscript(textBufferRef.current);
         // Send when VAD already ended the utterance, or when STT finalized
         // the text after the VAD timer already fired (late final — otherwise
@@ -307,14 +336,116 @@ export function useVoiceConversation() {
     }
   }
 
+  // ---- Khaya ASR (records only while the user is speaking) ----
+  function createKhayaRecorder(stream) {
+    if (typeof MediaRecorder === 'undefined') return null;
+    const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
+    let mimeType = '';
+    for (const m of mimeTypes) {
+      if (MediaRecorder.isTypeSupported(m)) { mimeType = m; break; }
+    }
+    let recorder;
+    try {
+      recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    } catch {
+      try { recorder = new MediaRecorder(stream); } catch { return null; }
+    }
+    recorderChunksRef.current = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) recorderChunksRef.current.push(e.data);
+    };
+    recorder.onstop = () => {
+      recordingActiveRef.current = false;
+      const blob = new Blob(recorderChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+      recorderChunksRef.current = [];
+      if (unmountedRef.current || blob.size === 0) return;
+      transcribeKhayaBlob(blob);
+    };
+    return recorder;
+  }
+
+  function startKhayaRecorder(stream) {
+    if (!khayaAsrEnabledRef.current) return;
+    if (recorderRef.current && recordingActiveRef.current) return;
+    recorderRef.current = createKhayaRecorder(stream);
+    if (!recorderRef.current) return;
+    try {
+      recorderRef.current.start(250);
+      recordingActiveRef.current = true;
+    } catch {
+      recorderRef.current = null;
+      recordingActiveRef.current = false;
+    }
+  }
+
+  function stopKhayaRecorder() {
+    const recorder = recorderRef.current;
+    recorderRef.current = null;
+    if (!recorder || recorder.state === 'inactive') {
+      fallbackAfterKhayaMiss();
+      return;
+    }
+    try { recorder.stop(); } catch { fallbackAfterKhayaMiss(); }
+  }
+
+  function destroyKhayaRecorder() {
+    const recorder = recorderRef.current;
+    recorderRef.current = null;
+    recordingActiveRef.current = false;
+    recorderChunksRef.current = [];
+    if (recorder && recorder.state !== 'inactive') {
+      try { recorder.stop(); } catch { /* ignore */ }
+    }
+  }
+
+  async function transcribeKhayaBlob(blob) {
+    if (unmountedRef.current) return;
+    khayaAsrInFlightRef.current = true;
+    clearPendingSend();
+    const langAtUtterance = languageRef.current;
+    try {
+      const text = await khayaTranscribe(blob, langAtUtterance);
+      textBufferRef.current = '';
+      lastInterimRef.current = '';
+      setTranscript('');
+      if (text) managerRef.current?.onFinalTranscript(text);
+    } catch (err) {
+      if (unmountedRef.current) return;
+      if (err.name === 'AbortError') return;
+      console.warn('[Voice] Khaya ASR failed, falling back to browser transcript:', err.code || err.message);
+      fallbackAfterKhayaMiss();
+    } finally {
+      khayaAsrInFlightRef.current = false;
+    }
+  }
+
+  function fallbackAfterKhayaMiss() {
+    if (unmountedRef.current) return;
+    const fallback = textBufferRef.current.trim() || lastInterimRef.current.trim();
+    textBufferRef.current = '';
+    lastInterimRef.current = '';
+    setTranscript('');
+    if (fallback) {
+      managerRef.current?.onFinalTranscript(fallback);
+    } else {
+      setError('Voice recognition is temporarily unavailable. Please try again in a moment.');
+    }
+  }
+
   // ---- VAD Lifecycle ----
   function startVAD(stream) {
     destroyVAD();
     const vad = createVAD(stream, {
       onSpeechStart: () => {
         managerRef.current?.vadSpeechStart();
+        startKhayaRecorder(stream);
       },
       onSpeechEnd: () => {
+        if (khayaAsrEnabledRef.current) {
+          managerRef.current?.vadSpeechEnd();
+          stopKhayaRecorder();
+          return;
+        }
         pendingSendRef.current = true;
         clearTimeout(pendingSendTimerRef.current);
         pendingSendTimerRef.current = setTimeout(() => {
@@ -362,15 +493,55 @@ export function useVoiceConversation() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceState]);
 
-  // ---- Fetch health context when profile changes ----
+  // ---- Fetch health context when profile or selected patient changes ----
   useEffect(() => {
     if (profile?.id && profile?.role) {
-      buildHealthContext(profile).then(ctx => {
+      buildHealthContext(profile, { patientId: currentPatient?.id }).then(ctx => {
         healthContextRef.current = ctx;
         if (managerRef.current) managerRef.current.setHealthContext(ctx);
       }).catch(err => console.error('Failed to build health context:', err));
     }
-  }, [profile]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, currentPatient?.id]);
+
+  // ---- Patient switch while mounted: reset the voice conversation ----
+  // The manager is created once per [language, profile.id], so without this a
+  // worker switching from one patient's record to another would keep the
+  // previous patient's conversation history (and that history would be sent to
+  // the AI as if it belonged to the new patient).
+  const voicePatientIdRef = useRef(null);
+  useEffect(() => {
+    if (voicePatientIdRef.current !== currentPatient?.id) {
+      voicePatientIdRef.current = currentPatient?.id;
+      if (managerRef.current) managerRef.current.reset();
+      setTranscript('');
+      setError(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPatient?.id]);
+
+  // ---- Refresh health context on demand (e.g. before starting a conversation) ----
+  const refreshContext = useCallback(async () => {
+    if (!profile?.id || !profile?.role) return;
+    try {
+      const ctx = await buildHealthContext(profile, { patientId: currentPatient?.id });
+      healthContextRef.current = ctx;
+      if (managerRef.current) managerRef.current.setHealthContext(ctx);
+    } catch (err) {
+      console.error('Failed to refresh health context:', err);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, currentPatient?.id]);
+
+  // ---- Rebuild context when clinical data changes (markDataChanged) ----
+  // So a worker who just logged a visit (or edited a record) can immediately
+  // ask Amina about the fresh data without starting a new conversation first.
+  const dataVersion = useAppStore((s) => s.dataVersion);
+  useEffect(() => {
+    if (dataVersion === 0) return;
+    const t = setTimeout(() => { refreshContext(); }, 350);
+    return () => clearTimeout(t);
+  }, [dataVersion, refreshContext]);
 
   // ---- Create ConversationManager ----
   useEffect(() => {
@@ -379,24 +550,24 @@ export function useVoiceConversation() {
 
       speakText: async (text, signal) => {
         vadRef.current?.setEnabled?.(false);
-        await browserSpeak(text, { signal });
+        await khayaSpeakText(text, { language, signal });
         if (managerRef.current?.getState?.() === CONVERSATION_STATES.LISTENING) {
           vadRef.current?.setEnabled?.(true);
         }
       },
 
-      stopSpeech: () => { browserStopSpeaking(); },
+      stopSpeech: () => { stopAllSpeech(); },
 
       onStateChange: (state) => setVoiceState(state),
       onMessagesChange: (msgs) => setMessages(msgs),
       onTranscriptChange: (t) => setTranscript(t),
-      onError: (err) => setError(err),
+      onError: (err) => setError(mapVoiceError(err)),
     });
 
     managerRef.current = manager;
     return () => { manager.destroy(); managerRef.current = null; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [language]);
+  }, [language, profile?.id]);
 
   // ---- Auto-clear errors ----
   useEffect(() => {
@@ -407,6 +578,9 @@ export function useVoiceConversation() {
   const startConversation = useCallback(async () => {
     if (initStartedRef.current) return;
     initStartedRef.current = true;
+
+    // Refresh health context so the AI has the very latest data
+    await refreshContext();
 
     const stream = await requestMicPermission();
     if (!stream) {
@@ -426,7 +600,7 @@ export function useVoiceConversation() {
     if (healthContextRef.current) mgr.setHealthContext(healthContextRef.current);
     await mgr.init({ language, userProfile: profile });
     initStartedRef.current = false;
-  }, [language, profile, requestMicPermission]);
+  }, [language, profile, requestMicPermission, refreshContext]);
 
   // ---- Public: Retry after permission error ----
   const retryMicPermission = useCallback(async () => {
@@ -434,7 +608,7 @@ export function useVoiceConversation() {
     setError(null);
     setMicPermission('unknown');
     stopRecognition();
-    browserStopSpeaking();
+    stopAllSpeech();
     setVoiceState(CONVERSATION_STATES.IDLE);
     setMicReady(false);
     await new Promise(r => setTimeout(r, 100));
@@ -460,7 +634,8 @@ export function useVoiceConversation() {
     if (mgr) mgr.reset();
     stopRecognition();
     destroyVAD();
-    browserStopSpeaking();
+    destroyKhayaRecorder();
+    stopAllSpeech();
     initStartedRef.current = false;
     setMicReady(false);
     setMessages([]);
@@ -479,7 +654,8 @@ export function useVoiceConversation() {
     if (mgr) { mgr.reset(); mgr.setLanguage(lang); }
     stopRecognition();
     destroyVAD();
-    browserStopSpeaking();
+    destroyKhayaRecorder();
+    stopAllSpeech();
     initStartedRef.current = false;
     setMicReady(false);
     setMessages([]);
@@ -494,8 +670,10 @@ export function useVoiceConversation() {
   // ---- Cleanup mic stream on unmount ----
   useEffect(() => {
     return () => {
+      unmountedRef.current = true;
       stopRecognition();
       destroyVAD();
+      destroyKhayaRecorder();
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
         streamRef.current = null;
@@ -507,7 +685,7 @@ export function useVoiceConversation() {
   return {
     voiceState, messages, transcript, isListening, isSpeaking,
     error, language, micPermission, micReady,
-    startConversation, retryMicPermission,
+    startConversation, retryMicPermission, refreshContext,
     togglePause, bargeIn, clearChat, switchLanguage,
   };
 }

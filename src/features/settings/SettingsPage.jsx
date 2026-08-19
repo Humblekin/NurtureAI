@@ -1,17 +1,17 @@
 import { useState } from 'react';
 import { User, Shield, Palette, Globe } from 'lucide-react';
-import useAuthStore, { ROLE_LABELS } from '../../stores/authStore';
+import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import supabase, { isSupabaseConfigured } from '../../lib/supabase';
 
 export const SettingsPage = () => {
-  const { profile, signOut, user, setProfile } = useAuthStore();
+  const { profile, signOut, user } = useAuthStore();
   const { theme, toggleTheme } = useAppStore();
   const [notifications, setNotifications] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
-  const [isChangingRole, setIsChangingRole] = useState(false);
+  const isAdmin = profile?.role === 'admin';
 
   const handleExportData = async () => {
     setIsExporting(true);
@@ -58,27 +58,6 @@ export const SettingsPage = () => {
     }
   };
 
-  const handleRoleChange = async (newRole) => {
-    if (!profile?.id || newRole === profile.role) return;
-    setIsChangingRole(true);
-    try {
-      // Update in Supabase
-      if (isSupabaseConfigured()) {
-        const { error } = await supabase
-          .from('profiles')
-          .update({ role: newRole })
-          .eq('id', profile.id);
-        if (error) throw error;
-      }
-      setProfile({ ...profile, role: newRole });
-      alert(`Role changed to "${ROLE_LABELS[newRole]}". Refresh to see the new sidebar.`);
-    } catch (err) {
-      console.error('Role change failed:', err);
-      alert('Failed to change role: ' + err.message);
-    }
-    setIsChangingRole(false);
-  };
-
   return (
     <div className="page-content fade-in">
       <div style={{ marginBottom: 'var(--space-6)' }}>
@@ -107,22 +86,6 @@ export const SettingsPage = () => {
             <div>
               <p className="body-sm" style={{ color: 'var(--text-secondary)' }}>Phone</p>
               <p className="font-medium">{profile?.phone || 'Not set'}</p>
-            </div>
-            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 'var(--space-4)', marginTop: 'var(--space-2)' }}>
-              <p className="body-sm" style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>Switch Role (for testing)</p>
-              <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
-                {Object.entries(ROLE_LABELS).map(([value, label]) => (
-                  <Button
-                    key={value}
-                    size="sm"
-                    variant={profile?.role === value ? 'primary' : 'outline'}
-                    onClick={() => handleRoleChange(value)}
-                    disabled={isChangingRole || profile?.role === value}
-                  >
-                    {label}
-                  </Button>
-                ))}
-              </div>
             </div>
           </CardBody>
         </Card>
@@ -164,9 +127,15 @@ export const SettingsPage = () => {
               </p>
             </div>
             <div className="flex gap-3">
-              <Button variant="outline" size="sm" onClick={handleExportData} disabled={isExporting}>
-                {isExporting ? 'Exporting...' : 'Export Data'}
-              </Button>
+              {isAdmin ? (
+                <Button variant="outline" size="sm" onClick={handleExportData} disabled={isExporting}>
+                  {isExporting ? 'Exporting...' : 'Export Data'}
+                </Button>
+              ) : (
+                <p className="body-sm" style={{ color: 'var(--text-secondary)' }}>
+                  Only administrators can export the full dataset.
+                </p>
+              )}
             </div>
           </CardBody>
         </Card>

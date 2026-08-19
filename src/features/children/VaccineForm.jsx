@@ -1,15 +1,21 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Syringe, Calendar } from 'lucide-react';
 import useChildStore from '../../stores/childStore';
+import useAuthStore from '../../stores/authStore';
 import useTimelineStore from '../../stores/timelineStore';
 import useAppStore from '../../stores/appStore';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
+import { provenanceFor } from '../../lib/provenance';
 
 export const VaccineForm = ({ childId, initialData, onSuccess, onCancel }) => {
   const { recordVaccination, updateVaccination, isLoading } = useChildStore();
+  const { profile } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
+  const isOnline = useAppStore((state) => state.isOnline);
   const isEdit = !!initialData;
+  const submittingRef = useRef(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   const [formData, setFormData] = useState({
     vaccine_name: initialData?.vaccine_name || '',
@@ -32,13 +38,48 @@ export const VaccineForm = ({ childId, initialData, onSuccess, onCancel }) => {
       return;
     }
 
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const givenDate = new Date(formData.date_given);
+    givenDate.setHours(0, 0, 0, 0);
+    if (isNaN(givenDate.getTime())) {
+      addToast({ type: 'error', message: 'Please enter a valid date.' });
+      return;
+    }
+    if (givenDate > today) {
+      addToast({ type: 'error', message: 'Vaccination date cannot be in the future.' });
+      return;
+    }
+    if (!formData.dose || +formData.dose < 1) {
+      addToast({ type: 'error', message: 'Dose number must be at least 1.' });
+      return;
+    }
+
+    if (!profile?.id) {
+      addToast({ type: 'error', message: 'You must be signed in to record a vaccination.' });
+      return;
+    }
+
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setIsSubmitting(true);
+
+    const provenance = provenanceFor(profile);
     const { success, error } = isEdit
       ? await updateVaccination(initialData.id, childId, formData)
-      : await recordVaccination(childId, formData);
+      : await recordVaccination(childId, { ...formData, ...provenance, administered_by: profile.id });
     
+    submittingRef.current = false;
+    setIsSubmitting(false);
+
     if (success) {
       await useTimelineStore.getState().buildChildTimeline(childId);
-      addToast({ type: 'success', message: isEdit ? 'Vaccination updated.' : 'Vaccination recorded.' });
+      addToast({
+        type: 'success',
+        message: isOnline
+          ? (isEdit ? 'Vaccination updated.' : 'Vaccination recorded.')
+          : 'Vaccination saved offline — will sync when back online.',
+      });
       if (onSuccess) onSuccess();
     } else {
       addToast({ type: 'error', title: 'Failed to record', message: error });
@@ -111,8 +152,8 @@ export const VaccineForm = ({ childId, initialData, onSuccess, onCancel }) => {
       </div>
 
       <div className="flex gap-3" style={{ justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
-        <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" loading={isLoading}>{isEdit ? 'Update Vaccine' : 'Record Vaccine'}</Button>
+        <Button type="button" variant="secondary" onClick={onCancel} disabled={isSubmitting}>Cancel</Button>
+        <Button type="submit" loading={isLoading || isSubmitting}>{isEdit ? 'Update Vaccine' : 'Record Vaccine'}</Button>
       </div>
     </form>
   );

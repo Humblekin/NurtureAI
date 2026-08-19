@@ -1,5 +1,6 @@
 import supabase, { isSupabaseConfigured } from '../lib/supabase';
 import { upsertRecord } from '../lib/sync';
+import { generateId } from '../lib/db';
 import { calculateWeeksFromLMP } from '../lib/pregnancy';
 import { GHANA_EPI_SCHEDULE } from '../constants/vaccinationSchedule';
 
@@ -422,7 +423,7 @@ export async function generateAminaGreeting(profile) {
     voiceGreeting += `How is ${youngest.full_name} doing today? `;
   }
 
-  voiceGreeting += `I'm here to help with any health questions you have.`;
+  voiceGreeting += `I'm here to help with any health questions you have. How are you feeling today?`;
 
   return {
     text: voiceGreeting,
@@ -464,9 +465,9 @@ export async function runReminderEngine(profile) {
 
     // Store notifications directly in Supabase
     if (allNotifications.length > 0 && isSupabaseConfigured()) {
-      const toStore = allNotifications.map((n, i) => ({
+      const toStore = allNotifications.map((n) => ({
         ...n,
-        id: `reminder-${profile.id}-${Date.now()}-${i}`,
+        id: generateId(),
         user_id: profile.id,
         created_at: new Date().toISOString(),
         read: false,

@@ -5,7 +5,7 @@ import Spinner from '../../components/ui/Spinner';
 import supabase, { isSupabaseConfigured } from '../../lib/supabase';
 
 const ROLE_HOME = {
-  mother: '/mother/dashboard',
+  mother: '/mother/amina',
   chw: '/chw/dashboard',
   nurse: '/nurse/dashboard',
   doctor: '/doctor/dashboard',

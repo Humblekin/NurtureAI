@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Calendar, Plus, Search, Filter, Pencil, Trash2 } from 'lucide-react';
+import { Calendar, Plus, Search, Pencil, Trash2 } from 'lucide-react';
 import useVisitStore from '../../stores/visitStore';
+import useMotherStore from '../../stores/motherStore';
+import useChildStore from '../../stores/childStore';
 import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
+import { buildPatientNameLookup } from '../../services/patientNames';
 import { Card, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
@@ -14,7 +17,10 @@ import ConfirmDialog from '../../components/ui/ConfirmDialog';
 
 export const VisitList = () => {
   const { profile } = useAuthStore();
+  const rolePrefix = profile?.role || 'chw';
   const { visits, fetchVisitsByWorker, softDelete, isLoading } = useVisitStore();
+  const { mothers, fetchMothers } = useMotherStore();
+  const { children, fetchChildrenList } = useChildStore();
   const addToast = useAppStore((state) => state.addToast);
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState('all');
@@ -23,11 +29,18 @@ export const VisitList = () => {
   useEffect(() => {
     if (profile?.id) {
       fetchVisitsByWorker(profile.id);
+      fetchMothers();
+      fetchChildrenList();
     }
-  }, [profile?.id, fetchVisitsByWorker]);
+  }, [profile?.id, fetchVisitsByWorker, fetchMothers, fetchChildrenList]);
+
+  const patientNameOf = buildPatientNameLookup(mothers, children);
 
   const filteredVisits = visits.filter(visit => {
+    const nameInfo = patientNameOf(visit.patient_id);
+    const patientLabel = nameInfo ? nameInfo.name : '';
     const matchesSearch = visit.notes?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          patientLabel.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           visit.patient_id?.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesFilter = filter === 'all' || visit.visit_type === filter;
     return matchesSearch && matchesFilter;
@@ -49,7 +62,7 @@ export const VisitList = () => {
             Track and manage your health visits.
           </p>
         </div>
-        <Link to="/visits/new">
+        <Link to={`/${rolePrefix}/visits/new`}>
           <Button leftIcon={<Plus size={18} />}>Log Visit</Button>
         </Link>
       </div>
@@ -88,48 +101,51 @@ export const VisitList = () => {
         </div>
       ) : filteredVisits.length > 0 ? (
         <div className="grid grid-2">
-          {filteredVisits.map((visit) => (
-            <Card key={visit.id} hoverable>
-              <CardBody>
-                <div className="flex-between" style={{ marginBottom: 'var(--space-3)' }}>
-                  <div className="flex gap-2 items-center">
-                    <Calendar size={16} style={{ color: 'var(--color-primary-500)' }} />
-                    <span className="font-medium">{new Date(visit.visit_date).toLocaleDateString()}</span>
+          {filteredVisits.map((visit) => {
+            const nameInfo = patientNameOf(visit.patient_id);
+            return (
+              <Card key={visit.id} hoverable>
+                <CardBody>
+                  <div className="flex-between" style={{ marginBottom: 'var(--space-3)' }}>
+                    <div className="flex gap-2 items-center">
+                      <Calendar size={16} style={{ color: 'var(--color-primary-500)' }} />
+                      <span className="font-medium">{new Date(visit.visit_date).toLocaleDateString()}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={visitTypeColors[visit.visit_type] || 'info'} solid>
+                        {visit.visit_type?.replace('_', ' ')}
+                      </Badge>
+                      <Link to={`/${rolePrefix}/visits/${visit.id}/edit`} onClick={(e) => e.stopPropagation()}>
+                        <button className="icon-btn-sm" title="Edit"><Pencil size={14} /></button>
+                      </Link>
+                      <button
+                        className="icon-btn-sm danger"
+                        onClick={(e) => { e.preventDefault(); setDeleteTarget({ id: visit.id, name: `Visit (${new Date(visit.visit_date).toLocaleDateString()})` }); }}
+                        title="Delete"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={visitTypeColors[visit.visit_type] || 'info'} solid>
-                      {visit.visit_type?.replace('_', ' ')}
-                    </Badge>
-                    <Link to={`/visits/${visit.id}/edit`} onClick={(e) => e.stopPropagation()}>
-                      <button className="icon-btn-sm" title="Edit"><Pencil size={14} /></button>
-                    </Link>
-                    <button
-                      className="icon-btn-sm danger"
-                      onClick={(e) => { e.preventDefault(); setDeleteTarget({ id: visit.id, name: `Visit (${new Date(visit.visit_date).toLocaleDateString()})` }); }}
-                      title="Delete"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </div>
-                <p className="body-sm" style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>
-                  Patient: {visit.patient_id?.slice(0, 8)}... ({visit.patient_type})
-                </p>
-                {visit.notes && (
-                  <p className="body-sm" style={{ color: 'var(--text-tertiary)' }}>
-                    {visit.notes.length > 100 ? visit.notes.slice(0, 100) + '...' : visit.notes}
+                  <p className="body-sm" style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>
+                    Patient: {nameInfo ? nameInfo.name : visit.patient_id?.slice(0, 8)} ({visit.patient_type})
                   </p>
-                )}
-              </CardBody>
-            </Card>
-          ))}
+                  {visit.notes && (
+                    <p className="body-sm" style={{ color: 'var(--text-tertiary)' }}>
+                      {visit.notes.length > 100 ? visit.notes.slice(0, 100) + '...' : visit.notes}
+                    </p>
+                  )}
+                </CardBody>
+              </Card>
+            );
+          })}
         </div>
       ) : (
         <EmptyState 
           title="No visits found" 
           description={searchTerm ? "Try adjusting your search filters." : "You haven't logged any visits yet."}
           action={!searchTerm && (
-            <Link to="/visits/new">
+            <Link to={`/${rolePrefix}/visits/new`}>
               <Button variant="outline">Log First Visit</Button>
             </Link>
           )}

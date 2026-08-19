@@ -7,9 +7,9 @@ const getMobileNavConfig = (role) => {
   switch (role) {
     case ROLES.MOTHER:
       return [
+        { name: 'Amina', path: '/mother/amina', icon: MessageCircle },
         { name: 'Home', path: '/mother/dashboard', icon: Home },
         { name: 'Health', path: '/mother/pregnancy', icon: Heart },
-        { name: 'Amina', path: '/shared/amina', icon: MessageCircle },
         { name: 'Children', path: '/mother/children', icon: Baby },
         { name: 'Settings', path: '/shared/settings', icon: Settings },
       ];
@@ -36,7 +36,7 @@ const getMobileNavConfig = (role) => {
       return [
         { name: 'Home', path: '/doctor/dashboard', icon: Home },
         { name: 'Patients', path: '/doctor/mothers', icon: Users },
-        { name: 'Amina', path: '/shared/amina', icon: MessageCircle },
+        { name: 'Visits', path: '/doctor/visits', icon: Calendar },
         { name: 'Referrals', path: '/doctor/referrals', icon: ClipboardList },
         { name: 'Settings', path: '/shared/settings', icon: Settings },
       ];

@@ -2,7 +2,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import useAuthStore from '../../stores/authStore';
 
 const ROLE_HOME = {
-  mother: '/mother/dashboard',
+  mother: '/mother/amina',
   chw: '/chw/dashboard',
   nurse: '/nurse/dashboard',
   doctor: '/doctor/dashboard',

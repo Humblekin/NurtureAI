@@ -549,3 +549,13 @@ textarea.input-base {
 .icon-btn-xs {
   padding: 2px;
 }
+
+/* ---- Mobile Touch Targets ---- */
+@media (max-width: 768px) {
+  .icon-btn-sm,
+  .icon-btn-xs {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+

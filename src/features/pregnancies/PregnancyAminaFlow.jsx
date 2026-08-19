@@ -208,7 +208,7 @@ Rules:
           { role: 'system', content: 'You are Amina, a warm healthcare AI companion. Be natural and caring.' },
           { role: 'user', content: prompt },
         ],
-        { temperature: 0.7, maxTokens: 150 }
+        { temperature: 0.7, maxTokens: 150, language }
       );
       setMessages(prev => [...prev, { role: 'assistant', content: response }]);
     } catch {
@@ -252,10 +252,27 @@ Rules:
       const { default: usePregnancyStore } = await import('../../stores/pregnancyStore');
       const { registerPregnancy } = usePregnancyStore.getState();
 
+      const { default: useMotherStore } = await import('../../stores/motherStore');
+      const { fetchMotherByProfileId, currentMother } = useMotherStore.getState();
+      if (!currentMother) {
+        await fetchMotherByProfileId(profile?.id);
+      }
+      const mother = useMotherStore.getState().currentMother;
+
+      if (!mother?.id) {
+        const noMotherMsg = language === 'dag'
+          ? "Ba a sami bayanin uwa ba. Da fatan za a sake gwadawa."
+          : "We couldn't find your mother record. Please try again.";
+        setMessages(prev => [...prev, { role: 'assistant', content: noMotherMsg }]);
+        setIsSaving(false);
+        return;
+      }
+
       const lmpDate = collectedData.lmp || null;
       const edd = calculateEDDFromLMP(lmpDate);
 
       const pregnancyData = {
+        mother_id: mother.id,
         lmp: lmpDate,
         edd: edd,
         gravida: parseInt(collectedData.gravida) || 1,
@@ -267,6 +284,8 @@ Rules:
           collectedData.blood_group ? `Blood group: ${collectedData.blood_group}` : null,
           collectedData.supplements === 'Yes' ? 'Taking supplements' : null,
         ].filter(Boolean).join('. ') || null,
+        data_source: 'mother_registered',
+        verified: false,
       };
 
       const result = await registerPregnancy(pregnancyData);

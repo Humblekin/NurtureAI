@@ -38,6 +38,7 @@ import OnboardingForm from '../features/amina/OnboardingForm';
 import WeeklyTrackPage from '../features/track/WeeklyTrackPage';
 import PregnancyAminaFlow from '../features/pregnancies/PregnancyAminaFlow';
 import PregnancyRegister from '../features/pregnancies/PregnancyRegister';
+import PatientSearch from '../features/patients/PatientSearch';
 
 const A = AuthGuard;
 
@@ -52,6 +53,10 @@ export const router = createBrowserRouter([
       {
         path: 'mother/welcome',
         element: <A allowedRoles={['mother']}><MotherWelcome /></A>
+      },
+      {
+        path: 'mother/amina',
+        element: <A allowedRoles={['mother']}><AminaChat /></A>
       },
       {
         path: 'mother/onboarding/form',
@@ -112,6 +117,10 @@ export const router = createBrowserRouter([
         element: <A allowedRoles={['chw']}><CHWDashboard /></A>
       },
       {
+        path: 'chw/patients',
+        element: <A allowedRoles={['chw']}><PatientSearch /></A>
+      },
+      {
         path: 'chw/mothers',
         element: <A allowedRoles={['chw']}><MotherList /></A>
       },
@@ -170,6 +179,10 @@ export const router = createBrowserRouter([
         element: <A allowedRoles={['nurse']}><NurseDashboard /></A>
       },
       {
+        path: 'nurse/patients',
+        element: <A allowedRoles={['nurse']}><PatientSearch /></A>
+      },
+      {
         path: 'nurse/mothers',
         element: <A allowedRoles={['nurse']}><MotherList /></A>
       },
@@ -194,6 +207,34 @@ export const router = createBrowserRouter([
         element: <A allowedRoles={['nurse']}><AppointmentList /></A>
       },
       {
+        path: 'nurse/children',
+        element: <A allowedRoles={['nurse']}><ChildList /></A>
+      },
+      {
+        path: 'nurse/children/new',
+        element: <A allowedRoles={['nurse']}><ChildForm /></A>
+      },
+      {
+        path: 'nurse/children/:id',
+        element: <A allowedRoles={['nurse']}><ChildProfile /></A>
+      },
+      {
+        path: 'nurse/children/:id/edit',
+        element: <A allowedRoles={['nurse']}><ChildForm /></A>
+      },
+      {
+        path: 'nurse/visits',
+        element: <A allowedRoles={['nurse']}><VisitList /></A>
+      },
+      {
+        path: 'nurse/visits/new',
+        element: <A allowedRoles={['nurse']}><VisitForm /></A>
+      },
+      {
+        path: 'nurse/visits/:id/edit',
+        element: <A allowedRoles={['nurse']}><VisitForm /></A>
+      },
+      {
         path: 'nurse/referrals',
         element: <A allowedRoles={['nurse']}><ReferralList /></A>
       },
@@ -212,6 +253,10 @@ export const router = createBrowserRouter([
         element: <A allowedRoles={['doctor']}><DoctorDashboard /></A>
       },
       {
+        path: 'doctor/patients',
+        element: <A allowedRoles={['doctor']}><PatientSearch /></A>
+      },
+      {
         path: 'doctor/mothers',
         element: <A allowedRoles={['doctor']}><MotherList /></A>
       },
@@ -226,6 +271,34 @@ export const router = createBrowserRouter([
       {
         path: 'doctor/mothers/:id/edit',
         element: <A allowedRoles={['doctor']}><MotherForm /></A>
+      },
+      {
+        path: 'doctor/visits',
+        element: <A allowedRoles={['doctor']}><VisitList /></A>
+      },
+      {
+        path: 'doctor/visits/new',
+        element: <A allowedRoles={['doctor']}><VisitForm /></A>
+      },
+      {
+        path: 'doctor/visits/:id/edit',
+        element: <A allowedRoles={['doctor']}><VisitForm /></A>
+      },
+      {
+        path: 'doctor/children',
+        element: <A allowedRoles={['doctor']}><ChildList /></A>
+      },
+      {
+        path: 'doctor/children/new',
+        element: <A allowedRoles={['doctor']}><ChildForm /></A>
+      },
+      {
+        path: 'doctor/children/:id',
+        element: <A allowedRoles={['doctor']}><ChildProfile /></A>
+      },
+      {
+        path: 'doctor/children/:id/edit',
+        element: <A allowedRoles={['doctor']}><ChildForm /></A>
       },
       {
         path: 'doctor/referrals',
@@ -272,16 +345,44 @@ export const router = createBrowserRouter([
         element: <A allowedRoles={['admin']}><MotherList /></A>
       },
       {
+        path: 'admin/mothers/new',
+        element: <A allowedRoles={['admin']}><MotherForm /></A>
+      },
+      {
         path: 'admin/mothers/:id',
         element: <A allowedRoles={['admin']}><MotherProfile /></A>
+      },
+      {
+        path: 'admin/mothers/:id/edit',
+        element: <A allowedRoles={['admin']}><MotherForm /></A>
       },
       {
         path: 'admin/children',
         element: <A allowedRoles={['admin']}><ChildList /></A>
       },
       {
+        path: 'admin/children/new',
+        element: <A allowedRoles={['admin']}><ChildForm /></A>
+      },
+      {
         path: 'admin/children/:id',
         element: <A allowedRoles={['admin']}><ChildProfile /></A>
+      },
+      {
+        path: 'admin/children/:id/edit',
+        element: <A allowedRoles={['admin']}><ChildForm /></A>
+      },
+      {
+        path: 'admin/visits',
+        element: <A allowedRoles={['admin']}><VisitList /></A>
+      },
+      {
+        path: 'admin/visits/new',
+        element: <A allowedRoles={['admin']}><VisitForm /></A>
+      },
+      {
+        path: 'admin/visits/:id/edit',
+        element: <A allowedRoles={['admin']}><VisitForm /></A>
       },
       {
         path: 'admin/facilities',
@@ -290,6 +391,10 @@ export const router = createBrowserRouter([
       {
         path: 'admin/referrals',
         element: <A allowedRoles={['admin']}><ReferralList /></A>
+      },
+      {
+        path: 'admin/referrals/new',
+        element: <A allowedRoles={['admin']}><ReferralForm /></A>
       },
       {
         path: 'admin/reports',

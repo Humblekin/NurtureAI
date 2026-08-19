@@ -5,6 +5,7 @@ import { useVoiceConversation, VOICE_STATES, useSpeechRecognition, useSpeechSynt
 import { isAiConfigured, chatCompletion } from '../../lib/groq';
 import { speak as browserSpeak, unlockVoice, isSpeechSynthesisSupported } from '../../services/voice/speechSynthesis';
 import useAuthStore from '../../stores/authStore';
+import useAppStore from '../../stores/appStore';
 import { buildHealthContext } from '../../services/healthContext';
 import { runReminderEngine, generateAminaGreeting } from '../../services/reminderEngine';
 import useNotificationStore from '../../stores/notificationStore';
@@ -63,6 +64,9 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
     startConversation, retryMicPermission,
     togglePause, bargeIn, clearChat, switchLanguage,
   } = voice;
+  const currentPatient = useAppStore((state) => state.currentPatient);
+  const { profile } = useAuthStore();
+  const isWorker = !!profile?.role && profile?.role !== 'mother';
 
   const avatarState = useMemo(() => {
     switch (voiceState) {
@@ -176,6 +180,13 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
         <div className={styles.voiceInfo}>
           <h2 className={styles.voiceName}>Amina</h2>
           <p className={styles.voiceStatus}>{statusText}</p>
+          {isWorker && (
+            <p className={styles.voiceStatus} style={{ marginTop: '4px', fontSize: '12px', opacity: 0.75 }}>
+              {currentPatient
+                ? `Reviewing: ${currentPatient.name || 'Patient'}${currentPatient.patientCode ? ` (${currentPatient.patientCode})` : ''}`
+                : 'No patient selected — open a patient record to scope Amina'}
+            </p>
+          )}
         </div>
 
         {/* Listening ring */}
@@ -291,6 +302,9 @@ const VoiceMode = ({ voice, onSwitchToChat }) => {
 // ================================================= */
 const ChatMode = ({ onSwitchToVoice }) => {
   const { messages, isLoading, error, sendMessage, clearChat, language, switchLanguage, greeting } = useAminaChatChatMode();
+  const currentPatient = useAppStore((state) => state.currentPatient);
+  const { profile } = useAuthStore();
+  const isWorker = !!profile?.role && profile?.role !== 'mother';
   const { isListening, transcript, isSupported: sttSupported, error: sttError, startListening, stopListening, setTranscript } = useSpeechRecognition(language);
   const { isSpeaking, isSupported: ttsSupported, speak } = useSpeechSynthesis(language);
   const [input, setInput] = useState('');
@@ -309,7 +323,12 @@ const ChatMode = ({ onSwitchToVoice }) => {
   // Auto-speak responses
   useEffect(() => {
     if (!autoSpeak || isSpeaking || isLoading) return;
-    const lastAssistantIdx = [...messages].findLastIndex(m => m.role === 'assistant');
+    const lastAssistantIdx = (() => {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'assistant') return i;
+      }
+      return -1;
+    })();
     if (lastAssistantIdx > 0 && lastAssistantIdx !== lastSpokenIdxRef.current) {
       lastSpokenIdxRef.current = lastAssistantIdx;
       setTimeout(() => speak(messages[lastAssistantIdx].content), 400);
@@ -346,6 +365,25 @@ const ChatMode = ({ onSwitchToVoice }) => {
             <h2 className={styles.headerTitle}>Chat with Amina</h2>
             <p className={styles.headerSubtitle}>Your personalized maternal & child healthcare companion</p>
           </div>
+          {isWorker && (
+            <div
+              style={{
+                marginTop: 'var(--space-2)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+                padding: '4px 12px',
+                borderRadius: 'var(--radius-full)',
+                fontSize: '12px',
+                background: currentPatient ? 'var(--color-primary-100)' : 'var(--surface-sunken)',
+                color: currentPatient ? 'var(--color-primary-800)' : 'var(--text-tertiary)',
+              }}
+            >
+              {currentPatient
+                ? `Reviewing: ${currentPatient.name || 'Patient'}${currentPatient.patientCode ? ` (${currentPatient.patientCode})` : ''}`
+                : 'No patient selected — open a patient record to scope Amina'}
+            </div>
+          )}
         </div>
         <div className={styles.headerActions}>
           <div className={styles.languageSelector}>
@@ -423,9 +461,13 @@ function useAminaChatChatMode() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const { profile } = useAuthStore();
+  const currentPatient = useAppStore((state) => state.currentPatient);
   const healthContextRef = useRef('');
   const proactiveContextRef = useRef('');
   const initializedRef = useRef(false);
+  const profileIdRef = useRef(null);
+  const patientIdRef = useRef(null);
+  const lastContextRefreshRef = useRef(0);
 
   const welcomeMessages = useMemo(() => ({
     en: "Hello! I'm Amina, your AI healthcare companion. I'm here to support you with pregnancy, child health, nutrition, breastfeeding, vaccination, and maternal healthcare. How can I help you today?",
@@ -434,11 +476,38 @@ function useAminaChatChatMode() {
 
   // Build health context and generate personalized greeting on mount
   useEffect(() => {
-    if (!profile?.id || !profile?.role || initializedRef.current) return;
+    if (!profile?.id || !profile?.role) return;
+
+    // Account switch while mounted: drop stale context/messages so nothing
+    // leaks between users.
+    if (profileIdRef.current && profileIdRef.current !== profile.id) {
+      initializedRef.current = false;
+      healthContextRef.current = '';
+      proactiveContextRef.current = '';
+      setGreeting(null);
+      setMessages([]);
+    }
+    profileIdRef.current = profile.id;
+
+    // Patient switch while mounted (worker opening a different record):
+    // rebuild context so Amina is scoped to the newly selected patient, and
+    // drop the previous patient's conversation so it never leaks into the new
+    // record. The async build below sets a fresh greeting.
+    if (patientIdRef.current !== currentPatient?.id) {
+      initializedRef.current = false;
+      healthContextRef.current = '';
+      proactiveContextRef.current = '';
+      setGreeting(null);
+      setMessages([]);
+    }
+    patientIdRef.current = currentPatient?.id;
+
+    if (initializedRef.current) return;
     initializedRef.current = true;
 
-    buildHealthContext(profile).then(ctx => {
+    buildHealthContext(profile, { patientId: currentPatient?.id }).then(ctx => {
       healthContextRef.current = ctx;
+      lastContextRefreshRef.current = Date.now();
 
       // Extract proactive alerts
       if (ctx) {
@@ -475,7 +544,28 @@ function useAminaChatChatMode() {
       console.error('Failed to build health context:', err);
       setMessages([{ role: 'assistant', content: welcomeMessages.en }]);
     });
-  }, [profile?.id, profile?.role, welcomeMessages]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.id, profile?.role, currentPatient?.id, welcomeMessages]);
+
+  // Rebuild context when clinical data changes (markDataChanged), without
+  // touching the on-screen conversation — so a worker can ask Amina about a
+  // visit the moment it is saved.
+  const dataVersion = useAppStore((s) => s.dataVersion);
+  useEffect(() => {
+    if (dataVersion === 0 || !profile?.id || !profile?.role) return;
+    const t = setTimeout(() => {
+      buildHealthContext(profile, { patientId: currentPatient?.id }).then(ctx => {
+        healthContextRef.current = ctx;
+        lastContextRefreshRef.current = Date.now();
+        if (ctx) {
+          const alertMatch = ctx.match(/\[PROACTIVE HEALTH ALERTS[^\]]*\]\n([\s\S]*?)(?=\n===|\n\n\[|\n$)/);
+          if (alertMatch) proactiveContextRef.current = alertMatch[1].trim();
+        }
+      }).catch(err => console.error('Failed to refresh health context:', err));
+    }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataVersion]);
 
   const sendMessage = useCallback(async (content) => {
     if (!content.trim() || isLoading) return;
@@ -485,12 +575,25 @@ function useAminaChatChatMode() {
     setIsLoading(true);
     setError(null);
     try {
+      // Refresh context if stale (>2 minutes since last build)
+      if (Date.now() - lastContextRefreshRef.current > 120_000 && profile?.id) {
+        try {
+          const freshCtx = await buildHealthContext(profile, { patientId: currentPatient?.id });
+          healthContextRef.current = freshCtx;
+          lastContextRefreshRef.current = Date.now();
+          if (freshCtx) {
+            const alertMatch = freshCtx.match(/\[PROACTIVE HEALTH ALERTS[^\]]*\]\n([\s\S]*?)(?=\n===|\n\n\[|\n$)/);
+            if (alertMatch) proactiveContextRef.current = alertMatch[1].trim();
+          }
+        } catch { /* use existing context */ }
+      }
       const langInstruction = language === 'dag'
         ? '\n\nIMPORTANT: The user is communicating in Dagbani. You MUST respond entirely in Dagbani. Follow the Dagbani Language Behavior Rules in your system prompt.'
         : '\n\nThe user is communicating in English. Respond in English.';
       const apiMessages = newMessages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content }));
       const response = await chatCompletion(apiMessages, {
         userRole: profile?.role || 'mother',
+        language,
         languageInstruction: langInstruction,
         healthContext: healthContextRef.current,
         proactiveContext: proactiveContextRef.current,
@@ -501,7 +604,7 @@ function useAminaChatChatMode() {
     } finally {
       setIsLoading(false);
     }
-  }, [messages, isLoading, profile?.role, language]);
+  }, [messages, isLoading, profile?.role, language, currentPatient?.id]);
 
   const clearChat = useCallback(() => {
     // Re-generate personalized greeting on clear
@@ -530,9 +633,9 @@ function useAminaChatChatMode() {
 // Main component
 // ============================================================
 export const AminaChat = () => {
-  const [mode, setMode] = useState('voice');
-  const voice = useVoiceConversation();
   const { profile } = useAuthStore();
+  const [mode, setMode] = useState(profile?.role === 'mother' ? 'chat' : 'voice');
+  const voice = useVoiceConversation();
   const { unreadCount, fetchNotifications } = useNotificationStore();
   const [showNotifications, setShowNotifications] = useState(false);
   const { notifications } = useNotificationStore();

@@ -1,4 +1,4 @@
-import { Suspense, useState, useEffect, useMemo } from 'react';
+import { Component, Suspense, useState, useEffect, useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, ContactShadows } from '@react-three/drei';
 import AminaBody from './AminaBody';
@@ -11,6 +11,49 @@ const LoadingFallback = () => (
     <meshStandardMaterial color="#20c997" wireframe />
   </mesh>
 );
+
+const CSS_FALLBACK_STYLE = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: '100%',
+  height: '100%',
+  minHeight: 'inherit',
+  borderRadius: '50%',
+  background: 'radial-gradient(circle at 30% 30%, #aef3df, #20c997 45%, #0e8f68 100%)',
+  color: '#ffffff',
+  fontSize: 'clamp(3rem, 10vw, 5rem)',
+  fontWeight: 700,
+  userSelect: 'none',
+};
+
+// If 3D rendering throws (WebGL context loss, shader failure, unsupported
+// GPU, etc.), degrade gracefully to a styled fallback instead of blanking
+// the whole Amina screen.
+class CanvasBoundary extends Component {
+  state = { hasError: false };
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch() {}
+  render() {
+    return this.state.hasError
+      ? <div style={CSS_FALLBACK_STYLE}>A</div>
+      : this.props.children;
+  }
+}
+
+function supportsWebGL() {
+  if (typeof window === 'undefined' || typeof window.WebGLRenderingContext === 'undefined') {
+    return false;
+  }
+  try {
+    const canvas = document.createElement('canvas');
+    return !!(canvas.getContext('webgl') || canvas.getContext('experimental-webgl'));
+  } catch {
+    return false;
+  }
+}
 
 const Scene = ({ state, emotion, vrmUrl }) => {
   return (
@@ -75,6 +118,7 @@ export const AminaAvatar = ({
   className = '',
 }) => {
   const [isReady, setIsReady] = useState(false);
+  const [webglOK] = useState(() => supportsWebGL());
 
   useEffect(() => {
     const timer = setTimeout(() => setIsReady(true), 100);
@@ -90,21 +134,27 @@ export const AminaAvatar = ({
       {/* Animated ring around avatar */}
       <div className={`${styles.stateRing} ${ringClass} ${isActive ? styles.ringActive : ''}`} />
 
-      {isReady && (
-        <Canvas
-          camera={{ position: [0, 0.4, 4.5], fov: 32 }}
-          dpr={[1, 2]}
-          gl={{
-            antialias: true,
-            alpha: true,
-            powerPreference: 'high-performance',
-          }}
-          style={{ background: 'transparent' }}
-        >
-          <Suspense fallback={<LoadingFallback />}>
-            <Scene state={state} emotion={emotion} vrmUrl={vrmUrl} />
-          </Suspense>
-        </Canvas>
+      {isReady && webglOK && (
+        <CanvasBoundary>
+          <Canvas
+            camera={{ position: [0, 0.4, 4.5], fov: 32 }}
+            dpr={[1, 2]}
+            gl={{
+              antialias: true,
+              alpha: true,
+              powerPreference: 'high-performance',
+            }}
+            style={{ background: 'transparent' }}
+          >
+            <Suspense fallback={<LoadingFallback />}>
+              <Scene state={state} emotion={emotion} vrmUrl={vrmUrl} />
+            </Suspense>
+          </Canvas>
+        </CanvasBoundary>
+      )}
+
+      {isReady && !webglOK && (
+        <div style={CSS_FALLBACK_STYLE}>A</div>
       )}
 
       {/* Bottom indicator: state-specific animations + label */}

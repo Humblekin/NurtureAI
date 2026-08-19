@@ -13,6 +13,18 @@ import styles from './OnboardingFlow.module.css';
  * Guides them through health profile setup via conversation.
  */
 
+// Escape user/mother-supplied text before it is rendered with
+// dangerouslySetInnerHTML, so profile data can never inject markup.
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
+}
+
 const OnboardingFlow = () => {
   const navigate = useNavigate();
   const { profile, user } = useAuthStore();
@@ -115,7 +127,7 @@ const OnboardingFlow = () => {
     });
 
     if (result?.success) {
-      navigate('/mother/dashboard', { replace: true });
+      navigate('/mother/amina', { replace: true });
     }
   };
 
@@ -190,7 +202,7 @@ const OnboardingFlow = () => {
             <div className={styles.summary}>
               {summary?.split('\n').map((line, i) => (
                 <p key={i} dangerouslySetInnerHTML={{
-                  __html: line
+                  __html: escapeHtml(line)
                     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                     .replace(/• /g, '&bull; ')
                 }} />

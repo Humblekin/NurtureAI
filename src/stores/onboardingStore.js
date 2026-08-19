@@ -108,6 +108,19 @@ const useOnboardingStore = create((set, get) => ({
         motherProfile.phone = profileData.phone;
       }
 
+      // Mother-provided registration — mark as pending worker verification
+      const provenance = { data_source: 'mother_registered', verified: false };
+      motherProfile.data_source = motherProfile.data_source || provenance.data_source;
+      motherProfile.verified = motherProfile.verified === undefined ? provenance.verified : motherProfile.verified;
+      if (pregnancyProfile) {
+        pregnancyProfile.data_source = pregnancyProfile.data_source || provenance.data_source;
+        pregnancyProfile.verified = pregnancyProfile.verified === undefined ? provenance.verified : pregnancyProfile.verified;
+      }
+      (childrenProfiles || []).forEach((child) => {
+        child.data_source = child.data_source || provenance.data_source;
+        child.verified = child.verified === undefined ? provenance.verified : child.verified;
+      });
+
       // Best-effort: assign a community health worker to the mother
       if (isSupabaseConfigured() && motherProfile.community) {
         try {
@@ -125,14 +138,43 @@ const useOnboardingStore = create((set, get) => ({
         }
       }
 
-      // Use motherStore to register mother (keeps store state in sync)
-      const motherResult = await useMotherStore.getState().registerMother(motherProfile);
+      // Prefer to link an existing unclaimed mother record — a healthcare
+      // worker may have registered this mother before she had an account
+      // (profile_id IS NULL). Claiming on an exact phone + full-name match
+      // prevents duplicate patient records. Falls through to a new record
+      // when no match exists.
+      let motherId = null;
+      let motherResult = null;
+      let claimedMother = null;
+      if (isSupabaseConfigured()) {
+        try {
+          const { data: claimed, error: claimError } = await supabase
+            .rpc('claim_mother', {
+              p_phone: motherProfile.phone || '',
+              p_full_name: motherProfile.full_name || '',
+            });
+          if (!claimError && Array.isArray(claimed) && claimed.length > 0) {
+            claimedMother = claimed[0];
+          }
+        } catch (err) {
+          console.warn('[Onboarding] Claim lookup failed, registering new record:', err);
+        }
+      }
+
+      if (claimedMother) {
+        await useMotherStore.getState().adoptMother(claimedMother);
+        motherId = claimedMother.id;
+        motherResult = { success: true, data: claimedMother };
+      } else {
+        // Use motherStore to register mother (keeps store state in sync)
+        motherResult = await useMotherStore.getState().registerMother(motherProfile);
+        motherId = motherResult.data.id;
+      }
+
       if (!motherResult.success) {
         set({ isSaving: false, error: 'Failed to save mother profile.' });
         return { success: false, error: motherResult.error };
       }
-
-      const motherId = motherResult.data.id;
 
       // Use pregnancyStore to register pregnancy if applicable
       let pregnancyId = null;

@@ -1,5 +1,6 @@
 import { generateId } from '../lib/db';
 import { upsertRecord } from '../lib/sync';
+import { screenForEmergency, buildEmergencyReply } from './emergencyScreen';
 
 export const CONVERSATION_STATES = {
   IDLE: 'idle',
@@ -138,7 +139,7 @@ export function createConversationManager(deps) {
   async function handleUserSpeech(text, requestId) {
     if (!text || destroyed) return;
 
-    console.log(`[Conversation] Request ${requestId}: "${text}"`);
+    console.log(`[Conversation] Request ${requestId} received (${text.length} chars)`);
     onTranscriptChange?.('');
 
     const userMsg = { role: 'user', content: text };
@@ -150,6 +151,31 @@ export function createConversationManager(deps) {
     aiAbortController = new AbortController();
 
     try {
+      // Deterministic emergency pre-screen — bypasses the AI entirely.
+      const emergencyMatch = screenForEmergency(text);
+      if (emergencyMatch) {
+        console.log(`[Conversation] Emergency pre-screen matched: ${emergencyMatch.label}`);
+        const emergencyReply = buildEmergencyReply(emergencyMatch, language);
+        const emergencyMsg = { role: 'assistant', content: emergencyReply };
+        setMessages([...newMessages, emergencyMsg]);
+
+        setState(CONVERSATION_STATES.SPEAKING);
+        ttsAbortController = new AbortController();
+        try {
+          await speakText(emergencyReply, ttsAbortController.signal);
+        } catch (speakErr) {
+          if (speakErr.name !== 'AbortError') {
+            console.error('[ConversationManager] Emergency speech error:', speakErr);
+          }
+        } finally {
+          ttsAbortController = null;
+        }
+        if (!destroyed && activeRequestId === requestId) {
+          forceState(CONVERSATION_STATES.LISTENING);
+        }
+        return;
+      }
+
       const langInstruction = language === 'dag'
         ? '\n\nIMPORTANT: The user is communicating in Dagbani. You MUST respond entirely in Dagbani. Use simple Dagbani with occasional English medical terms in parentheses when needed for clarity.'
         : '\n\nThe user is communicating in English. Respond in English.';
@@ -158,7 +184,7 @@ export function createConversationManager(deps) {
         .filter(m => m.role !== 'system')
         .map(m => ({ role: m.role, content: m.content }));
 
-      console.log('[Conversation] Sending transcript to AI:', text);
+      console.log(`[Conversation] Request ${requestId}: sending to AI`);
       const response = await sendWithRetry(apiMessages, {
         userRole: userProfile?.role || 'mother',
         languageInstruction: langInstruction,
@@ -217,7 +243,7 @@ export function createConversationManager(deps) {
   // ---- Wrapper: single-request mutex + request ID ----
   function processUserSpeech(text) {
     if (isProcessing) {
-      console.log('[Conversation] Already processing, ignoring transcript:', text);
+      console.log('[Conversation] Already processing, ignoring new transcript');
       return;
     }
     isProcessing = true;
@@ -255,15 +281,23 @@ export function createConversationManager(deps) {
         if (pregnancyWeek) personalGreeting += ` You are now ${pregnancyWeek} weeks pregnant.`;
         if (childName) personalGreeting += ` How is ${childName} doing?`;
 
+        // Add a proactive alert if one exists — but only one, to keep it concise
+        let hasProactiveAlert = false;
         if (hasOverdueAnc) {
           personalGreeting += ` I notice your last antenatal visit was a while ago — let's talk about scheduling your next check-up.`;
+          hasProactiveAlert = true;
         } else if (hasOverdueVax) {
           personalGreeting += ` I see there's a vaccination due — we should discuss that.`;
+          hasProactiveAlert = true;
         } else if (hasOverdueGrowth) {
           personalGreeting += ` It's been a while since ${childName || 'your child'}'s last growth check.`;
+          hasProactiveAlert = true;
         }
 
-        personalGreeting += ` How can I help you today?`;
+        // Only add the generic closing question when there's no proactive alert
+        if (!hasProactiveAlert) {
+          personalGreeting += ` How can I help you today?`;
+        }
       }
     } else {
       if (language === 'dag') {
@@ -381,13 +415,13 @@ export function createConversationManager(deps) {
       recentTranscripts = recentTranscripts.filter(t => now - t.time < 3000);
       const hash = hashText(normalized);
       if (recentTranscripts.some(t => t.hash === hash)) {
-        console.log('[Conversation] Duplicate transcript ignored:', text);
+        console.log('[Conversation] Duplicate transcript ignored');
         return;
       }
       recentTranscripts.push({ hash, time: now });
 
       if (isProcessing) {
-        console.log('[Conversation] Already processing, ignoring transcript:', text);
+        console.log('[Conversation] Already processing, ignoring new transcript');
         return;
       }
 
@@ -444,6 +478,17 @@ export function createConversationManager(deps) {
 
       forceState(CONVERSATION_STATES.PROCESSING);
       try {
+        // Deterministic emergency pre-screen — bypasses the AI entirely.
+        const emergencyMatch = screenForEmergency(text);
+        if (emergencyMatch) {
+          console.log(`[Conversation] Emergency pre-screen matched: ${emergencyMatch.label}`);
+          const emergencyReply = buildEmergencyReply(emergencyMatch, language);
+          const emergencyMsg = { role: 'assistant', content: emergencyReply };
+          setMessages([...newMessages, emergencyMsg]);
+          if (!destroyed) forceState(CONVERSATION_STATES.LISTENING);
+          return emergencyReply;
+        }
+
         const langInstruction = language === 'dag'
           ? '\n\nIMPORTANT: The user is communicating in Dagbani. You MUST respond entirely in Dagbani.'
           : '\n\nThe user is communicating in English. Respond in English.';

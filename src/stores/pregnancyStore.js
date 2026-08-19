@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { generateId } from '../lib/db';
 import { upsertRecord, deleteRecord } from '../lib/sync';
-import { calculateWeeksFromLMP } from '../lib/pregnancy';
+import { calculateWeeksFromLMP, nextVisitNumber } from '../lib/pregnancy';
 import supabase, { isSupabaseConfigured } from '../lib/supabase';
 
 /**
@@ -101,10 +101,38 @@ const usePregnancyStore = create((set, get) => ({
   logAntenatalVisit: async (visitData) => {
     set({ isLoading: true, error: null });
     try {
+      if (visitData.visit_date) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const visitDate = new Date(visitData.visit_date);
+        visitDate.setHours(0, 0, 0, 0);
+        if (visitDate > today) {
+          set({ isLoading: false });
+          return { success: false, error: 'Visit date cannot be in the future.' };
+        }
+        const pregnancy = get().pregnancyHistory.find(p => p.id === visitData.pregnancy_id) ||
+          (get().activePregnancy?.id === visitData.pregnancy_id ? get().activePregnancy : null);
+        if (pregnancy?.lmp) {
+          const lmpDate = new Date(pregnancy.lmp);
+          lmpDate.setHours(0, 0, 0, 0);
+          if (visitDate < lmpDate) {
+            set({ isLoading: false });
+            return { success: false, error: 'Visit date cannot be before the first day of your last menstrual period.' };
+          }
+        }
+      }
+
       const id = generateId();
+
+      // visit_number is NOT NULL in the schema but was never written — compute
+      // it as the next sequential number for this pregnancy so the ANC record
+      // stays in the intended order (1, 2, 3 …).
+      const visit_number = visitData.visit_number || nextVisitNumber(get().antenatalVisits, visitData.pregnancy_id);
+
       const newVisit = {
         id,
         ...visitData,
+        visit_number,
         created_at: new Date().toISOString(),
       };
 
@@ -161,6 +189,31 @@ const usePregnancyStore = create((set, get) => ({
       return { success: true, data: updated };
     } catch (error) {
       console.error('Failed to update pregnancy:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  // Verify a mother-registered pregnancy as a healthcare worker. Confirms the
+  // mother-provided details; provenance (data_source) stays untouched.
+  verifyPregnancy: async (id, workerId) => {
+    try {
+      const existing = getExisting(get(), id);
+      if (!existing) throw new Error('Pregnancy not found');
+      const updated = {
+        ...existing,
+        verified: true,
+        verified_by: workerId || null,
+        verified_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      await upsertRecord('pregnancies', updated);
+      set((state) => ({
+        activePregnancy: state.activePregnancy?.id === id ? updated : state.activePregnancy,
+        pregnancyHistory: state.pregnancyHistory.map(p => p.id === id ? updated : p),
+      }));
+      return { success: true, data: updated };
+    } catch (error) {
+      console.error('Failed to verify pregnancy:', error);
       return { success: false, error: error.message };
     }
   },

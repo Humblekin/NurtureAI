@@ -74,18 +74,26 @@ const useWeeklyJournalStore = create((set, get) => ({
   saveJournal: async (journalData) => {
     set({ isLoading: true, error: null });
     try {
-      const id = generateId();
+      // Prevent duplicate rows for the same pregnancy + week: reuse the
+      // existing entry's id (upsert) instead of always inserting a new one.
+      const existing = get().journals.find(j =>
+        j.pregnancy_id === journalData.pregnancy_id && j.week_number === journalData.week_number
+      );
+      const id = existing ? existing.id : generateId();
       const entry = {
         id,
         ...journalData,
-        created_at: new Date().toISOString(),
+        created_at: existing ? existing.created_at : new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
 
       await upsertRecord('weekly_journals', entry);
 
       set((state) => ({
-        journals: [...state.journals, entry].sort((a, b) => b.week_number - a.week_number),
+        journals: [
+          ...state.journals.filter(j => j.id !== id),
+          entry,
+        ].sort((a, b) => b.week_number - a.week_number),
         currentJournal: entry,
         isLoading: false,
       }));

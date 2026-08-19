@@ -36,6 +36,31 @@ const useReferralStore = create((set, get) => ({
     }
   },
 
+  // Fetch referrals for a specific patient (used on the patient profile).
+  fetchReferralsByPatient: async (patientId, patientType = 'mother') => {
+    set({ isLoading: true, error: null });
+    if (!patientId || !isSupabaseConfigured()) {
+      set({ referrals: [], isLoading: false });
+      return [];
+    }
+    try {
+      const { data, error } = await supabase
+        .from('referrals')
+        .select('*')
+        .eq('patient_id', patientId)
+        .eq('patient_type', patientType)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      set({ referrals: data || [], isLoading: false });
+      return data || [];
+    } catch (error) {
+      console.error('Failed to fetch patient referrals:', error);
+      set({ error: error.message, isLoading: false });
+      return [];
+    }
+  },
+
   fetchOutgoingReferrals: async (workerOrFacilityId) => {
     set({ isLoading: true, error: null });
     if (!workerOrFacilityId || !isSupabaseConfigured()) {
@@ -54,6 +79,31 @@ const useReferralStore = create((set, get) => ({
       return data || [];
     } catch (error) {
       console.error('Failed to fetch outgoing referrals:', error);
+      set({ error: error.message, isLoading: false });
+      return [];
+    }
+  },
+
+  // Referrals created by a specific worker (used on dashboards to surface the
+  // referrals this worker still needs to act on).
+  fetchReferralsByWorker: async (workerId) => {
+    set({ isLoading: true, error: null });
+    if (!workerId || !isSupabaseConfigured()) {
+      set({ referrals: [], isLoading: false });
+      return [];
+    }
+    try {
+      const { data, error } = await supabase
+        .from('referrals')
+        .select('*')
+        .eq('from_worker_id', workerId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      set({ referrals: data || [], isLoading: false });
+      return data || [];
+    } catch (error) {
+      console.error('Failed to fetch worker referrals:', error);
       set({ error: error.message, isLoading: false });
       return [];
     }
@@ -169,6 +219,11 @@ const useReferralStore = create((set, get) => ({
       return [];
     }
   },
+  reset: () => set({
+    referrals: [],
+    isLoading: false,
+    error: null,
+  }),
 }));
 
 function getExisting(state, id) {

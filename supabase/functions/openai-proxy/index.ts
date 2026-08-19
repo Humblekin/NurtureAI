@@ -91,6 +91,9 @@ Deno.serve(async (req) => {
     }
 
     const MAX_ATTEMPTS = 3
+    // Cap each upstream attempt so a hung Groq request can never leave the
+    // client (or this edge function) waiting forever.
+    const UPSTREAM_TIMEOUT_MS = 45000
     let apiResponse: Response | null = null
     let responseText = ""
 
@@ -104,6 +107,7 @@ Deno.serve(async (req) => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(groqBody),
+          signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
         },
       )
       responseText = await apiResponse.text()
@@ -161,8 +165,9 @@ Deno.serve(async (req) => {
     })
   } catch (err) {
     console.error(`[AI-Proxy] Fetch error: ${err}`)
+    const isTimeout = (err as Error)?.name === "TimeoutError"
     return new Response(
-      JSON.stringify({ error: "Failed to reach Groq API" }),
+      JSON.stringify({ error: isTimeout ? "Groq API request timed out. Please try again." : "Failed to reach Groq API" }),
       { status: 502, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
     )
   }

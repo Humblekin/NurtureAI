@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Activity, ExternalLink, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, ExternalLink, AlertTriangle } from 'lucide-react';
 import useReferralStore from '../../stores/referralStore';
 import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
 import supabase, { isSupabaseConfigured } from '../../lib/supabase';
+import { provenanceFor } from '../../lib/provenance';
 import { Card, CardHeader, CardBody } from '../../components/ui/Card';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
@@ -16,7 +17,10 @@ export const ReferralForm = () => {
   const { createReferral, isLoading } = useReferralStore();
   const { profile } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
+  const isOnline = useAppStore((state) => state.isOnline);
   const rolePrefix = profile?.role || 'chw';
+  const submittingRef = useRef(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const patientId = searchParams.get('patientId') || '';
   const patientType = searchParams.get('patientType') || 'mother';
@@ -72,15 +76,26 @@ export const ReferralForm = () => {
       return;
     }
 
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setIsSubmitting(true);
+
     const { success, error } = await createReferral({
       ...formData,
+      ...provenanceFor(profile),
       from_facility_id: profile?.facility_id,
       from_worker_id: profile?.id,
       mother_id: motherId || undefined,
     });
 
+    submittingRef.current = false;
+    setIsSubmitting(false);
+
     if (success) {
-      addToast({ type: 'success', message: 'Referral created successfully.' });
+      addToast({
+        type: 'success',
+        message: isOnline ? 'Referral created successfully.' : 'Referral saved offline — will sync when back online.',
+      });
       navigate(`/${rolePrefix}/referrals`);
     } else {
       addToast({ type: 'error', title: 'Failed to create referral', message: error });
@@ -121,7 +136,7 @@ export const ReferralForm = () => {
               <div className="flex items-center gap-2" style={{ padding: 'var(--space-3)', background: 'var(--surface-sunken)', borderRadius: 'var(--radius-md)' }}>
                 <span className="body-sm" style={{ color: 'var(--text-secondary)' }}>Mother Profile:</span>
                 <Link
-                  to={`/mothers/${motherId}`}
+                  to={`/${rolePrefix}/mothers/${motherId}`}
                   className="flex items-center gap-1"
                   style={{ color: 'var(--color-primary-600)', textDecoration: 'none', fontWeight: 500 }}
                 >
@@ -134,13 +149,9 @@ export const ReferralForm = () => {
               <Input
                 label="Patient Type"
                 name="patient_type"
-                type="select"
-                value={formData.patient_type}
-                onChange={handleChange}
-                options={[
-                  { value: 'mother', label: 'Mother' },
-                  { value: 'child', label: 'Child' },
-                ]}
+                value={formData.patient_type === 'child' ? 'Child' : 'Mother'}
+                readOnly
+                onChange={() => {}}
               />
               <Input
                 label="Urgency"
@@ -224,12 +235,13 @@ export const ReferralForm = () => {
             type="button"
             variant="secondary"
             onClick={() => navigate(`/${rolePrefix}/referrals`)}
+            disabled={isSubmitting}
           >
             Cancel
           </Button>
           <Button
             type="submit"
-            loading={isLoading}
+            loading={isLoading || isSubmitting}
           >
             Create Referral
           </Button>

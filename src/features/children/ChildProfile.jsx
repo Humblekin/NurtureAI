@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Baby, FileText, Syringe, TrendingUp, Plus, Share2, ExternalLink, Pencil, Trash2 } from 'lucide-react';
+import { ArrowLeft, Baby, FileText, Syringe, TrendingUp, Plus, Share2, ExternalLink, Pencil, Trash2, Activity } from 'lucide-react';
 import useChildStore from '../../stores/childStore';
 import useMotherStore from '../../stores/motherStore';
 import useAuthStore from '../../stores/authStore';
@@ -14,11 +14,20 @@ import ConfirmDialog from '../../components/ui/ConfirmDialog';
 import VaccineForm from './VaccineForm';
 import GrowthForm from './GrowthForm';
 
+const rolePrefixFor = (role) => {
+  if (role === 'mother') return 'mother';
+  if (role === 'chw') return 'chw';
+  if (role === 'nurse') return 'nurse';
+  if (role === 'doctor') return 'doctor';
+  return 'admin';
+};
+
 export const ChildProfile = () => {
   const { id } = useParams();
   const { profile } = useAuthStore();
   const { currentMother, fetchMotherByProfileId } = useMotherStore();
   const addToast = useAppStore((state) => state.addToast);
+  const setCurrentPatient = useAppStore((state) => state.setCurrentPatient);
   const { 
     children, 
     fetchVaccinations, 
@@ -56,6 +65,18 @@ export const ChildProfile = () => {
     }
   }, [id, fetchVaccinations, fetchGrowthRecords]);
 
+  // Scope worker-facing Amina to the child's mother record (the patient
+  // context is mother-centric), falling back to the child record itself.
+  useEffect(() => {
+    if (child?.id) {
+      setCurrentPatient({
+        id: child.mother_id || child.id,
+        type: child.mother_id ? 'mother' : 'child',
+        name: child.full_name,
+      });
+    }
+  }, [child?.id, child?.mother_id, child?.full_name, setCurrentPatient]);
+
   // Mother ownership guard
   const isMotherUser = profile?.role === 'mother';
   const isChildOwned = !isMotherUser || (child && currentMother && child.mother_id === currentMother.id);
@@ -64,17 +85,19 @@ export const ChildProfile = () => {
     return (
       <div className="page-content text-center">
         <h2 className="heading-3">{!child ? 'Child record not found' : 'Access denied'}</h2>
-        <Link to={`/${profile?.role === 'mother' ? 'mother' : profile?.role}/children`}>
+        <Link to={`/${rolePrefixFor(profile?.role)}/children`}>
           <Button variant="secondary" style={{ marginTop: 'var(--space-4)' }}>Back to list</Button>
         </Link>
       </div>
     );
   }
 
+  const canRecordVisit = !isMotherUser && profile?.role !== 'district_officer';
+
   return (
     <div className="page-content fade-in">
       <div style={{ marginBottom: 'var(--space-6)' }}>
-        <Link to={`/${profile?.role === 'mother' ? 'mother' : profile?.role}/children`} className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
+        <Link to={`/${rolePrefixFor(profile?.role)}/children`} className="flex items-center gap-2" style={{ color: 'var(--text-secondary)', textDecoration: 'none', marginBottom: 'var(--space-4)', display: 'inline-flex' }}>
           <ArrowLeft size={16} /> Back to list
         </Link>
         <div className="flex-between align-start">
@@ -94,10 +117,15 @@ export const ChildProfile = () => {
             </div>
           </div>
           <div className="flex gap-2">
-            <Link to={`/${profile.role === 'mother' ? 'mother' : profile.role === 'chw' ? 'chw' : 'admin'}/children/${child.id}/edit`}>
+            {canRecordVisit && (
+              <Link to={`/${rolePrefixFor(profile?.role)}/visits/new?patientId=${child.id}&patientType=child&motherId=${child.mother_id || ''}&name=${encodeURIComponent(child.full_name)}`}>
+                <Button leftIcon={<Activity size={18} />}>Record Visit</Button>
+              </Link>
+            )}
+            <Link to={`/${rolePrefixFor(profile?.role)}/children/${child.id}/edit`}>
               <Button variant="outline" leftIcon={<Pencil size={18} />}>Edit Record</Button>
             </Link>
-            <Link to={`/${profile.role === 'mother' ? 'mother' : profile.role === 'chw' ? 'chw' : 'admin'}/referrals/new?patientId=${child.id}&patientType=child&motherId=${child.mother_id || ''}`}>
+            <Link to={`/${rolePrefixFor(profile?.role)}/referrals/new?patientId=${child.id}&patientType=child&motherId=${child.mother_id || ''}`}>
               <Button variant="outline" leftIcon={<Share2 size={18} />}>Refer</Button>
             </Link>
           </div>
@@ -120,7 +148,7 @@ export const ChildProfile = () => {
               <div className="flex-between">
                 <span className="text-secondary body-sm">Mother ID</span>
                 {child.mother_id ? (
-                  <Link to={`/mothers/${child.mother_id}`} className="flex items-center gap-1" style={{ color: 'var(--color-primary-600)', textDecoration: 'none', fontWeight: 500 }}>
+                  <Link to={`/${rolePrefixFor(profile?.role)}/mothers/${child.mother_id}`} className="flex items-center gap-1" style={{ color: 'var(--color-primary-600)', textDecoration: 'none', fontWeight: 500 }}>
                     View Mother <ExternalLink size={12} />
                   </Link>
                 ) : (
@@ -144,9 +172,11 @@ export const ChildProfile = () => {
                 <Syringe size={20} style={{ color: 'var(--color-primary-500)' }} />
                 <h3 className="heading-5" style={{ margin: 0 }}>Vaccinations</h3>
               </div>
-              <Button size="sm" variant="outline" leftIcon={<Plus size={16} />} onClick={() => setVaccineModalOpen(true)}>
-                Log Vaccine
-              </Button>
+              {!isMotherUser && (
+                <Button size="sm" variant="outline" leftIcon={<Plus size={16} />} onClick={() => setVaccineModalOpen(true)}>
+                  Log Vaccine
+                </Button>
+              )}
             </div>
             <CardBody style={{ padding: 0 }}>
               {isLoading ? (
@@ -161,8 +191,12 @@ export const ChildProfile = () => {
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge variant="success" solid>Administered</Badge>
-                        <button className="icon-btn-sm" onClick={() => { setEditingVax(vax); setVaccineModalOpen(true); }} title="Edit"><Pencil size={14} /></button>
-                        <button className="icon-btn-sm danger" onClick={() => setDeleteTarget({ type: 'vax', id: vax.id, childId: id, name: vax.vaccine_name })} title="Delete"><Trash2 size={14} /></button>
+                        {!isMotherUser && (
+                          <>
+                            <button className="icon-btn-sm" onClick={() => { setEditingVax(vax); setVaccineModalOpen(true); }} title="Edit"><Pencil size={14} /></button>
+                            <button className="icon-btn-sm danger" onClick={() => setDeleteTarget({ type: 'vax', id: vax.id, childId: id, name: vax.vaccine_name })} title="Delete"><Trash2 size={14} /></button>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -181,9 +215,11 @@ export const ChildProfile = () => {
                 <TrendingUp size={20} style={{ color: 'var(--color-info-500)' }} />
                 <h3 className="heading-5" style={{ margin: 0 }}>Growth Monitoring</h3>
               </div>
-              <Button size="sm" variant="outline" leftIcon={<Plus size={16} />} onClick={() => setGrowthModalOpen(true)}>
-                Log Measurement
-              </Button>
+              {!isMotherUser && (
+                <Button size="sm" variant="outline" leftIcon={<Plus size={16} />} onClick={() => setGrowthModalOpen(true)}>
+                  Log Measurement
+                </Button>
+              )}
             </div>
             <CardBody style={{ padding: 0 }}>
               {isLoading ? (
@@ -197,8 +233,12 @@ export const ChildProfile = () => {
                         <p className="caption text-secondary">Date: {new Date(record.recorded_date).toLocaleDateString()}</p>
                       </div>
                       <div className="flex items-center gap-2">
-                        <button className="icon-btn-sm" onClick={() => { setEditingGrowth(record); setGrowthModalOpen(true); }} title="Edit"><Pencil size={14} /></button>
-                        <button className="icon-btn-sm danger" onClick={() => setDeleteTarget({ type: 'growth', id: record.id, childId: id, name: `Growth (${new Date(record.recorded_date).toLocaleDateString()})` })} title="Delete"><Trash2 size={14} /></button>
+                        {!isMotherUser && (
+                          <>
+                            <button className="icon-btn-sm" onClick={() => { setEditingGrowth(record); setGrowthModalOpen(true); }} title="Edit"><Pencil size={14} /></button>
+                            <button className="icon-btn-sm danger" onClick={() => setDeleteTarget({ type: 'growth', id: record.id, childId: id, name: `Growth (${new Date(record.recorded_date).toLocaleDateString()})` })} title="Delete"><Trash2 size={14} /></button>
+                          </>
+                        )}
                       </div>
                     </div>
                   ))}

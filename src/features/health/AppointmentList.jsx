@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Calendar, Clock, User, Search, AlertTriangle } from 'lucide-react';
 import useVisitStore from '../../stores/visitStore';
+import useMotherStore from '../../stores/motherStore';
+import useChildStore from '../../stores/childStore';
 import useAuthStore from '../../stores/authStore';
+import { buildPatientNameLookup } from '../../services/patientNames';
 import { Card, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
@@ -12,18 +15,28 @@ import EmptyState from '../../components/ui/EmptyState';
 export const AppointmentList = () => {
   const { profile } = useAuthStore();
   const { visits, fetchAllVisits, isLoading } = useVisitStore();
+  const { mothers, fetchMothers } = useMotherStore();
+  const { children, fetchChildrenList } = useChildStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState('all');
   const [viewMode, setViewMode] = useState('today');
 
   useEffect(() => {
     fetchAllVisits();
-  }, [fetchAllVisits]);
+    if (profile?.role !== 'mother') {
+      fetchMothers();
+      fetchChildrenList();
+    }
+  }, [profile?.role, fetchAllVisits, fetchMothers, fetchChildrenList]);
 
   const today = new Date().toISOString().split('T')[0];
+  const patientNameOf = buildPatientNameLookup(mothers, children);
 
   const filteredVisits = visits.filter(visit => {
+    const nameInfo = patientNameOf(visit.patient_id);
+    const patientLabel = nameInfo ? nameInfo.name : '';
     const matchesSearch = visit.notes?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          patientLabel.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           visit.patient_id?.toLowerCase().includes(searchTerm.toLowerCase());
     
     let matchesFilter = true;
@@ -155,42 +168,45 @@ export const AppointmentList = () => {
         </div>
       ) : filteredVisits.length > 0 ? (
         <div className="grid grid-2">
-          {filteredVisits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date)).map((visit) => (
-            <Card key={visit.id} hoverable>
-              <CardBody>
-                <div className="flex-between" style={{ marginBottom: 'var(--space-3)' }}>
-                  <div className="flex gap-2 items-center">
-                    <Calendar size={16} style={{ color: 'var(--color-primary-500)' }} />
-                    <span className="font-medium">{new Date(visit.visit_date).toLocaleDateString()}</span>
+          {filteredVisits.sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date)).map((visit) => {
+            const nameInfo = patientNameOf(visit.patient_id);
+            return (
+              <Card key={visit.id} hoverable>
+                <CardBody>
+                  <div className="flex-between" style={{ marginBottom: 'var(--space-3)' }}>
+                    <div className="flex gap-2 items-center">
+                      <Calendar size={16} style={{ color: 'var(--color-primary-500)' }} />
+                      <span className="font-medium">{new Date(visit.visit_date).toLocaleDateString()}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <Badge variant={visitTypeColors[visit.visit_type] || 'info'} solid>
+                        {visit.visit_type?.replace('_', ' ')}
+                      </Badge>
+                      {visit.visit_date === today && (
+                        <Badge variant="success" solid>Today</Badge>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <Badge variant={visitTypeColors[visit.visit_type] || 'info'} solid>
-                      {visit.visit_type?.replace('_', ' ')}
-                    </Badge>
-                    {visit.visit_date === today && (
-                      <Badge variant="success" solid>Today</Badge>
-                    )}
+                  <div className="flex gap-2 items-center" style={{ marginBottom: 'var(--space-2)' }}>
+                    <User size={14} style={{ color: 'var(--text-tertiary)' }} />
+                    <span className="body-sm" style={{ color: 'var(--text-secondary)' }}>
+                      Patient: {nameInfo ? nameInfo.name : visit.patient_id?.slice(0, 8)} ({visit.patient_type})
+                    </span>
                   </div>
-                </div>
-                <div className="flex gap-2 items-center" style={{ marginBottom: 'var(--space-2)' }}>
-                  <User size={14} style={{ color: 'var(--text-tertiary)' }} />
-                  <span className="body-sm" style={{ color: 'var(--text-secondary)' }}>
-                    Patient: {visit.patient_id?.slice(0, 8)}... ({visit.patient_type})
-                  </span>
-                </div>
-                {visit.notes && (
-                  <p className="body-sm" style={{ color: 'var(--text-tertiary)' }}>
-                    {visit.notes.length > 120 ? visit.notes.slice(0, 120) + '...' : visit.notes}
-                  </p>
-                )}
-                {visit.findings && (
-                  <p className="body-sm" style={{ color: 'var(--color-primary-600)', marginTop: 'var(--space-2)' }}>
-                    Findings: {visit.findings.length > 100 ? visit.findings.slice(0, 100) + '...' : visit.findings}
-                  </p>
-                )}
-              </CardBody>
-            </Card>
-          ))}
+                  {visit.notes && (
+                    <p className="body-sm" style={{ color: 'var(--text-tertiary)' }}>
+                      {visit.notes.length > 120 ? visit.notes.slice(0, 120) + '...' : visit.notes}
+                    </p>
+                  )}
+                  {visit.findings && (
+                    <p className="body-sm" style={{ color: 'var(--color-primary-600)', marginTop: 'var(--space-2)' }}>
+                      Findings: {visit.findings.length > 100 ? visit.findings.slice(0, 100) + '...' : visit.findings}
+                    </p>
+                  )}
+                </CardBody>
+              </Card>
+            );
+          })}
         </div>
       ) : (
         <EmptyState

@@ -19,4 +19,43 @@ export function calculateEDDFromLMP(lmp) {
   return edd.toISOString().split('T')[0];
 }
 
-export default { calculateWeeksFromLMP, calculateEDDFromLMP };
+// Human-readable label for a pregnancy status, plus the badge variant used
+// across profiles. Unknown statuses fall back to a capitalized version of
+// the raw value rather than guessing a clinical outcome.
+export function pregnancyStatusLabel(status) {
+  switch (status) {
+    case 'active': return 'Current';
+    case 'completed': return 'Completed';
+    case 'miscarried': return 'Miscarried';
+    case 'aborted': return 'Aborted';
+    default:
+      return status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown';
+  }
+}
+
+export function pregnancyStatusVariant(status) {
+  switch (status) {
+    case 'miscarried':
+    case 'aborted':
+      return 'critical';
+    case 'completed':
+      return 'success';
+    case 'active':
+      return 'primary';
+    default:
+      return 'neutral';
+  }
+}
+
+// The next sequential ANC visit number for a pregnancy: one past the highest
+// visit_number already recorded for it (not simply count + 1, so deletions
+// or out-of-order inserts never reuse a number).
+export function nextVisitNumber(visits, pregnancyId) {
+  const nums = (visits || [])
+    .filter(v => v.pregnancy_id === pregnancyId)
+    .map(v => Number(v.visit_number))
+    .filter(n => Number.isFinite(n) && n > 0);
+  return nums.length > 0 ? Math.max(...nums) + 1 : 1;
+}
+
+export default { calculateWeeksFromLMP, calculateEDDFromLMP, pregnancyStatusLabel, pregnancyStatusVariant, nextVisitNumber };

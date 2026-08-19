@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { generateId } from '../lib/db';
+import { generateId, generatePatientCode } from '../lib/db';
 import { upsertRecord } from '../lib/sync';
 import { withNormalizedBloodGroup } from '../lib/bloodGroup';
 import supabase, { isSupabaseConfigured } from '../lib/supabase';
@@ -37,6 +37,31 @@ const useMotherStore = create((set, get) => ({
     }
   },
 
+  // Fetch a specific mother by her record ID (worker-opened records,
+  // including mothers registered by a worker who has no login profile yet).
+  fetchMotherById: async (motherId) => {
+    set({ isLoading: true, error: null });
+    if (!isSupabaseConfigured()) {
+      set({ currentMother: null, isLoading: false });
+      return null;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('mothers')
+        .select('*')
+        .eq('id', motherId)
+        .is('deleted_at', null)
+        .maybeSingle();
+      if (error) throw error;
+      set({ currentMother: data || null, isLoading: false });
+      return data || null;
+    } catch (error) {
+      console.error('Failed to fetch mother:', error);
+      set({ error: error.message, isLoading: false });
+      return null;
+    }
+  },
+
   // Fetch a specific mother by profile ID
   fetchMotherByProfileId: async (profileId) => {
     set({ isLoading: true, error: null });
@@ -68,6 +93,7 @@ const useMotherStore = create((set, get) => ({
       const newMother = {
         id,
         ...withNormalizedBloodGroup(motherData),
+        patient_code: motherData.patient_code || generatePatientCode(id),
         created_at: new Date().toISOString(),
       };
 
@@ -85,6 +111,18 @@ const useMotherStore = create((set, get) => ({
       set({ error: error.message, isLoading: false });
       return { success: false, error: error.message };
     }
+  },
+
+  // Adopt an existing mother record already linked to this account via the
+  // claim_mother RPC (worker-registered before the mother had an account).
+  // No database write is performed here — the record already belongs to the
+  // authenticated profile; we only sync local store state.
+  adoptMother: async (mother) => {
+    set((state) => ({
+      mothers: [mother, ...state.mothers.filter((m) => m.id !== mother.id)],
+      currentMother: mother,
+    }));
+    return { success: true, data: mother };
   },
 
   // Update an existing mother
@@ -110,6 +148,34 @@ const useMotherStore = create((set, get) => ({
     } catch (error) {
       console.error('Failed to update mother:', error);
       set({ error: error.message, isLoading: false });
+      return { success: false, error: error.message };
+    }
+  },
+
+  // Verify a mother record as a healthcare worker. The worker confirms the
+  // details recorded by the mother; provenance (data_source) stays untouched.
+  verifyMother: async (id, workerId) => {
+    try {
+      const existing = getExisting(get(), id);
+      const updated = {
+        ...existing,
+        verified: true,
+        verified_by: workerId || null,
+        verified_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      await upsertRecord('mothers', updated);
+
+      set((state) => ({
+        mothers: state.mothers.map(m => m.id === id ? updated : m),
+        currentMother: state.currentMother?.id === id ? updated : state.currentMother,
+      }));
+
+      return { success: true, data: updated };
+    } catch (error) {
+      console.error('Failed to verify mother:', error);
+      set({ error: error.message });
       return { success: false, error: error.message };
     }
   },

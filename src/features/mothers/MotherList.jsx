@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Plus, Filter, AlertTriangle, Trash2 } from 'lucide-react';
+import { Search, Plus, AlertTriangle, Trash2 } from 'lucide-react';
 import useMotherStore from '../../stores/motherStore';
+import useAuthStore from '../../stores/authStore';
 import useAppStore from '../../stores/appStore';
 import { Card, CardBody } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
@@ -10,10 +11,13 @@ import Badge from '../../components/ui/Badge';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 import ConfirmDialog from '../../components/ui/ConfirmDialog';
+import VerificationBadge from '../../components/VerificationBadge';
 
 export const MotherList = () => {
   const { mothers, fetchMothers, softDelete, isLoading } = useMotherStore();
+  const { profile } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
+  const rolePrefix = profile?.role || 'chw';
   const [searchTerm, setSearchTerm] = useState('');
   const [filter, setFilter] = useState('all');
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -39,7 +43,7 @@ export const MotherList = () => {
             Manage and monitor expecting mothers in your community.
           </p>
         </div>
-        <Link to="/mothers/new">
+        <Link to={`/${rolePrefix}/mothers/new`}>
           <Button leftIcon={<Plus size={18} />}>Register Mother</Button>
         </Link>
       </div>
@@ -76,7 +80,7 @@ export const MotherList = () => {
       ) : filteredMothers.length > 0 ? (
         <div className="grid grid-3">
           {filteredMothers.map((mother) => (
-            <Link to={`/mothers/${mother.profile_id || mother.id}`} key={mother.id} style={{ textDecoration: 'none' }}>
+            <Link to={`/${rolePrefix}/mothers/${mother.id}`} key={mother.id} style={{ textDecoration: 'none' }}>
               <Card hoverable className="h-full">
                 <CardBody className="flex-col h-full gap-3">
                   <div className="flex-between align-start">
@@ -85,6 +89,7 @@ export const MotherList = () => {
                       <p className="body-sm" style={{ color: 'var(--text-secondary)' }}>{mother.community || 'Unknown Community'}</p>
                     </div>
                     <div className="flex items-center gap-2">
+                      <VerificationBadge row={mother} />
                       {mother.risk_level === 'high' && (
                         <Badge variant="critical" solid title="High Risk Pregnancy">
                           <AlertTriangle size={12} style={{ marginRight: '4px' }} />
@@ -117,7 +122,7 @@ export const MotherList = () => {
           title="No mothers found" 
           description={searchTerm ? "Try adjusting your search filters." : "You haven't registered any mothers yet."}
           action={!searchTerm && (
-            <Link to="/mothers/new">
+            <Link to={`/${rolePrefix}/mothers/new`}>
               <Button variant="outline">Register First Mother</Button>
             </Link>
           )}

@@ -1,15 +1,21 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { TrendingUp, Calendar } from 'lucide-react';
 import useChildStore from '../../stores/childStore';
+import useAuthStore from '../../stores/authStore';
 import useTimelineStore from '../../stores/timelineStore';
 import useAppStore from '../../stores/appStore';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
+import { provenanceFor } from '../../lib/provenance';
 
 export const GrowthForm = ({ childId, initialData, onSuccess, onCancel }) => {
   const { recordGrowth, updateGrowthRecord, isLoading } = useChildStore();
+  const { profile } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
+  const isOnline = useAppStore((state) => state.isOnline);
   const isEdit = !!initialData;
+  const submittingRef = useRef(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   const [formData, setFormData] = useState({
     recorded_date: initialData?.recorded_date || new Date().toISOString().split('T')[0],
@@ -33,18 +39,47 @@ export const GrowthForm = ({ childId, initialData, onSuccess, onCancel }) => {
       return;
     }
 
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const recordedDate = new Date(formData.recorded_date);
+    recordedDate.setHours(0, 0, 0, 0);
+    if (isNaN(recordedDate.getTime())) {
+      addToast({ type: 'error', message: 'Please enter a valid date.' });
+      return;
+    }
+    if (recordedDate > today) {
+      addToast({ type: 'error', message: 'Measurement date cannot be in the future.' });
+      return;
+    }
+
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setIsSubmitting(true);
+
+    // growth_records stores these as weight_kg / height_cm (see schema).
     const payload = {
-      ...formData,
-      weight: parseFloat(formData.weight_kg) || null,
-      height: parseFloat(formData.height_cm) || null,
+      recorded_date: formData.recorded_date,
+      weight_kg: parseFloat(formData.weight_kg) || null,
+      height_cm: parseFloat(formData.height_cm) || null,
+      head_circumference_cm: formData.head_circumference_cm,
+      muac_cm: formData.muac_cm,
+      notes: formData.notes,
     };
     const { success, error } = isEdit
       ? await updateGrowthRecord(initialData.id, childId, payload)
-      : await recordGrowth(childId, payload);
+      : await recordGrowth(childId, { ...payload, ...provenanceFor(profile) });
     
+    submittingRef.current = false;
+    setIsSubmitting(false);
+
     if (success) {
       await useTimelineStore.getState().buildChildTimeline(childId);
-      addToast({ type: 'success', message: isEdit ? 'Growth record updated.' : 'Growth measurement recorded.' });
+      addToast({
+        type: 'success',
+        message: isOnline
+          ? (isEdit ? 'Growth record updated.' : 'Growth measurement recorded.')
+          : 'Growth measurement saved offline — will sync when back online.',
+      });
       if (onSuccess) onSuccess();
     } else {
       addToast({ type: 'error', title: 'Failed to record', message: error });
@@ -120,8 +155,8 @@ export const GrowthForm = ({ childId, initialData, onSuccess, onCancel }) => {
       </div>
 
       <div className="flex gap-3" style={{ justifyContent: 'flex-end', marginTop: 'var(--space-2)' }}>
-        <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" loading={isLoading}>{isEdit ? 'Update Measurement' : 'Record Measurement'}</Button>
+        <Button type="button" variant="secondary" onClick={onCancel} disabled={isSubmitting}>Cancel</Button>
+        <Button type="submit" loading={isLoading || isSubmitting}>{isEdit ? 'Update Measurement' : 'Record Measurement'}</Button>
       </div>
     </form>
   );

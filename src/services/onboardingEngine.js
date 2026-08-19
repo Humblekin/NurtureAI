@@ -411,7 +411,7 @@ Return ONLY the JSON object:`;
           { role: 'system', content: 'You are a precise data extraction assistant. Return only valid JSON.' },
           { role: 'user', content: extractPrompt },
         ],
-        { temperature: 0.1, maxTokens: 200 }
+        { temperature: 0.1, maxTokens: 200, language: this.language }
       );
 
       // Parse the JSON response
@@ -458,7 +458,7 @@ Rules:
           { role: 'system', content: 'You are Amina, a warm healthcare AI companion. Be natural and caring. This is a conversational onboarding — not a medical interview.' },
           { role: 'user', content: prompt },
         ],
-        { temperature: 0.7, maxTokens: 150 }
+        { temperature: 0.7, maxTokens: 150, language: this.language }
       );
       return response;
     } catch (error) {

@@ -8,6 +8,7 @@ import usePregnancyStore from '../../stores/pregnancyStore';
 import useChildStore from '../../stores/childStore';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
+import { provenanceFor } from '../../lib/provenance';
 import styles from './OnboardingForm.module.css';
 
 function buildInitialFormData() {
@@ -190,6 +191,7 @@ const OnboardingForm = () => {
         risk_level: 'low',
         assigned_worker_id: null,
         edd,
+        ...provenanceFor(profile),
       });
 
       if (!motherResult.success) {
@@ -214,6 +216,7 @@ const OnboardingForm = () => {
             data.nutrition ? `Nutrition: ${data.nutrition}` : null,
             data.supplements === 'Yes' ? 'Taking supplements' : null,
           ].filter(Boolean).join('. ') || null,
+          ...provenanceFor(profile),
         });
 
         if (!pregResult.success) {
@@ -230,6 +233,7 @@ const OnboardingForm = () => {
             date_of_birth: child.date_of_birth || null,
             gender: child.gender || null,
             birth_weight: child.birth_weight ? parseFloat(child.birth_weight) : null,
+            ...provenanceFor(profile),
           });
 
           if (!childResult.success) {
@@ -238,8 +242,8 @@ const OnboardingForm = () => {
         }
       }
 
-      // 4. Navigate to dashboard
-      navigate('/mother/dashboard', { replace: true });
+      // 4. Navigate to Amina (mother's home)
+      navigate('/mother/amina', { replace: true });
     } catch (err) {
       console.error('Onboarding form error:', err);
       setErrors({ submit: 'Something went wrong. Please try again.' });
