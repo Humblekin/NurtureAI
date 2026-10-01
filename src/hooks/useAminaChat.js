@@ -191,6 +191,8 @@ export function useVoiceConversation() {
   const pendingSendTimerRef = useRef(null);
   const languageRef = useRef(language);
   const khayaAsrEnabledRef = useRef(false);
+  const needsMicStreamRef = useRef(false);
+  const interimWatchdogRef = useRef(null);
   const unmountedRef = useRef(false);
   const recorderRef = useRef(null);
   const recorderChunksRef = useRef([]);
@@ -220,6 +222,7 @@ export function useVoiceConversation() {
   useEffect(() => {
     languageRef.current = language;
     khayaAsrEnabledRef.current = shouldUseKhayaAsr(language) && typeof MediaRecorder !== 'undefined';
+    needsMicStreamRef.current = khayaAsrEnabledRef.current;
   }, [language]);
 
   // ---- Request microphone access (must be called from user gesture) ----
@@ -237,13 +240,14 @@ export function useVoiceConversation() {
       }
       let stream;
       try {
+        // Deliberately NOT requesting noiseSuppression or autoGainControl: both
+        // attenuate and normalize away the quiet, distant speech the VAD needs
+        // to detect. Echo cancellation is unnecessary too, because the VAD is
+        // switched off while Amina is talking.
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            echoCancellation: { ideal: true },
-            noiseSuppression: { ideal: true },
-            autoGainControl: { ideal: true },
-            sampleRate: { ideal: 16000 },
             channelCount: { ideal: 1 },
+            sampleRate: { ideal: 16000 },
           }
         });
       } catch {
@@ -283,19 +287,25 @@ export function useVoiceConversation() {
       onInterim: (text) => {
         const combined = textBufferRef.current + (textBufferRef.current && text ? ' ' : '') + text;
         lastInterimRef.current = combined;
-        if (!khayaAsrEnabledRef.current) setTranscript(combined);
+        if (!khayaAsrEnabledRef.current) {
+          setTranscript(combined);
+          armInterimWatchdog();
+        }
       },
       onFinal: (text) => {
+        clearInterimWatchdog();
         textBufferRef.current += (textBufferRef.current && text ? ' ' : '') + text;
         lastInterimRef.current = textBufferRef.current;
         // With Khaya ASR active the final transcript comes from the recorded
         // audio, not the browser recognizer — it is only kept as a fallback.
         if (khayaAsrEnabledRef.current) return;
         setTranscript(textBufferRef.current);
-        // Send when VAD already ended the utterance, or when STT finalized
+        // Send when the VAD already ended the utterance, or when STT finalized
         // the text after the VAD timer already fired (late final — otherwise
         // the user's first utterance is silently dropped and they repeat it).
-        if (pendingSendRef.current || (!vadRef.current?.isCurrentlySpeaking?.() && textBufferRef.current)) {
+        // With no VAD at all (browser-STT languages) the recognizer's own
+        // endpointing is the only signal there is, so send immediately.
+        if (pendingSendRef.current || (!vadRef.current && textBufferRef.current)) {
           sendBufferedTranscript();
         }
       },
@@ -320,6 +330,29 @@ export function useVoiceConversation() {
     pendingSendRef.current = false;
     clearTimeout(pendingSendTimerRef.current);
     pendingSendTimerRef.current = null;
+  }
+
+  // ---- Interim watchdog (browser-STT languages) ----
+  // Chrome frequently emits interim results and then never finalizes the
+  // utterance. Those languages run no VAD (the recognizer owns the mic), so
+  // there is no other end-of-speech signal and a stalled transcript would sit on
+  // screen forever without ever being sent. Each new interim re-arms the timer,
+  // so this only fires once the user has actually gone quiet.
+  function clearInterimWatchdog() {
+    clearTimeout(interimWatchdogRef.current);
+    interimWatchdogRef.current = null;
+  }
+
+  function armInterimWatchdog() {
+    clearInterimWatchdog();
+    interimWatchdogRef.current = setTimeout(() => {
+      interimWatchdogRef.current = null;
+      if (khayaAsrEnabledRef.current || vadRef.current || khayaAsrInFlightRef.current) return;
+      if (managerRef.current?.getState?.() !== CONVERSATION_STATES.LISTENING) return;
+      if (!textBufferRef.current.trim() && !lastInterimRef.current.trim()) return;
+      console.log('[Voice] Interim watchdog fired — sending stalled transcript');
+      sendBufferedTranscript();
+    }, 2500);
   }
 
   function sendBufferedTranscript() {
@@ -459,6 +492,7 @@ export function useVoiceConversation() {
 
   function destroyVAD() {
     clearPendingSend();
+    clearInterimWatchdog();
     if (vadRef.current) {
       vadRef.current.stop();
       vadRef.current = null;
@@ -475,6 +509,7 @@ export function useVoiceConversation() {
                voiceState === CONVERSATION_STATES.PAUSED ||
                voiceState === CONVERSATION_STATES.IDLE ||
                voiceState === CONVERSATION_STATES.ERROR) {
+      clearInterimWatchdog();
       stopRecognition();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -574,6 +609,17 @@ export function useVoiceConversation() {
     if (error) { const timer = setTimeout(() => setError(null), 8000); return () => clearTimeout(timer); }
   }, [error]);
 
+  // ---- Validate that the browser can do voice input at all ----
+  function checkRecognitionEnvironment() {
+    const supported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (!supported) return 'Voice input is not supported in this browser. Please use the text chat instead.';
+    const isSecure = location.protocol === 'https:' ||
+      location.hostname === 'localhost' ||
+      location.hostname === '127.0.0.1';
+    if (!isSecure) return 'Microphone requires HTTPS. Please open the app over HTTPS and try again.';
+    return null;
+  }
+
   // ---- Public: Start voice conversation (called from user gesture) ----
   const startConversation = useCallback(async () => {
     if (initStartedRef.current) return;
@@ -582,13 +628,30 @@ export function useVoiceConversation() {
     // Refresh health context so the AI has the very latest data
     await refreshContext();
 
-    const stream = await requestMicPermission();
-    if (!stream) {
-      initStartedRef.current = false;
-      return;
+    // Exclusive mic ownership. Chrome's SpeechRecognition is backed by its own
+    // native capture service and silently fails on Android when the page is
+    // also holding a getUserMedia stream. So the stream is opened ONLY for
+    // languages that record audio for Khaya ASR; browser-STT languages let the
+    // recognizer own the microphone by itself.
+    if (needsMicStreamRef.current) {
+      const stream = await requestMicPermission();
+      if (!stream) {
+        initStartedRef.current = false;
+        return;
+      }
+      startVAD(stream);
+    } else {
+      const envError = checkRecognitionEnvironment();
+      if (envError) {
+        setMicPermission('denied');
+        setError(envError);
+        initStartedRef.current = false;
+        return;
+      }
+      destroyVAD();
+      setMicReady(true);
+      setMicPermission((p) => (p === 'unknown' ? 'granted' : p));
     }
-
-    startVAD(stream);
 
     const mgr = managerRef.current;
     if (!mgr) {
