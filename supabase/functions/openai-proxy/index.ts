@@ -1,15 +1,15 @@
 import "@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "jsr:@supabase/supabase-js@2"
 
-const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")
+const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY")
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!
 
-const OPENAI_BASE = "https://api.openai.com/v1"
+const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 console.log("[AI-Proxy] Function loaded")
 
-const DEFAULT_MODEL = "gpt-4o-mini"
+const DEFAULT_MODEL = "gemini-1.5-flash"
 
 function corsHeaders(origin: string): Record<string, string> {
   return {
@@ -64,9 +64,9 @@ Deno.serve(async (req) => {
     )
   }
 
-  if (!OPENAI_API_KEY) {
+  if (!GEMINI_API_KEY) {
     return new Response(
-      JSON.stringify({ error: "OpenAI API key not configured on server" }),
+      JSON.stringify({ error: "Gemini API key not configured on server" }),
       { status: 500, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
     )
   }
@@ -85,28 +85,26 @@ Deno.serve(async (req) => {
   console.log(`[AI-Proxy] Chat completion for user ${userId}, model=${model}`)
 
   try {
-    const openaiBody: Record<string, unknown> = {
+    const geminiBody: Record<string, unknown> = {
       ...body,
       model,
     }
 
     const MAX_ATTEMPTS = 3
-    // Cap each upstream attempt so a hung request can never leave the
-    // client (or this edge function) waiting forever.
     const UPSTREAM_TIMEOUT_MS = 45000
     let apiResponse: Response | null = null
     let responseText = ""
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       apiResponse = await fetch(
-        `${OPENAI_BASE}/chat/completions`,
+        `${GEMINI_BASE}/chat/completions`,
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            Authorization: `Bearer ${GEMINI_API_KEY}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify(openaiBody),
+          body: JSON.stringify(geminiBody),
           signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
         },
       )
@@ -129,13 +127,13 @@ Deno.serve(async (req) => {
 
     if (!apiResponse) {
       return new Response(
-        JSON.stringify({ error: "Failed to reach OpenAI API" }),
+        JSON.stringify({ error: "Failed to reach Gemini API" }),
         { status: 502, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
       )
     }
 
     if (!apiResponse.ok) {
-      console.error(`[AI-Proxy] OpenAI error ${apiResponse.status}: ${responseText.slice(0, 300)}`)
+      console.error(`[AI-Proxy] Gemini error ${apiResponse.status}: ${responseText.slice(0, 300)}`)
 
       if (apiResponse.status === 429) {
         return new Response(
@@ -148,7 +146,7 @@ Deno.serve(async (req) => {
 
       return new Response(
         JSON.stringify({
-          error: `OpenAI API error: ${apiResponse.status}`,
+          error: `Gemini API error: ${apiResponse.status}`,
           detail: responseText.slice(0, 300),
         }),
         { status: apiResponse.status, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
@@ -167,7 +165,7 @@ Deno.serve(async (req) => {
     console.error(`[AI-Proxy] Fetch error: ${err}`)
     const isTimeout = (err as Error)?.name === "TimeoutError"
     return new Response(
-      JSON.stringify({ error: isTimeout ? "OpenAI API request timed out. Please try again." : "Failed to reach OpenAI API" }),
+      JSON.stringify({ error: isTimeout ? "Gemini API request timed out. Please try again." : "Failed to reach Gemini API" }),
       { status: 502, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
     )
   }
