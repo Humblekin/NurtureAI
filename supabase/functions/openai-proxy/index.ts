@@ -1,15 +1,15 @@
 import "@supabase/functions-js/edge-runtime.d.ts"
 import { createClient } from "jsr:@supabase/supabase-js@2"
 
-const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY")
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!
 
-const GROQ_BASE = "https://api.groq.com/openai/v1"
+const OPENAI_BASE = "https://api.openai.com/v1"
 
 console.log("[AI-Proxy] Function loaded")
 
-const DEFAULT_MODEL = "llama-3.3-70b-versatile"
+const DEFAULT_MODEL = "gpt-4o-mini"
 
 function corsHeaders(origin: string): Record<string, string> {
   return {
@@ -64,9 +64,9 @@ Deno.serve(async (req) => {
     )
   }
 
-  if (!GROQ_API_KEY) {
+  if (!OPENAI_API_KEY) {
     return new Response(
-      JSON.stringify({ error: "Groq API key not configured on server" }),
+      JSON.stringify({ error: "OpenAI API key not configured on server" }),
       { status: 500, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
     )
   }
@@ -85,13 +85,13 @@ Deno.serve(async (req) => {
   console.log(`[AI-Proxy] Chat completion for user ${userId}, model=${model}`)
 
   try {
-    const groqBody: Record<string, unknown> = {
+    const openaiBody: Record<string, unknown> = {
       ...body,
       model,
     }
 
     const MAX_ATTEMPTS = 3
-    // Cap each upstream attempt so a hung Groq request can never leave the
+    // Cap each upstream attempt so a hung request can never leave the
     // client (or this edge function) waiting forever.
     const UPSTREAM_TIMEOUT_MS = 45000
     let apiResponse: Response | null = null
@@ -99,14 +99,14 @@ Deno.serve(async (req) => {
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       apiResponse = await fetch(
-        `${GROQ_BASE}/chat/completions`,
+        `${OPENAI_BASE}/chat/completions`,
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${GROQ_API_KEY}`,
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify(groqBody),
+          body: JSON.stringify(openaiBody),
           signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
         },
       )
@@ -129,13 +129,13 @@ Deno.serve(async (req) => {
 
     if (!apiResponse) {
       return new Response(
-        JSON.stringify({ error: "Failed to reach Groq API" }),
+        JSON.stringify({ error: "Failed to reach OpenAI API" }),
         { status: 502, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
       )
     }
 
     if (!apiResponse.ok) {
-      console.error(`[AI-Proxy] Groq error ${apiResponse.status}: ${responseText.slice(0, 300)}`)
+      console.error(`[AI-Proxy] OpenAI error ${apiResponse.status}: ${responseText.slice(0, 300)}`)
 
       if (apiResponse.status === 429) {
         return new Response(
@@ -148,7 +148,7 @@ Deno.serve(async (req) => {
 
       return new Response(
         JSON.stringify({
-          error: `Groq API error: ${apiResponse.status}`,
+          error: `OpenAI API error: ${apiResponse.status}`,
           detail: responseText.slice(0, 300),
         }),
         { status: apiResponse.status, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
@@ -167,7 +167,7 @@ Deno.serve(async (req) => {
     console.error(`[AI-Proxy] Fetch error: ${err}`)
     const isTimeout = (err as Error)?.name === "TimeoutError"
     return new Response(
-      JSON.stringify({ error: isTimeout ? "Groq API request timed out. Please try again." : "Failed to reach Groq API" }),
+      JSON.stringify({ error: isTimeout ? "OpenAI API request timed out. Please try again." : "Failed to reach OpenAI API" }),
       { status: 502, headers: { ...corsHeaders(origin), "Content-Type": "application/json" } },
     )
   }
