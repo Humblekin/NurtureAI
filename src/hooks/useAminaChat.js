@@ -10,6 +10,13 @@ import useAppStore from '../stores/appStore';
 import { createConversationManager, CONVERSATION_STATES } from '../services/conversationManager';
 import { buildHealthContext } from '../services/healthContext';
 
+// Barge-in recorder tuning. Chunks are 250ms, so 4 chunks of lookback recovers
+// roughly the last second — enough to keep the start of an interrupted sentence.
+const BARGE_IN_CHUNK_MS = 250;
+const BARGE_IN_LOOKBACK_CHUNKS = 4;
+const MAX_BARGE_IN_CHUNKS = 48;
+const MIN_BARGE_IN_BLOB_BYTES = 1200;
+
 // Map internal voice-conversation error codes to friendly, user-facing text.
 function mapVoiceError(code) {
   if (code === 'processing_error') return 'I had trouble processing that. Please try again.';
@@ -193,6 +200,17 @@ export function useVoiceConversation() {
   const khayaAsrEnabledRef = useRef(false);
   const needsMicStreamRef = useRef(false);
   const interimWatchdogRef = useRef(null);
+  // Whether Chrome has committed at least one final (whole-phrase) result for
+  // the current utterance. Finals are a much stronger "that sentence is done"
+  // signal than interim guesses, so they earn a much shorter quiet period.
+  const finalSeenRef = useRef(false);
+  const bargeInStreamRef = useRef(null);
+  const bargeInVadRef = useRef(null);
+  const bargeInRecorderRef = useRef(null);
+  const bargeInChunksRef = useRef([]);
+  const bargeInStartChunkRef = useRef(null);
+  const bargeInInFlightRef = useRef(false);
+  const voiceStateRef = useRef(voiceState);
   const unmountedRef = useRef(false);
   const recorderRef = useRef(null);
   const recorderChunksRef = useRef([]);
@@ -289,25 +307,32 @@ export function useVoiceConversation() {
         lastInterimRef.current = combined;
         if (!khayaAsrEnabledRef.current) {
           setTranscript(combined);
-          armInterimWatchdog();
+          armSettleTimer();
         }
       },
       onFinal: (text) => {
-        clearInterimWatchdog();
         textBufferRef.current += (textBufferRef.current && text ? ' ' : '') + text;
         lastInterimRef.current = textBufferRef.current;
+        finalSeenRef.current = true;
         // With Khaya ASR active the final transcript comes from the recorded
         // audio, not the browser recognizer — it is only kept as a fallback.
         if (khayaAsrEnabledRef.current) return;
         setTranscript(textBufferRef.current);
-        // Send when the VAD already ended the utterance, or when STT finalized
-        // the text after the VAD timer already fired (late final — otherwise
-        // the user's first utterance is silently dropped and they repeat it).
-        // With no VAD at all (browser-STT languages) the recognizer's own
-        // endpointing is the only signal there is, so send immediately.
-        if (pendingSendRef.current || (!vadRef.current && textBufferRef.current)) {
-          sendBufferedTranscript();
-        }
+        // Send immediately only when a VAD has already decided the utterance
+        // ended — that path has a real end-of-speech signal. For browser-STT
+        // languages there is no VAD, and Chrome commits finals phrase by phrase
+        // WHILE the user is still talking, so sending here is what made Amina
+        // respond to a half-finished sentence. Those languages wait for the
+        // settle timer instead.
+        if (pendingSendRef.current) sendBufferedTranscript();
+        else armSettleTimer();
+      },
+      onEnd: () => {
+        // Chrome ended the session (its own silence window, or an aborted
+        // restart). The wrapper starts a fresh session, so if the user was only
+        // pausing to think, their next words land in the buffer and re-arm the
+        // settle timer before anything is sent.
+        armSettleTimer();
       },
       onError: (err) => {
         console.error('[Hook] STT error:', err);
@@ -332,31 +357,41 @@ export function useVoiceConversation() {
     pendingSendTimerRef.current = null;
   }
 
-  // ---- Interim watchdog (browser-STT languages) ----
-  // Chrome frequently emits interim results and then never finalizes the
-  // utterance. Those languages run no VAD (the recognizer owns the mic), so
-  // there is no other end-of-speech signal and a stalled transcript would sit on
-  // screen forever without ever being sent. Each new interim re-arms the timer,
-  // so this only fires once the user has actually gone quiet.
+  // ---- Settle timer (browser-STT languages) ----
+  // No signal perfectly separates "finished speaking" from "thinking", so the
+  // best available answer is a quiet period that every new piece of speech
+  // resets. Chrome committing a final result is the one strong hint that a
+  // complete phrase exists, so it earns a short wait; interim-only text gets a
+  // long one, because sending that early is exactly how Amina ends up replying
+  // to half a sentence. This replaced a previous pair of bugs: sending on the
+  // first final (which Chrome emits mid-utterance) and a flat 2.5s timer (which
+  // fired whenever anyone paused to think).
   function clearInterimWatchdog() {
     clearTimeout(interimWatchdogRef.current);
     interimWatchdogRef.current = null;
   }
 
-  function armInterimWatchdog() {
+  function armSettleTimer() {
     clearInterimWatchdog();
     interimWatchdogRef.current = setTimeout(() => {
       interimWatchdogRef.current = null;
-      if (khayaAsrEnabledRef.current || vadRef.current || khayaAsrInFlightRef.current) return;
-      if (managerRef.current?.getState?.() !== CONVERSATION_STATES.LISTENING) return;
-      if (!textBufferRef.current.trim() && !lastInterimRef.current.trim()) return;
-      console.log('[Voice] Interim watchdog fired — sending stalled transcript');
-      sendBufferedTranscript();
-    }, 2500);
+      sendStalledTranscript('[Voice] quiet period elapsed — sending transcript');
+    }, finalSeenRef.current ? 1800 : 6000);
+  }
+
+  function sendStalledTranscript(reason) {
+    if (khayaAsrEnabledRef.current || vadRef.current || khayaAsrInFlightRef.current) return;
+    if (bargeInInFlightRef.current) return;
+    if (unmountedRef.current) return;
+    if (managerRef.current?.getState?.() !== CONVERSATION_STATES.LISTENING) return;
+    if (!textBufferRef.current.trim() && !lastInterimRef.current.trim()) return;
+    console.log(reason);
+    sendBufferedTranscript();
   }
 
   function sendBufferedTranscript() {
     pendingSendRef.current = false;
+    finalSeenRef.current = false;
     clearTimeout(pendingSendTimerRef.current);
     pendingSendTimerRef.current = null;
     const finalSentence = textBufferRef.current.trim() || lastInterimRef.current.trim();
@@ -511,6 +546,170 @@ export function useVoiceConversation() {
                voiceState === CONVERSATION_STATES.ERROR) {
       clearInterimWatchdog();
       stopRecognition();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceState]);
+
+  // Mirror of voiceState that async code can read without going stale. The
+  // getUserMedia call below resolves a frame or two after the effect that
+  // started it, by which time the captured voiceState is already out of date.
+  useEffect(() => {
+    voiceStateRef.current = voiceState;
+  }, [voiceState]);
+
+  // ---- Barge-in (browser-STT languages) ----
+  // Browser-STT languages deliberately hold no mic stream while listening, so
+  // nothing is watching when Amina talks. While she is SPEAKING we open a
+  // short-lived stream with echo cancellation (so her own voice is suppressed)
+  // and roll a recorder, which lets an interruption be both detected AND
+  // transcribed — the words spoken over her are not thrown away. The stream is
+  // closed the moment listening resumes, so it never runs alongside the browser
+  // recognizer, which is what used to break capture on Android.
+  function stopBargeInMonitor() {
+    if (bargeInVadRef.current) {
+      bargeInVadRef.current.stop();
+      bargeInVadRef.current = null;
+    }
+    if (bargeInRecorderRef.current) {
+      const rec = bargeInRecorderRef.current;
+      bargeInRecorderRef.current = null;
+      try { rec.stop(); } catch { /* already stopped */ }
+    }
+    bargeInChunksRef.current = [];
+    bargeInStartChunkRef.current = null;
+    if (bargeInStreamRef.current) {
+      bargeInStreamRef.current.getTracks().forEach(t => t.stop());
+      bargeInStreamRef.current = null;
+    }
+  }
+
+  function createBargeInRecorder(stream) {
+    if (typeof MediaRecorder === 'undefined') return null;
+    const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
+    const mimeType = mimeTypes.find(m => MediaRecorder.isTypeSupported(m)) || '';
+    let rec;
+    try {
+      rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    } catch {
+      try { rec = new MediaRecorder(stream); } catch { return null; }
+    }
+    rec.ondataavailable = (e) => {
+      if (!e.data || e.data.size === 0) return;
+      bargeInChunksRef.current.push(e.data);
+      if (bargeInChunksRef.current.length > MAX_BARGE_IN_CHUNKS) bargeInChunksRef.current.shift();
+    };
+    return rec;
+  }
+
+  async function transcribeBargeInBlob(blob) {
+    bargeInInFlightRef.current = true;
+    try {
+      const text = await khayaTranscribe(blob, languageRef.current);
+      if (unmountedRef.current) return;
+      const clean = (text || '').trim();
+      // Anything this short is echo residue or a cough, not an interruption.
+      if (clean.length < 2) return;
+      console.log('[Voice] barge-in utterance transcribed:', clean.length, 'chars');
+      managerRef.current?.onFinalTranscript(clean);
+    } catch (err) {
+      console.warn('[Voice] barge-in transcription failed:', err?.code || err?.message);
+    } finally {
+      bargeInInFlightRef.current = false;
+    }
+  }
+
+  function onBargeInSpeechStart() {
+    if (bargeInStartChunkRef.current !== null) return;
+    if (bargeInInFlightRef.current) return;
+    bargeInStartChunkRef.current = Math.max(0, bargeInChunksRef.current.length - BARGE_IN_LOOKBACK_CHUNKS);
+    console.log('[Voice] barge-in detected — stopping Amina');
+    managerRef.current?.vadSpeechStart();
+  }
+
+  function onBargeInSpeechEnd() {
+    if (bargeInStartChunkRef.current === null) return;
+    const start = bargeInStartChunkRef.current;
+    const chunks = bargeInChunksRef.current.slice(start);
+    const mime = bargeInRecorderRef.current?.mimeType || chunks[0]?.type || 'audio/webm';
+    bargeInStartChunkRef.current = null;
+    if (bargeInRecorderRef.current && bargeInRecorderRef.current.state !== 'inactive') {
+      try { bargeInRecorderRef.current.stop(); } catch { /* already stopped */ }
+    }
+    managerRef.current?.vadSpeechEnd();
+    if (!chunks.length) return;
+    const blob = new Blob(chunks, { type: mime });
+    if (blob.size < MIN_BARGE_IN_BLOB_BYTES) return;
+    void transcribeBargeInBlob(blob);
+  }
+
+  async function startBargeInMonitor() {
+    if (khayaAsrEnabledRef.current) return;
+    if (bargeInStreamRef.current || unmountedRef.current) return;
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    let stream;
+    try {
+      // Echo cancellation is essential here: it strips Amina's playback so the
+      // VAD is effectively listening for the user only.
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: { ideal: 1 },
+        },
+      });
+    } catch (err) {
+      console.warn('[Voice] barge-in unavailable:', err?.name);
+      return;
+    }
+    // The state may have moved on while the permission prompt was up. Bail out
+    // and release the stream, otherwise it is installed after cleanup has
+    // already run and never gets closed.
+    const st = voiceStateRef.current;
+    const stillWanted = st === CONVERSATION_STATES.SPEAKING || st === CONVERSATION_STATES.INTERRUPTING;
+    if (unmountedRef.current || bargeInStreamRef.current !== null || !stillWanted) {
+      stream.getTracks().forEach(t => t.stop());
+      return;
+    }
+    bargeInStreamRef.current = stream;
+
+    const rec = createBargeInRecorder(stream);
+    if (rec) {
+      bargeInRecorderRef.current = rec;
+      try { rec.start(BARGE_IN_CHUNK_MS); } catch { bargeInRecorderRef.current = null; }
+    }
+
+    const vad = createVAD(stream, {
+      // Demanding settings on purpose: sustained voice only, so a door slam or
+      // a cough cannot cut Amina off. adaptUp lets the floor settle onto her
+      // playback, so only the user's closer, louder voice crosses it.
+      minSpeechMs: 500,
+      silenceTimeoutMs: 700,
+      minRms: 0.02,
+      snrMultiplier: 2.5,
+      adaptUp: true,
+      onSpeechStart: onBargeInSpeechStart,
+      onSpeechEnd: onBargeInSpeechEnd,
+    });
+    vad.start();
+    vad.setEnabled(true);
+    bargeInVadRef.current = vad;
+  }
+
+  // ---- Barge-in monitor lifecycle ----
+  // Opened while Amina speaks, closed once we are listening again. It is kept
+  // alive through INTERRUPTING on purpose: that state is exactly the window in
+  // which the user finishes their interrupted sentence.
+  useEffect(() => {
+    if (voiceState === CONVERSATION_STATES.SPEAKING) {
+      void startBargeInMonitor();
+      return;
+    }
+    if (voiceState === CONVERSATION_STATES.LISTENING ||
+        voiceState === CONVERSATION_STATES.IDLE ||
+        voiceState === CONVERSATION_STATES.PAUSED ||
+        voiceState === CONVERSATION_STATES.ERROR) {
+      stopBargeInMonitor();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceState]);
@@ -737,6 +936,7 @@ export function useVoiceConversation() {
       stopRecognition();
       destroyVAD();
       destroyKhayaRecorder();
+      stopBargeInMonitor();
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
         streamRef.current = null;

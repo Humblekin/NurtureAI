@@ -24,6 +24,11 @@ export function createVAD(audioStream, options = {}) {
     // aggressive noise suppression so quiet, distant voices still register.
     minRms = 0.008,
     snrMultiplier = 2.5,
+    // Barge-in detection runs while Amina is talking, so here the floor SHOULD
+    // climb toward loud audio: the goal is for the floor to settle on her
+    // playback level, leaving only the user's own (louder, closer) voice able
+    // to cross the threshold. Without this she interrupts herself.
+    adaptUp = false,
   } = options;
 
   let audioContext = null;
@@ -96,6 +101,8 @@ export function createVAD(audioStream, options = {}) {
     if (rms < noiseFloor && !speaking && speechStart === 0) {
       noiseFloor = noiseFloor * 0.98 + rms * 0.02;
       noiseFloor = Math.max(MIN_NOISE_FLOOR, noiseFloor);
+    } else if (adaptUp && rms > noiseFloor && !speaking && speechStart === 0) {
+      noiseFloor = noiseFloor * 0.995 + rms * 0.005;
     }
 
     const threshold = Math.max(noiseFloor * snrMultiplier, minRms);
