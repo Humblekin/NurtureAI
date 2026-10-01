@@ -7,6 +7,8 @@
 // captured. This wrapper restarts the session with exponential backoff and
 // gives up (with a visible error) if the mic looks genuinely unavailable.
 
+import { browserLanguageFor } from './khayaLanguages';
+
 const MIN_RESTART_DELAY_MS = 200;
 const MAX_RESTART_DELAY_MS = 4000;
 const MAX_CONSECUTIVE_RESTARTS = 12;
@@ -77,7 +79,7 @@ export function createSpeechRecognition(options = {}) {
     session.continuous = true;
     session.interimResults = true;
     session.maxAlternatives = 1;
-    session.lang = language === 'dag' ? 'ha-Latn-NG' : 'en-US';
+    session.lang = browserLanguageFor(language);
 
     session.onstart = () => {
       restartDelay = MIN_RESTART_DELAY_MS;

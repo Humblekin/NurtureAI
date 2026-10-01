@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { OnboardingEngine } from '../services/onboardingEngine';
+import { OnboardingEngine, buildProfileRecords } from '../services/onboardingEngine';
+import { coerceDraft } from '../services/onboardingFields';
 import { generateId } from '../lib/db';
 import { upsertRecord } from '../lib/sync';
 import useMotherStore from './motherStore';
@@ -29,6 +30,11 @@ const useOnboardingStore = create((set, get) => ({
   error: null,
   language: 'en',
 
+  // Canonical profile data waiting to be reviewed in the form. The voice path
+  // fills this so "Talk With Amina" ends on an editable screen instead of a
+  // read-only summary the mother cannot correct.
+  draft: null,
+
   // Actions
   startOnboarding: (profileId, profileData, language = 'en') => {
     const engine = new OnboardingEngine(profileId, language);
@@ -53,8 +59,18 @@ const useOnboardingStore = create((set, get) => ({
       summary: null,
       error: null,
       language,
+      draft: null,
     });
   },
+
+  /**
+   * Hand the collected answers to the form for review and correction.
+   */
+  saveDraft: (draft) => {
+    set({ draft: coerceDraft(draft) });
+  },
+
+  clearDraft: () => set({ draft: null }),
 
   sendResponse: async (userResponse) => {
     const { engine, conversationHistory } = get();
@@ -87,21 +103,31 @@ const useOnboardingStore = create((set, get) => ({
     }
   },
 
-  confirmAndSave: async (confirmed, profileData = {}) => {
-    const { engine } = get();
-    if (!engine) return { success: false };
+  /**
+   * Save a health profile to the database.
+   *
+   * This is the ONLY place profiles are persisted. Both setup paths call it:
+   * the voice path passes what the conversation collected, the form path passes
+   * what the mother reviewed. `draft` lets the form override; otherwise the
+   * engine's collected answers are used.
+   *
+   * Everything that made a save safe lives here — claim_mother to avoid
+   * duplicate patient records, the community health worker lookup, the welcome
+   * journal entry and the welcome notification.
+   */
+  confirmAndSave: async (confirmed = true, profileData = {}, draft = null) => {
+    const { engine, draft: storeDraft } = get();
+    const source = draft || storeDraft || engine?.collectedData;
+    if (!source) return { success: false };
+
+    const profileId = profileData.profileId || engine?.profileId || null;
+    const userId = profileData.userId || engine?.profileId || null;
 
     set({ isSaving: true, error: null });
 
     try {
-      const result = await engine.handleConfirmation(confirmed);
-
-      if (!result.success) {
-        set({ isSaving: false });
-        return result;
-      }
-
-      const { motherProfile, pregnancyProfile, childrenProfiles } = result;
+      const { motherProfile, pregnancyProfile, childrenProfiles } =
+        buildProfileRecords(source, profileId);
 
       // Set phone from registration data
       if (profileData.phone) {
@@ -194,7 +220,7 @@ const useOnboardingStore = create((set, get) => ({
             : 1;
           const journalEntry = {
             id: generateId(),
-            user_id: engine.profileId,
+            user_id: userId,
             pregnancy_id: pregnancyId,
             week_number: weekNumber,
             entry_date: new Date().toISOString(),
@@ -240,7 +266,7 @@ const useOnboardingStore = create((set, get) => ({
         title: 'Welcome to NurtureAI!',
         message: `Hi ${motherProfile.full_name}! Your health profile has been set up. Amina is here to support you throughout your pregnancy journey.`,
         read: false,
-        user_id: engine.profileId,
+        user_id: userId,
         patient_id: motherId,
         created_at: new Date().toISOString(),
       };
@@ -249,6 +275,8 @@ const useOnboardingStore = create((set, get) => ({
       set({
         isSaving: false,
         isComplete: true,
+        // Saved: drop the draft so a later visit cannot re-submit it.
+        draft: null,
       });
 
       return { success: true, motherId, pregnancyId, childIds };
@@ -277,6 +305,7 @@ const useOnboardingStore = create((set, get) => ({
     summary: null,
     error: null,
     language: 'en',
+    draft: null,
   }),
 }));
 

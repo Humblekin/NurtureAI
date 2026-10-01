@@ -21,7 +21,7 @@ const MotherWelcome = () => {
   }, []);
 
   const handleTalkWithAmina = () => {
-    navigate('/mother/onboarding', { state: { mode: 'voice', language } });
+    navigate('/mother/onboarding', { state: { language } });
   };
 
   const handleFillForm = () => {
@@ -82,8 +82,8 @@ const MotherWelcome = () => {
               </h3>
               <p className={styles.optionDesc}>
                 {language === 'dag'
-                  ? 'Zan tambayi ki tambayi daya bayan daya a hanyar magana mai kyau. Za ki iya magana ko rubuta.'
-                  : "I'll ask you questions one at a time in a friendly conversation. You can speak or type your answers."}
+                  ? 'Zan tambayi ki tambayi daya bayan daya a hanyar magana mai kyau. Za ki iya magana ko rubuta. Bayan hakan za ki iya dubawa duk wani abin da ba daidai ba kafin mu ajiye.'
+                  : "I'll ask you questions one at a time in a friendly conversation. You can speak or type your answers. Afterwards you'll see everything I filled in, so you can correct anything I misheard."}
               </p>
             </div>
             <Sparkles size={18} className={styles.optionArrow} />
@@ -99,8 +99,8 @@ const MotherWelcome = () => {
               </h3>
               <p className={styles.optionDesc}>
                 {language === 'dag'
-                  ? 'Cika fom ɗin a kan sauri. Za a adana ci gaban ki koda ta yaya.'
-                  : 'Complete a structured form at your own pace. Your progress is saved automatically.'}
+                  ? 'Cika fom ɗin a kan sauri, tare da yi magana a kowane filfi idan ka son. Za a adana ci gaban ki koda ta yaya.'
+                  : 'Complete a structured form at your own pace. You can also tap Speak on any single field to fill just that one. Your progress is saved automatically.'}
               </p>
             </div>
           </button>

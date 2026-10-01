@@ -1,6 +1,7 @@
 import { chatCompletion } from '../lib/groq';
 import { normalizeBloodGroup } from '../lib/bloodGroup';
 import { calculateWeeksFromLMP, calculateEDDFromLMP } from '../lib/pregnancy';
+import { FIELD_BY_NAME, CHILD_FIELD_BY_NAME, coerceFieldValue, coerceLoopControl } from './onboardingFields';
 
 /**
  * NurtureAI — Onboarding Conversation Engine
@@ -221,7 +222,8 @@ const QUESTIONS = [
     textDag: "Menene sunan yaron ka?",
     category: 'children',
     type: 'text',
-    field: 'child_name',
+    field: 'name',
+    childField: 'name',
     required: true,
     condition: (data) => data.has_children === 'Yes',
   },
@@ -231,7 +233,8 @@ const QUESTIONS = [
     textDag: "Yaɗayake yaron ka ya haihu? Za ka iya cewa '15 ga watan Maris 2024'.",
     category: 'children',
     type: 'date',
-    field: 'child_date_of_birth',
+    field: 'date_of_birth',
+    childField: 'date_of_birth',
     required: true,
     condition: (data) => data.has_children === 'Yes',
   },
@@ -242,7 +245,8 @@ const QUESTIONS = [
     category: 'children',
     type: 'choice',
     options: ['Boy', 'Girl'],
-    field: 'child_gender',
+    field: 'gender',
+    childField: 'gender',
     required: true,
     condition: (data) => data.has_children === 'Yes',
   },
@@ -252,11 +256,14 @@ const QUESTIONS = [
     textDag: "Ka san nauyin yaron ka a lokacin haihuwa a cikin kilogram? Misali, 3.2 ko 3.5.",
     category: 'children',
     type: 'number',
-    field: 'child_birth_weight',
+    field: 'birth_weight',
+    childField: 'birth_weight',
     required: false,
     condition: (data) => data.has_children === 'Yes',
   },
   {
+    // Drives the repeat loop only — never stored, so the collected shape stays
+    // identical to the form's.
     id: 'has_another_child',
     text: "Do you have another child you'd like to register?",
     textDag: "Kana da wani yaro da kake son yi rajista?",
@@ -264,10 +271,91 @@ const QUESTIONS = [
     type: 'choice',
     options: ['Yes', 'No'],
     field: 'has_another_child',
+    // Marks this question as loop control rather than profile data. It is not a
+    // canonical field, so it has to be handled explicitly in applyExtracted or
+    // the answer is dropped and the repeat loop never runs.
+    loopControl: true,
     required: true,
     condition: (data) => data.has_children === 'Yes',
   },
 ];
+
+// Where the repeating child block begins, plus a ceiling so a misheard "yes"
+// can never spin the conversation forever.
+const CHILD_QUESTION_START = QUESTIONS.findIndex((q) => q.childField === 'name');
+const MAX_CHILDREN = 8;
+
+/**
+ * Turn a canonical draft into the three record shapes the database needs.
+ *
+ * Pure and draft-driven so BOTH setup paths save identically: the voice path
+ * passes what the conversation collected, the form path passes what she typed
+ * or dictated. The form used to carry its own copy of this logic and was
+ * missing claim_mother (which prevents duplicate patient records), the
+ * community health worker assignment, the welcome journal entry and the
+ * welcome notification.
+ */
+export function buildProfileRecords(draft = {}, profileId = null) {
+  const d = draft || {};
+
+  const motherProfile = {
+    profile_id: profileId,
+    full_name: d.full_name || 'Unknown',
+    date_of_birth: d.date_of_birth || null,
+    phone: d.phone || null,
+    community: d.community || null,
+    blood_group: normalizeBloodGroup(d.blood_group),
+    medical_history: [
+      d.existing_conditions,
+      d.current_medications ? `Current medications: ${d.current_medications}` : null,
+      d.previous_complications ? `Previous complications: ${d.previous_complications}` : null,
+    ].filter(Boolean).join('. ') || null,
+    risk_level: 'low',
+    assigned_worker_id: null,
+    edd: null,
+  };
+
+  let pregnancyProfile = null;
+  if (d.is_pregnant === 'Yes') {
+    const lmpDate = d.lmp || null;
+    const edd = d.edd || calculateEDDFromLMP(lmpDate);
+    motherProfile.edd = edd;
+
+    pregnancyProfile = {
+      mother_id: null, // Set after mother is created
+      status: 'active',
+      risk_level: 'low',
+      lmp: lmpDate,
+      edd: edd,
+      gravida: parseInt(d.gravida) || 1,
+      para: parseInt(d.para) || 0,
+      notes: [
+        d.previous_complications ? `Previous complications: ${d.previous_complications}` : null,
+        d.nutrition ? `Nutrition: ${d.nutrition}` : null,
+        d.supplements === 'Yes' ? 'Taking supplements' : null,
+      ].filter(Boolean).join('. ') || null,
+    };
+  }
+
+  // Every collected child, not just the first. This used to build a single
+  // record from flat `child_*` keys, silently dropping every child after the
+  // first even though the mother had answered the questions for them.
+  const childrenProfiles = [];
+  const children = Array.isArray(d.children_list) ? d.children_list : [];
+  children.forEach((child) => {
+    const name = child?.name?.trim();
+    if (!name) return;
+    childrenProfiles.push({
+      mother_id: null, // Set after mother is created
+      full_name: name,
+      date_of_birth: child.date_of_birth || null,
+      gender: child.gender === 'male' || child.gender === 'female' ? child.gender : null,
+      birth_weight: child.birth_weight ? parseFloat(child.birth_weight) : null,
+    });
+  });
+
+  return { motherProfile, pregnancyProfile, childrenProfiles, collectedData: d };
+}
 
 // ── Helper Functions ─────────────────────────────────
 
@@ -277,9 +365,11 @@ export class OnboardingEngine {
   constructor(profileId, language = 'en') {
     this.profileId = profileId;
     this.language = language;
-    this.collectedData = {};
+    this.collectedData = { children_list: [] };
     this.conversationHistory = [];
     this.currentQuestionIndex = 0;
+    this.childIndex = 0;
+    this.answeredCount = 0;
     this.isComplete = false;
     this.isSaving = false;
   }
@@ -344,12 +434,28 @@ export class OnboardingEngine {
     const extractedData = await this.extractData(currentQuestion, userResponse);
 
     // Merge extracted data
-    if (extractedData) {
-      Object.assign(this.collectedData, extractedData);
-    }
+    this.applyExtracted(currentQuestion, extractedData);
 
     // Move to next question
     this.currentQuestionIndex++;
+    this.answeredCount += 1;
+
+    // The repeating child block jumps the cursor back to the top of itself
+    // instead of running off the end of the question list.
+    if (currentQuestion.id === 'has_another_child') {
+      const wantsAnother = this.collectedData.has_another_child === 'Yes';
+      delete this.collectedData.has_another_child;
+      const current = this.collectedData.children_list?.[this.childIndex];
+      const named = current?.name?.trim();
+      if (wantsAnother && named && this.childIndex < MAX_CHILDREN - 1) {
+        this.childIndex += 1;
+        this.currentQuestionIndex = CHILD_QUESTION_START;
+      } else if (!named) {
+        // Nothing usable was captured — do not leave a ghost row behind for the
+        // form to render as a blank, unremovable child.
+        this.collectedData.children_list.splice(this.childIndex, 1);
+      }
+    }
 
     // Check if all questions are done
     const nextQuestion = this.getNextQuestion();
@@ -379,6 +485,50 @@ export class OnboardingEngine {
   }
 
   /**
+   * Merge an extraction into `collectedData`.
+   *
+   * Two things happen here that a plain `Object.assign` did not:
+   *   1. Only keys the profile actually defines are accepted, so a confused
+   *      model cannot invent fields that end up in the database.
+   *   2. Every value is coerced to its field's type. The model answering with
+   *      "15 May 1998" or "yeah" is normal; storing that verbatim is what
+   *      produced blank date inputs and "maybe" in a select.
+   */
+  applyExtracted(question, extractedData) {
+    if (!extractedData || typeof extractedData !== 'object') return;
+
+    if (question.childField) {
+      const childField = CHILD_FIELD_BY_NAME[question.childField];
+      if (!childField) return;
+      const raw = extractedData[question.field] ?? extractedData[question.childField];
+      if (raw === undefined) return;
+      const value = coerceFieldValue(childField, raw);
+      if (value === '') return;
+      if (!Array.isArray(this.collectedData.children_list)) this.collectedData.children_list = [];
+      const index = this.childIndex;
+      const existing = this.collectedData.children_list[index] || {};
+      this.collectedData.children_list[index] = { ...existing, [question.childField]: value };
+      return;
+    }
+
+    // "Do you have another child?" drives the repeat loop. It is deliberately
+    // not a canonical field, so it must be applied here or the loop below never
+    // sees it and stops after the first child.
+    if (question.loopControl) {
+      const raw = extractedData[question.field];
+      const value = coerceLoopControl(raw);
+      if (value) this.collectedData[question.field] = value;
+      return;
+    }
+
+    for (const [key, value] of Object.entries(extractedData)) {
+      const field = FIELD_BY_NAME[key];
+      if (!field) continue;
+      this.collectedData[key] = coerceFieldValue(field, value);
+    }
+  }
+
+  /**
    * Use AI to extract structured data from a free-text response.
    */
   async extractData(question, response) {
@@ -392,6 +542,11 @@ Return ONLY a valid JSON object with the extracted field(s). Do not include any 
 Field to extract: "${question.field}"
 Question type: "${question.type}"
 
+Formatting rules — these matter, your values are stored as-is:
+- Dates must be "YYYY-MM-DD". If the day or month is ambiguous, choose the most likely reading.
+- Numbers must be plain digits, no words and no units.
+- Blood group must be one of: A+, A-, B+, B-, AB+, AB-, O+, O-.
+${question.childField ? '- Gender must be "male" or "female".\n' : ''}
 Examples:
 - If field is "full_name" and response is "My name is Mariam Abdulai", return: {"full_name": "Mariam Abdulai"}
 - If field is "date_of_birth" and response is "15th May 1998", return: {"date_of_birth": "1998-05-15"}
@@ -402,6 +557,8 @@ Examples:
 - If field is "blood_group" and response is "I think it is O positive", return: {"blood_group": "O+"}
 - If field is "existing_conditions" and response is "I have high blood pressure", return: {"existing_conditions": "High blood pressure"}
 - If field is "emergency_contact" and response is "My husband Ibrahim, +233241234567", return: {"emergency_contact": "Ibrahim +233241234567"}
+- If field is "birth_weight" and response is "about three point two kilos", return: {"birth_weight": 3.2}
+- If the response does not actually answer the question, return: {}
 
 Return ONLY the JSON object:`;
 
@@ -461,7 +618,7 @@ Rules:
         { temperature: 0.7, maxTokens: 150, language: this.language }
       );
       return response;
-    } catch (error) {
+    } catch {
       // Fallback: just ask the next question directly
       return this.language === 'dag' ? nextQuestion.textDag : nextQuestion.text;
     }
@@ -517,13 +674,16 @@ Rules:
       if (d.supplements) lines.push(`• Taking supplements: ${d.supplements}`);
     }
 
-    if (d.has_children === 'Yes' && d.child_name) {
+    const children = Array.isArray(d.children_list) ? d.children_list : [];
+    if (children.length > 0) {
       lines.push("");
       lines.push("**Children:**");
-      lines.push(`• Name: ${d.child_name}`);
-      if (d.child_date_of_birth) lines.push(`• Date of birth: ${d.child_date_of_birth}`);
-      if (d.child_gender) lines.push(`• Gender: ${d.child_gender}`);
-      if (d.child_birth_weight) lines.push(`• Birth weight: ${d.child_birth_weight}kg`);
+      children.forEach((child, i) => {
+        lines.push(`• ${children.length > 1 ? `Child ${i + 1}` : 'Child'}: ${child.name || 'Unknown'}`);
+        if (child.date_of_birth) lines.push(`  • Date of birth: ${child.date_of_birth}`);
+        if (child.gender) lines.push(`  • Gender: ${child.gender}`);
+        if (child.birth_weight) lines.push(`  • Birth weight: ${child.birth_weight}kg`);
+      });
     }
 
     return lines.join('\n');
@@ -540,70 +700,9 @@ Rules:
 
     this.isSaving = true;
 
-    const d = this.collectedData;
-
-    // Build mother profile
-    const motherProfile = {
-      profile_id: this.profileId,
-      full_name: d.full_name || 'Unknown',
-      date_of_birth: d.date_of_birth || null,
-      phone: null, // Set from registration
-      community: d.community || null,
-      blood_group: normalizeBloodGroup(d.blood_group),
-      medical_history: [
-        d.existing_conditions,
-        d.current_medications ? `Current medications: ${d.current_medications}` : null,
-        d.previous_complications ? `Previous complications: ${d.previous_complications}` : null,
-      ].filter(Boolean).join('. ') || null,
-      risk_level: 'low',
-      assigned_worker_id: null,
-      edd: null,
-    };
-
-    // Build pregnancy profile if pregnant
-    let pregnancyProfile = null;
-    if (d.is_pregnant === 'Yes') {
-      const lmpDate = d.lmp || null;
-      const edd = d.edd || calculateEDDFromLMP(lmpDate);
-
-      motherProfile.edd = edd;
-
-      pregnancyProfile = {
-        mother_id: null, // Set after mother is created
-        status: 'active',
-        risk_level: 'low',
-        lmp: lmpDate,
-        edd: edd,
-        gravida: parseInt(d.gravida) || 1,
-        para: parseInt(d.para) || 0,
-        notes: [
-          d.previous_complications ? `Previous complications: ${d.previous_complications}` : null,
-          d.nutrition ? `Nutrition: ${d.nutrition}` : null,
-          d.supplements === 'Yes' ? 'Taking supplements' : null,
-        ].filter(Boolean).join('. ') || null,
-      };
-    }
-
-    // Build children profiles if has children
-    let childrenProfiles = [];
-    if (d.has_children === 'Yes' && d.child_name) {
-      // For voice onboarding, we collect one child at a time
-      // The has_another_child question controls if we collect more
-      childrenProfiles.push({
-        mother_id: null, // Set after mother is created
-        full_name: d.child_name || 'Unknown',
-        date_of_birth: d.child_date_of_birth || null,
-        gender: d.child_gender === 'Boy' ? 'male' : d.child_gender === 'Girl' ? 'female' : null,
-        birth_weight: d.child_birth_weight ? parseFloat(d.child_birth_weight) : null,
-      });
-    }
-
     return {
       success: true,
-      motherProfile,
-      pregnancyProfile,
-      childrenProfiles,
-      collectedData: d,
+      ...buildProfileRecords(this.collectedData, this.profileId),
     };
   }
 
@@ -611,8 +710,12 @@ Rules:
    * Get the current progress percentage.
    */
   getProgress() {
+    if (this.isComplete) return 100;
     const total = QUESTIONS.filter(q => !q.condition || q.condition(this.collectedData)).length;
-    const answered = Math.min(this.currentQuestionIndex, total);
+    if (total <= 0) return 0;
+    // `currentQuestionIndex` rewinds every time another child is offered, so
+    // use a monotonic count — otherwise the bar jumps backwards mid-interview.
+    const answered = Math.min(this.answeredCount, total - 1);
     return Math.round((answered / total) * 100);
   }
 }

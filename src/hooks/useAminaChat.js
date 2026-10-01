@@ -4,7 +4,7 @@ import { createSpeechRecognition } from '../services/voice/speechRecognition';
 import { createVAD } from '../services/voice/vad';
 import { isSpeechSynthesisSupported } from '../services/voice/speechSynthesis';
 import { khayaTranscribe, speakText as khayaSpeakText, stopSpeech as stopAllSpeech } from '../services/voice/khayaSpeech';
-import { shouldUseKhayaAsr, shouldUseKhayaTts } from '../services/voice/khayaLanguages';
+import { shouldUseKhayaAsr, shouldUseKhayaTts, getSpeechConfig } from '../services/voice/khayaLanguages';
 import useAuthStore from '../stores/authStore';
 import useAppStore from '../stores/appStore';
 import { createConversationManager, CONVERSATION_STATES } from '../services/conversationManager';
@@ -31,6 +31,19 @@ export const VOICE_STATES = CONVERSATION_STATES;
 // ============================================================
 // Speech Recognition — browser fallback for ChatMode mic button only
 // ============================================================
+/**
+ * Dictation for single-field contexts (the onboarding form, chat input boxes).
+ *
+ * `language` must be an app language key ('en' | 'dag'), NOT a raw locale.
+ * Callers used to pass 'ha-Latn-NG' for Dagbani, and this hook compared against
+ * 'dag', so Dagbani recognition silently ran in English — the user was asked in
+ * Dagbani and answered into an English recognizer.
+ *
+ * Built on createSpeechRecognition so it inherits the restart/backoff that keeps
+ * Android Chrome from killing the session permanently. The old inline
+ * `new SpeechRecognition()` had no restart and no backoff, which is exactly the
+ * failure that made voice capture go silent after the first utterance.
+ */
 export function useSpeechRecognition(language = 'en') {
   const [isListening, setIsListening] = useState(false);
   const [isSupported, setIsSupported] = useState(undefined);
@@ -38,10 +51,12 @@ export function useSpeechRecognition(language = 'en') {
   const [micPermission, setMicPermission] = useState('unknown');
   const [transcript, setTranscript] = useState('');
   const recognitionRef = useRef(null);
-  const shouldListenRef = useRef(false);
-  const listeningActiveRef = useRef(false);
   const onFinalRef = useRef(null);
   const onInterimRef = useRef(null);
+
+  // Coerce anything to a known app language key so a bad caller cannot end up
+  // with an English recognizer on a Dagbani screen.
+  const languageKey = getSpeechConfig(language) ? language : 'en';
 
   const checkMicPermission = useCallback(async () => {
     try {
@@ -61,65 +76,70 @@ export function useSpeechRecognition(language = 'en') {
   useEffect(() => { checkMicPermission(); }, [checkMicPermission]);
 
   useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+    if (!getSpeechConfig(languageKey)) {
+      setIsSupported(false);
+      return;
+    }
 
-    setIsSupported(true);
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-    recognition.lang = language === 'dag' ? 'ha-Latn-NG' : 'en-US';
-
-    recognition.onresult = (event) => {
-      let interimText = '';
-      let finalText = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) finalText += result[0].transcript;
-        else interimText += result[0].transcript;
-      }
-      if (interimText) { setTranscript(interimText); onInterimRef.current?.(interimText); }
-      if (finalText) { setTranscript(finalText); onFinalRef.current?.(finalText.trim()); }
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-      if (listeningActiveRef.current) {
-        try { recognition.start(); setIsListening(true); } catch { /* already started */ }
-      }
-    };
-
-    recognition.onerror = (event) => {
-      if (event.error === 'not-allowed') { shouldListenRef.current = false; listeningActiveRef.current = false; setMicPermission('denied'); }
-      else if (event.error === 'network') setError('Network error during speech recognition.');
-      else if (event.error !== 'aborted' && event.error !== 'no-speech') setError('Speech recognition error. Please try again.');
-    };
+    const recognition = createSpeechRecognition({
+      language: languageKey,
+      onInterim: (text) => {
+        setTranscript(text);
+        onInterimRef.current?.(text);
+      },
+      onFinal: (text) => {
+        setTranscript(text);
+        onFinalRef.current?.(text);
+      },
+      onError: (message) => {
+        // Treat a denied mic as terminal so the UI can stop offering the button.
+        if (/denied/i.test(message)) setMicPermission('denied');
+        else setError(message);
+      },
+    });
 
     recognitionRef.current = recognition;
-    return () => { shouldListenRef.current = false; listeningActiveRef.current = false; try { recognition.stop(); } catch { /* ignore */ } };
-  }, [language]);
+    setIsSupported(true);
 
-  const startListening = useCallback(async () => {
-    if (!recognitionRef.current) return;
-    shouldListenRef.current = true;
-    listeningActiveRef.current = true;
+    return () => {
+      recognitionRef.current = null;
+      recognition.stop();
+    };
+  }, [languageKey]);
+
+  const startListening = useCallback(() => {
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
     setError(null);
     setTranscript('');
-    try { recognitionRef.current.start(); setIsListening(true); } catch { /* may already be started */ }
+    try {
+      recognition.start();
+      setIsListening(true);
+    } catch { /* may already be started */ }
   }, []);
 
   const stopListening = useCallback(() => {
-    shouldListenRef.current = false;
-    listeningActiveRef.current = false;
-    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch { /* ignore */ } }
+    recognitionRef.current?.stop();
     setIsListening(false);
   }, []);
 
   const onFinal = useCallback((cb) => { onFinalRef.current = cb; }, []);
   const onInterim = useCallback((cb) => { onInterimRef.current = cb; }, []);
 
-  return { isListening, transcript, isSupported, error, micPermission, startListening, stopListening, setTranscript, checkMicPermission, resetMicPermission, onFinal, onInterim, setListeningActive: (v) => { listeningActiveRef.current = v; } };
+  return {
+    isListening,
+    transcript,
+    isSupported,
+    error,
+    micPermission,
+    startListening,
+    stopListening,
+    setTranscript,
+    checkMicPermission,
+    resetMicPermission,
+    onFinal,
+    onInterim,
+  };
 }
 
 // ============================================================

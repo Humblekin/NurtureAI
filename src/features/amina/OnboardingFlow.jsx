@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Mic, MicOff, Send, Check, ArrowRight, Sparkles } from 'lucide-react';
+import { Mic, MicOff, Send, Check, Sparkles } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useOnboardingStore from '../../stores/onboardingStore';
 import { useSpeechRecognition, useSpeechSynthesis } from '../../hooks/useAminaChat';
@@ -27,7 +27,7 @@ function escapeHtml(value) {
 
 const OnboardingFlow = () => {
   const navigate = useNavigate();
-  const { profile, user } = useAuthStore();
+  const { profile } = useAuthStore();
   const {
     conversationHistory,
     collectedData,
@@ -35,13 +35,12 @@ const OnboardingFlow = () => {
     progress,
     isStarted,
     isComplete,
-    isSaving,
     summary,
     error,
     language,
     startOnboarding,
     sendResponse,
-    confirmAndSave,
+    saveDraft,
   } = useOnboardingStore();
 
   const [inputText, setInputText] = useState('');
@@ -50,8 +49,11 @@ const OnboardingFlow = () => {
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
-  const { isListening, transcript, startListening, stopListening, isSupported: sttSupported } = useSpeechRecognition(language === 'dag' ? 'ha-Latn-NG' : 'en-US');
-  const { speak, stop: stopSpeaking, isSpeaking } = useSpeechSynthesis(language === 'dag' ? 'ha-Latn-NG' : 'en-US');
+  // These hooks take the app's language key ("en" / "dag") and map it to the right
+// provider and browser locale themselves. Passing raw BCP-47 tags here made
+// every lookup miss and silently fell back to English.
+const { isListening, transcript, startListening, stopListening, isSupported: sttSupported } = useSpeechRecognition(language);
+  const { speak, stop: stopSpeaking } = useSpeechSynthesis(language);
 
   // Start onboarding on mount
   useEffect(() => {
@@ -115,20 +117,17 @@ const OnboardingFlow = () => {
     }
   };
 
-  const handleConfirm = async (confirmed) => {
-    if (!confirmed) {
-      setShowConfirmation(false);
-      // TODO: Allow editing specific fields
-      return;
-    }
-
-    const result = await confirmAndSave(true, {
-      phone: user?.phone || profile?.phone,
+  const handleReview = () => {
+    // Hand the collected answers to the form so she can correct anything the
+    // AI misheard. The old flow showed a read-only summary with a
+    // "Something needs correction" button that did nothing but close the card.
+    saveDraft(collectedData);
+    stopSpeaking();
+    stopListening();
+    navigate('/mother/onboarding/form', {
+      replace: true,
+      state: { language, fromVoice: true },
     });
-
-    if (result?.success) {
-      navigate('/mother/amina', { replace: true });
-    }
   };
 
   const handleKeyDown = (e) => {
@@ -194,7 +193,7 @@ const OnboardingFlow = () => {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Confirmation Screen */}
+      {/* Review Screen */}
       {showConfirmation && (
         <div className={styles.confirmationOverlay}>
           <div className={styles.confirmationCard}>
@@ -209,27 +208,21 @@ const OnboardingFlow = () => {
               ))}
             </div>
             <p className={styles.confirmPrompt}>
-              Is everything correct?
+              Take a moment to check these. You can change anything before saving.
             </p>
             <div className={styles.confirmActions}>
               <button
                 className={styles.confirmBtn}
-                onClick={() => handleConfirm(true)}
-                disabled={isSaving}
+                onClick={handleReview}
               >
-                {isSaving ? (
-                  <span className={styles.spinner} />
-                ) : (
-                  <>
-                    <Check size={18} />
-                    Yes, save my profile
-                  </>
-                )}
+                <>
+                  <Check size={18} />
+                  Review and save my profile
+                </>
               </button>
               <button
                 className={styles.editBtn}
-                onClick={() => handleConfirm(false)}
-                disabled={isSaving}
+                onClick={handleReview}
               >
                 Something needs correction
               </button>

@@ -1,131 +1,85 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Check, Calendar, Heart, Stethoscope, Hospital, Apple, Baby, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Check, Calendar, Heart, Stethoscope, Hospital, Apple, Baby, Plus, Trash2, Mic, MicOff, AlertTriangle } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
-import useMotherStore from '../../stores/motherStore';
-import usePregnancyStore from '../../stores/pregnancyStore';
-import useChildStore from '../../stores/childStore';
+import useOnboardingStore from '../../stores/onboardingStore';
+import {
+  PROFILE_STEPS,
+  CHILD_FIELDS,
+  formDataFromDraft,
+  draftFromFormData,
+  fieldValueFromSpeech,
+} from '../../services/onboardingFields';
+import { useFieldDictation } from '../../hooks/useFieldDictation';
+import { calculateEDDFromLMP } from '../../lib/pregnancy';
 import Input from '../../components/ui/Input';
 import Button from '../../components/ui/Button';
-import { provenanceFor } from '../../lib/provenance';
 import styles from './OnboardingForm.module.css';
 
-function buildInitialFormData() {
-  const fields = {};
-  for (const step of STEPS) {
-    for (const f of step.fields) {
-      fields[f.name] = '';
-    }
-  }
-  return fields;
-}
-
-const STEPS = [
-  {
-    id: 'personal',
-    title: 'Personal Information',
-    titleDag: 'Bayanan Kai',
-    icon: Heart,
-    fields: [
-      { name: 'full_name', label: 'Full Name', labelDag: 'Sunan Cikakke', type: 'text', required: true, placeholder: 'Your full name' },
-      { name: 'date_of_birth', label: 'Date of Birth', labelDag: 'Ranar Haihuwa', type: 'date', required: true },
-      { name: 'community', label: 'Community', labelDag: 'Al\'umma', type: 'text', required: true, placeholder: 'e.g. Tamale South' },
-      { name: 'district', label: 'District', labelDag: 'Yanki', type: 'text', required: false, placeholder: 'e.g. Tamale Metropolitan' },
-      { name: 'emergency_contact', label: 'Emergency Contact', labelDag: 'Lambar Gaggawa', type: 'text', required: false, placeholder: 'Phone number or name' },
-    ],
-  },
-  {
-    id: 'pregnancy',
-    title: 'Pregnancy Information',
-    titleDag: 'Bayanan Ciki',
-    icon: Calendar,
-    fields: [
-      { name: 'is_pregnant', label: 'Are you currently pregnant?', labelDag: 'Kana ciki a yanzu?', type: 'select', required: true, options: [{ value: 'Yes', label: 'Yes' }, { value: 'No', label: 'No' }] },
-      { name: 'lmp', label: 'Last Menstrual Period', labelDag: 'Jinin na ƙarshe', type: 'date', required: true, condition: (d) => d.is_pregnant === 'Yes' },
-      { name: 'is_first_pregnancy', label: 'Is this your first pregnancy?', labelDag: 'Shin wannan shine fara cikin ka?', type: 'select', required: true, options: [{ value: 'Yes', label: 'Yes' }, { value: 'No', label: 'No' }], condition: (d) => d.is_pregnant === 'Yes' },
-      { name: 'gravida', label: 'Total pregnancies (including current)', labelDag: 'Jimlar ciki', type: 'number', required: true, min: 1, condition: (d) => d.is_pregnant === 'Yes' },
-      { name: 'para', label: 'Live births', labelDag: 'Yawan haihuwa', type: 'number', required: true, min: 0, condition: (d) => d.is_pregnant === 'Yes' && d.is_first_pregnancy !== 'Yes' },
-      { name: 'previous_complications', label: 'Previous pregnancy complications', labelDag: 'Matsalar ciki na baya', type: 'textarea', required: false, placeholder: 'e.g. high blood pressure, bleeding', condition: (d) => d.is_pregnant === 'Yes' && d.is_first_pregnancy !== 'Yes' },
-    ],
-  },
-  {
-    id: 'medical',
-    title: 'Medical History',
-    titleDag: 'Tarihin Lafiya',
-    icon: Stethoscope,
-    fields: [
-      { name: 'existing_conditions', label: 'Existing medical conditions', labelDag: 'Cututtukan da ke tattare', type: 'textarea', required: false, placeholder: 'e.g. diabetes, asthma, sickle cell' },
-      { name: 'current_medications', label: 'Current medications or supplements', labelDag: 'Magungunan da ke tattare', type: 'textarea', required: false, placeholder: 'e.g. iron tablets, folic acid' },
-      { name: 'blood_group', label: 'Blood group', labelDag: 'Irin jini', type: 'select', required: false, options: [
-        { value: '', label: 'Select blood group' },
-        { value: 'A+', label: 'A+' }, { value: 'A-', label: 'A-' },
-        { value: 'B+', label: 'B+' }, { value: 'B-', label: 'B-' },
-        { value: 'AB+', label: 'AB+' }, { value: 'AB-', label: 'AB-' },
-        { value: 'O+', label: 'O+' }, { value: 'O-', label: 'O-' },
-      ] },
-    ],
-  },
-  {
-    id: 'healthcare',
-    title: 'Healthcare Information',
-    titleDag: 'Bayanan Lafiya',
-    icon: Hospital,
-    fields: [
-      { name: 'preferred_facility', label: 'Preferred health facility', labelDag: 'Asibitin da aka fi so', type: 'text', required: false, placeholder: 'e.g. Tamale Hospital' },
-      { name: 'previous_anc', label: 'Have you attended ANC visits?', labelDag: 'Ka taɓa ziyarce asibit?', type: 'select', required: true, options: [{ value: 'Yes', label: 'Yes' }, { value: 'No', label: 'No' }], condition: (d) => d.is_pregnant === 'Yes' },
-    ],
-  },
-  {
-    id: 'lifestyle',
-    title: 'Lifestyle & Nutrition',
-    titleDag: 'Rayuwa & Abinci',
-    icon: Apple,
-    fields: [
-      { name: 'nutrition', label: 'Describe your eating habits', labelDag: 'Bayyana yadda kake cin abinci', type: 'textarea', required: false, placeholder: 'e.g. I eat three meals a day, lots of vegetables' },
-      { name: 'supplements', label: 'Taking supplements (iron, folic acid)?', labelDag: 'Kana ɗauke da ƙarin abinci?', type: 'select', required: false, options: [{ value: 'Yes', label: 'Yes' }, { value: 'No', label: 'No' }] },
-    ],
-  },
-  {
-    id: 'children',
-    title: 'Children',
-    titleDag: 'Yara',
-    icon: Baby,
-    fields: [
-      { name: 'has_children', label: 'Do you have any children?', labelDag: 'Kana da wani yaro?', type: 'select', required: true, options: [{ value: 'Yes', label: 'Yes' }, { value: 'No', label: 'No' }] },
-    ],
-  },
-];
-
-const calculateEDD = (lmp) => {
-  if (!lmp) return null;
-  const d = new Date(lmp);
-  d.setDate(d.getDate() + 280);
-  return d.toISOString().split('T')[0];
+// Icons stay in the view layer; the shared module holds only data so the
+// conversation engine can use the same field definitions without importing JSX.
+const STEP_ICONS = {
+  personal: Heart,
+  pregnancy: Calendar,
+  medical: Stethoscope,
+  healthcare: Hospital,
+  lifestyle: Apple,
+  children: Baby,
 };
+
+const STEPS = PROFILE_STEPS.map((step) => ({ ...step, icon: STEP_ICONS[step.id] }));
 
 const OnboardingForm = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { profile, user } = useAuthStore();
-  const { registerMother } = useMotherStore();
-  const { registerPregnancy } = usePregnancyStore();
-  const { registerChild } = useChildStore();
+  const { draft, confirmAndSave, clearDraft } = useOnboardingStore();
   const language = location.state?.language || profile?.preferred_language || 'en';
+  const fromVoice = !!location.state?.fromVoice;
   const [currentStep, setCurrentStep] = useState(0);
-  const initialData = useRef(null);
-  if (!initialData.current) {
-    initialData.current = {
-      ...buildInitialFormData(),
-      phone: user?.phone || profile?.phone || '',
-      preferred_language: language,
-      children_list: [],
-    };
-  }
-  const [formData, setFormData] = useState(initialData.current);
-  const formRef = useRef(formData);
   const [isSaving, setIsSaving] = useState(false);
   const [errors, setErrors] = useState({});
+
+  // Seed once. When Amina collected the answers first, they arrive as a draft
+  // and every field is pre-filled — so this screen is a review she can correct,
+  // not a second interview. `formDataFromDraft` coerces each value, so a date
+  // the AI heard wrong still lands as a usable input or a blank to fix.
+  const initialData = useRef(null);
+  if (!initialData.current) {
+    const seeded = draft ? formDataFromDraft(draft) : null;
+    const base = seeded || formDataFromDraft({});
+    initialData.current = {
+      ...base,
+      phone: user?.phone || profile?.phone || seeded?.phone || '',
+      preferred_language: language,
+    };
+  }
+
+  const [formData, setFormData] = useState(initialData.current);
+  const formRef = useRef(formData);
+
+  // The due date is derived from the last menstrual period. Amina may have
+  // collected an explicit one, otherwise show what the system expects so she
+  // can sanity-check the maths instead of wondering why it is blank.
+  const lmp = formData.lmp;
+  useEffect(() => {
+    const current = formRef.current;
+    if (!current.lmp || current.edd) return;
+    const derived = calculateEDDFromLMP(current.lmp);
+    if (derived) {
+      formRef.current = { ...current, edd: derived };
+      setFormData(formRef.current);
+    }
+  }, [lmp]);
+
+  // Which field the mic is dictating into: null | { name } | { childIndex, field }
+  const [dictateTarget, setDictateTarget] = useState(null);
+  const [pendingOverwrite, setPendingOverwrite] = useState(null);
+  const [interimText, setInterimText] = useState('');
+
+  const { isListening, start: startDictation, stop: stopDictation, error: dictationError, isSupported: sttSupported, onFinal, onInterim } =
+    useFieldDictation(language);
 
   const step = STEPS[currentStep];
   const visibleFields = step.fields.filter(f => !f.condition || f.condition(formData));
@@ -134,11 +88,98 @@ const OnboardingForm = () => {
 
   const lang = (en, dag) => language === 'dag' ? dag : en;
 
+  const applyFormData = useCallback((next) => {
+    formRef.current = next;
+    setFormData(next);
+  }, []);
+
   const handleChange = (name, value) => {
     formRef.current = { ...formRef.current, [name]: value };
     setFormData(formRef.current);
     if (errors[name]) setErrors(prev => ({ ...prev, [name]: null }));
   };
+
+  // ---- Dictation -------------------------------------------------------
+  // Speech fills the field the mother is looking at, and nothing else. It
+  // never navigates the form or submits, so a misheard word can cost a field
+  // but never the whole profile.
+
+  const readFieldValue = useCallback((target) => {
+    const data = formRef.current;
+    if (!target) return '';
+    if (target.childIndex !== undefined) {
+      return data.children_list?.[target.childIndex]?.[target.field] || '';
+    }
+    return data[target.name] || '';
+  }, []);
+
+  const writeFieldValue = useCallback((target, value) => {
+    const data = formRef.current;
+    if (target.childIndex !== undefined) {
+      const children = (data.children_list || []).map((child, i) =>
+        i === target.childIndex ? { ...child, [target.field]: value } : child
+      );
+      applyFormData({ ...data, children_list: children });
+      return;
+    }
+    applyFormData({ ...data, [target.name]: value });
+    if (errors[target.name]) setErrors(prev => ({ ...prev, [target.name]: null }));
+  }, [applyFormData, errors]);
+
+  const commitDictation = useCallback((target, speech) => {
+    const field = target.childIndex !== undefined
+      ? CHILD_FIELDS.find(f => f.name === target.field)
+      : step.fields.find(f => f.name === target.name);
+
+    const value = fieldValueFromSpeech(field, speech);
+    if (value === null) return;
+
+    // Never silently destroy something she already typed or that came from
+    // Amina. Anything unclear goes to a confirm step instead.
+    const existing = readFieldValue(target);
+    if (existing && existing !== value) {
+      setPendingOverwrite({ target, value, existing, speech });
+      return;
+    }
+    writeFieldValue(target, value);
+  }, [readFieldValue, writeFieldValue, step.fields]);
+
+  const stopDictationNow = useCallback(() => {
+    stopDictation();
+    setDictateTarget(null);
+    setInterimText('');
+  }, [stopDictation]);
+
+  const toggleDictation = useCallback((target) => {
+    setPendingOverwrite(null);
+    if (isListening) {
+      stopDictationNow();
+      return;
+    }
+    setInterimText('');
+    setDictateTarget(target);
+    startDictation();
+  }, [isListening, startDictation, stopDictationNow]);
+
+  useEffect(() => {
+    onInterim((text) => setInterimText(text || ''));
+  }, [onInterim]);
+
+  useEffect(() => {
+    onFinal((text) => {
+      const target = dictateTarget;
+      if (!target || !text?.trim()) return;
+      commitDictation(target, text);
+      stopDictationNow();
+    });
+  }, [onFinal, dictateTarget, commitDictation, stopDictationNow]);
+
+  // Leaving the step stops the mic so it can never listen to another field.
+  useEffect(() => () => { stopDictation(); }, [stopDictation]);
+
+  useEffect(() => {
+    if (pendingOverwrite) stopDictation();
+  }, [pendingOverwrite, stopDictation]);
 
   const validateStep = () => {
     const newErrors = {};
@@ -146,8 +187,23 @@ const OnboardingForm = () => {
     const fieldsToCheck = step.fields.filter(f => !f.condition || f.condition(data));
     for (const field of fieldsToCheck) {
       if (field.required && !data[field.name]?.toString().trim()) {
-        newErrors[field.name] = `${field.label} is required`;
+        newErrors[field.name] = lang(
+          `${field.label} is required`,
+          `${field.labelDag || field.label} a buƙatar`
+        );
       }
+    }
+    // Child names live in the repeater, not in the step's field list, so the
+    // loop above never saw them — a child could be saved with no name at all.
+    if (step.id === 'children' && data.has_children === 'Yes') {
+      (data.children_list || []).forEach((child, i) => {
+        if (!child?.name?.trim()) {
+          newErrors[`child_${i}`] = lang(
+            `Child ${i + 1} needs a name`,
+            `Yaro ${i + 1} yana buƙatar suna`
+          );
+        }
+      });
     }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -166,83 +222,28 @@ const OnboardingForm = () => {
 
   const handleSubmit = async () => {
     if (!validateStep()) return;
-    const data = formRef.current;
     setIsSaving(true);
     setErrors({});
 
     try {
-      // 1. Register mother profile
-      const medicalHistory = [
-        data.existing_conditions,
-        data.current_medications ? `Current medications: ${data.current_medications}` : null,
-        data.previous_complications ? `Previous complications: ${data.previous_complications}` : null,
-      ].filter(Boolean).join('. ') || null;
+      // One save path for both setup routes. The form used to write the mother,
+      // pregnancy and children records itself, which meant it skipped
+      // claim_mother (so a mother who registered via voice and then filled this
+      // form got two records), the community health worker lookup, the welcome
+      // journal entry and the welcome notification.
+      const draftToSave = draftFromFormData(formRef.current);
+      const result = await confirmAndSave(true, {
+        profileId: profile?.id,
+        userId: profile?.id || user?.id,
+        phone: user?.phone || profile?.phone,
+      }, draftToSave);
 
-      const edd = data.lmp ? calculateEDD(data.lmp) : null;
-
-      const motherResult = await registerMother({
-        profile_id: profile.id,
-        full_name: data.full_name || profile?.full_name || 'Unknown',
-        date_of_birth: data.date_of_birth || null,
-        phone: user?.phone || profile?.phone || null,
-        community: data.community || null,
-        blood_group: data.blood_group || null,
-        medical_history: medicalHistory,
-        risk_level: 'low',
-        assigned_worker_id: null,
-        edd,
-        ...provenanceFor(profile),
-      });
-
-      if (!motherResult.success) {
-        setErrors({ submit: 'Failed to save your profile. Please try again.' });
+      if (!result?.success) {
+        setErrors({ submit: result?.error || 'Failed to save your profile. Please try again.' });
         return;
       }
 
-      const motherId = motherResult.data.id;
-
-      // 2. Register pregnancy if applicable
-      if (data.is_pregnant === 'Yes') {
-        const pregResult = await registerPregnancy({
-          mother_id: motherId,
-          status: 'active',
-          risk_level: 'low',
-          lmp: data.lmp || null,
-          edd,
-          gravida: parseInt(data.gravida) || 1,
-          para: parseInt(data.para) || 0,
-          notes: [
-            data.previous_complications ? `Previous complications: ${data.previous_complications}` : null,
-            data.nutrition ? `Nutrition: ${data.nutrition}` : null,
-            data.supplements === 'Yes' ? 'Taking supplements' : null,
-          ].filter(Boolean).join('. ') || null,
-          ...provenanceFor(profile),
-        });
-
-        if (!pregResult.success) {
-          console.warn('Pregnancy registration failed:', pregResult.error);
-        }
-      }
-
-      // 3. Register children if applicable
-      if (data.has_children === 'Yes' && data.children_list?.length > 0) {
-        for (const child of data.children_list) {
-          const childResult = await registerChild({
-            mother_id: motherId,
-            full_name: child.name || 'Unknown',
-            date_of_birth: child.date_of_birth || null,
-            gender: child.gender || null,
-            birth_weight: child.birth_weight ? parseFloat(child.birth_weight) : null,
-            ...provenanceFor(profile),
-          });
-
-          if (!childResult.success) {
-            console.warn('Child registration failed:', childResult.error);
-          }
-        }
-      }
-
-      // 4. Navigate to Amina (mother's home)
+      clearDraft();
       navigate('/mother/amina', { replace: true });
     } catch (err) {
       console.error('Onboarding form error:', err);
@@ -256,6 +257,8 @@ const OnboardingForm = () => {
     const value = formData[field.name] || '';
     const error = errors[field.name];
     const label = lang(field.label, field.labelDag || field.label);
+    const target = { name: field.name };
+    const isDictating = isListening && dictateTarget?.name === field.name && dictateTarget?.childIndex === undefined;
 
     const inputProps = {
       label,
@@ -264,21 +267,54 @@ const OnboardingForm = () => {
       onChange: (e) => handleChange(field.name, e.target.value),
       error,
       required: field.required,
+      // edd is derived from the last menstrual period, never typed.
+      readOnly: !!field.readOnly,
     };
 
+    let control;
     if (field.type === 'select') {
-      return <Input {...inputProps} type="select" options={field.options} />;
+      control = <Input {...inputProps} type="select" options={field.options} />;
+    } else if (field.type === 'textarea') {
+      control = <Input {...inputProps} type="textarea" placeholder={field.placeholder} />;
+    } else if (field.type === 'date') {
+      control = <Input {...inputProps} type="date" />;
+    } else if (field.type === 'number') {
+      control = <Input {...inputProps} type="number" min={field.min} />;
+    } else {
+      control = <Input {...inputProps} type="text" placeholder={field.placeholder} />;
     }
-    if (field.type === 'textarea') {
-      return <Input {...inputProps} type="textarea" placeholder={field.placeholder} />;
-    }
-    if (field.type === 'date') {
-      return <Input {...inputProps} type="date" />;
-    }
-    if (field.type === 'number') {
-      return <Input {...inputProps} type="number" min={field.min} />;
-    }
-    return <Input {...inputProps} type="text" placeholder={field.placeholder} />;
+
+    if (field.readOnly) return <div>{control}</div>;
+
+    return (
+      <div>
+        {control}
+        {sttSupported && (
+          <div className={styles.dictateRow}>
+            <button
+              type="button"
+              className={`${styles.dictateBtn} ${isDictating ? styles.dictateBtnActive : ''}`}
+              onClick={() => toggleDictation(target)}
+              aria-label={lang(`Speak to fill ${field.label}`, `Yi magana don cika ${field.labelDag || field.label}`)}
+            >
+              {isDictating ? <MicOff size={14} /> : <Mic size={14} />}
+              <span>
+                {isDictating
+                  ? lang('Stop', 'Tsaya')
+                  : lang('Speak', 'Yi magana')}
+              </span>
+            </button>
+            {isDictating && (
+              <span className={styles.dictateHint}>
+                {interimText
+                  ? `“${interimText}”`
+                  : lang('Listening…', 'Ana saurare…')}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
 
   const addChild = () => {
@@ -308,6 +344,60 @@ const OnboardingForm = () => {
     };
     formRef.current = next;
     setFormData(next);
+  };
+
+  const renderChildField = (index, field) => {
+    const child = formData.children_list[index] || {};
+    const target = { childIndex: index, field: field.name };
+    const isDictating = isListening
+      && dictateTarget?.childIndex === index
+      && dictateTarget?.field === field.name;
+
+    const props = {
+      label: lang(field.label, field.labelDag || field.label),
+      value: child[field.name] ?? '',
+      onChange: (e) => updateChild(index, field.name, e.target.value),
+      required: field.required,
+      placeholder: field.placeholder,
+      error: field.name === 'name' ? errors[`child_${index}`] : undefined,
+    };
+
+    let control;
+    if (field.type === 'select') {
+      control = <Input {...props} type="select" options={field.options} />;
+    } else if (field.type === 'date') {
+      control = <Input {...props} type="date" />;
+    } else if (field.type === 'number') {
+      control = <Input {...props} type="number" min={field.min} max={field.max} step={field.step} />;
+    } else {
+      control = <Input {...props} type="text" />;
+    }
+
+    if (!sttSupported) return control;
+
+    return (
+      <div>
+        {control}
+        <div className={styles.dictateRow}>
+          <button
+            type="button"
+            className={`${styles.dictateBtn} ${isDictating ? styles.dictateBtnActive : ''}`}
+            onClick={() => toggleDictation(target)}
+            aria-label={lang(`Speak to fill ${field.label}`, `Yi magana don cika ${field.labelDag || field.label}`)}
+          >
+            {isDictating ? <MicOff size={14} /> : <Mic size={14} />}
+            <span>
+              {isDictating ? lang('Stop', 'Tsaya') : lang('Speak', 'Yi magana')}
+            </span>
+          </button>
+          {isDictating && (
+            <span className={styles.dictateHint}>
+              {interimText ? `“${interimText}”` : lang('Listening…', 'Ana saurare…')}
+            </span>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const renderChildrenSection = () => {
@@ -366,40 +456,9 @@ const OnboardingForm = () => {
                 </div>
 
                 <div className="flex-col gap-3">
-                  <Input
-                    label={lang('Name', 'Sunan')}
-                    value={child.name}
-                    onChange={(e) => updateChild(index, 'name', e.target.value)}
-                    placeholder={lang("Child's name", "Sunan yaro")}
-                    required
-                  />
-                  <Input
-                    label={lang('Date of Birth', 'Ranar Haihuwa')}
-                    type="date"
-                    value={child.date_of_birth}
-                    onChange={(e) => updateChild(index, 'date_of_birth', e.target.value)}
-                  />
-                  <Input
-                    label={lang('Gender', 'Jinsi')}
-                    type="select"
-                    value={child.gender}
-                    onChange={(e) => updateChild(index, 'gender', e.target.value)}
-                    options={[
-                      { value: '', label: lang('Select', 'Zaɓi') },
-                      { value: 'male', label: lang('Boy', 'Baɗɗo') },
-                      { value: 'female', label: lang('Girl', 'Kuɗiya') },
-                    ]}
-                  />
-                  <Input
-                    label={lang('Birth Weight (kg)', 'Nauyin Haihuwa (kg)')}
-                    type="number"
-                    value={child.birth_weight}
-                    onChange={(e) => updateChild(index, 'birth_weight', e.target.value)}
-                    placeholder="e.g. 3.2"
-                    min="0.5"
-                    max="6"
-                    step="0.1"
-                  />
+                  {CHILD_FIELDS.map(f => (
+                    <div key={f.name}>{renderChildField(index, f)}</div>
+                  ))}
                 </div>
               </div>
             ))}
@@ -441,7 +500,11 @@ const OnboardingForm = () => {
             <ArrowLeft size={20} />
           </button>
           <div className={styles.headerCenter}>
-            <h2 className={styles.headerTitle}>{lang('Health Profile Setup', 'Kirkira Littafin Lafiya')}</h2>
+            <h2 className={styles.headerTitle}>
+              {fromVoice
+                ? lang('Check Your Details', 'Duba Bayananka')
+                : lang('Health Profile Setup', 'Kirkira Littafin Lafiya')}
+            </h2>
             <p className={styles.headerSubtitle}>{lang(`Step ${currentStep + 1} of ${totalSteps}`, `Mataki ${currentStep + 1} na ${totalSteps}`)}</p>
           </div>
           <div className={styles.progressRing}>
@@ -465,10 +528,27 @@ const OnboardingForm = () => {
           </div>
         </div>
 
+        {dictationError && (
+          <div className={styles.dictateError}>{dictationError}</div>
+        )}
+
         {/* Progress bar */}
         <div className={styles.progressBar}>
           <div className={styles.progressFill} style={{ width: `${progress}%` }} />
         </div>
+
+        {/* Arrived from Amina: these answers were spoken, so invite a check */}
+        {fromVoice && (
+          <div className={styles.reviewBanner}>
+            <span className={styles.reviewBadge}>{lang('From Amina', 'Daga Amina')}</span>
+            <span>
+              {lang(
+                'Amina filled these in from your conversation. Check anything that looks wrong, then save.',
+                'Amina cika waƙannan daga magayarka. Ka duba abin da ba daidai ba, sannan ka ajiye.'
+              )}
+            </span>
+          </div>
+        )}
 
         {/* Step dots */}
         <div className={styles.stepDots}>
@@ -506,6 +586,57 @@ const OnboardingForm = () => {
               )}
             </div>
           </motion.div>
+        </AnimatePresence>
+
+        {/* Overwrite confirmation — speech must never destroy an existing answer */}
+        <AnimatePresence>
+          {pendingOverwrite && (
+            <motion.div
+              className={styles.overwriteOverlay}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              <div className={styles.overwriteCard}>
+                <div className={styles.overwriteTitle}>
+                  <AlertTriangle size={18} />
+                  {lang('Replace what is already here?', 'Sanya wannan sabo?')}
+                </div>
+                <p className={styles.overwriteBody}>
+                  {lang('This field already has an answer.', 'Wannan fildin yana da amsa.')}
+                </p>
+                <div className={styles.overwriteValues}>
+                  <div>
+                    <span>{lang('Currently', 'Yanzu')}</span>
+                    <strong>{pendingOverwrite.existing}</strong>
+                  </div>
+                  <div>
+                    <span>{lang('Heard', 'An ji')}</span>
+                    <strong>{pendingOverwrite.value}</strong>
+                  </div>
+                </div>
+                <div className={styles.overwriteActions}>
+                  <button
+                    type="button"
+                    className={styles.overwriteKeep}
+                    onClick={() => setPendingOverwrite(null)}
+                  >
+                    {lang('Keep current', 'Ci gaba da wannan')}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.overwriteReplace}
+                    onClick={() => {
+                      writeFieldValue(pendingOverwrite.target, pendingOverwrite.value);
+                      setPendingOverwrite(null);
+                    }}
+                  >
+                    {lang('Use what I said', 'Ka yi amfani da abin da na faɗi')}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
         </AnimatePresence>
 
         {/* Error message */}
