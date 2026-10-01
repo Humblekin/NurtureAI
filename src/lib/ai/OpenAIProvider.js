@@ -3,7 +3,7 @@ import useAuthStore from '../../stores/authStore'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 
-const DEFAULT_MODEL = 'gemini-1.5-flash'
+const DEFAULT_MODEL = 'gemini-2.5-flash'
 
 function getFunctionsBase() {
   if (!SUPABASE_URL) return null
