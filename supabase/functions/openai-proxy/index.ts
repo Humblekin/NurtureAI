@@ -9,7 +9,7 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 console.log("[AI-Proxy] Function loaded")
 
-const DEFAULT_MODEL = "gemini-flash-latest"
+const DEFAULT_MODEL = "gemini-3.5-flash"
 
 function corsHeaders(origin: string): Record<string, string> {
   return {
@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
     )
   }
 
-  const model = (body.model as string) || DEFAULT_MODEL
+  const model = DEFAULT_MODEL
   console.log(`[AI-Proxy] Chat completion for user ${userId}, model=${model}`)
 
   try {
