@@ -32,7 +32,6 @@ export const VisitForm = () => {
   const { logVisit, updateVisit, fetchVisitById, isLoading, visits } = useVisitStore();
   const { profile } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
-  const isOnline = useAppStore((state) => state.isOnline);
   const rolePrefix = profile?.role || 'chw';
 
   const [formData, setFormData] = useState(() => emptyForm(searchParams));
@@ -176,9 +175,7 @@ export const VisitForm = () => {
         setIsSubmitted(true);
         addToast({
           type: 'success',
-          message: isOnline
-            ? (isEdit ? 'Visit updated.' : 'Visit logged successfully.')
-            : 'Visit saved offline — will sync when back online.',
+          message: isEdit ? 'Visit updated.' : 'Visit logged successfully.',
         });
         setTimeout(() => {
           if (formData.patient_type === 'mother') {

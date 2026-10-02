@@ -32,7 +32,7 @@ Recognized danger signs bypass the AI entirely and return a fixed, localized
 ## Tech stack
 
 - React 19 + Vite (JavaScript), zustand, react-router-dom
-- Supabase (Auth, Postgres with RLS, Edge Functions, PWA/offline outbox)
+- Supabase (Auth, Postgres with RLS, Edge Functions; clinical writes require an active connection)
 - Web Speech API + VAD for voice, Three.js/VRM avatar for Amina's look
 - Edge Functions (Deno): `openai-proxy` (AI chat), `patient-search` (scoped search)
 

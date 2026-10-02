@@ -11,7 +11,6 @@ export const PregnancyForm = ({ motherId, initialData, onSuccess, onCancel }) =>
   const { registerPregnancy, updatePregnancy, isLoading } = usePregnancyStore();
   const { profile } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
-  const isOnline = useAppStore((state) => state.isOnline);
   const isEdit = !!initialData;
   const submittingRef = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -89,9 +88,7 @@ export const PregnancyForm = ({ motherId, initialData, onSuccess, onCancel }) =>
     if (success) {
       addToast({
         type: 'success',
-        message: isOnline
-          ? (isEdit ? 'Pregnancy record updated.' : 'Pregnancy record created.')
-          : 'Pregnancy record saved offline — will sync when back online.',
+        message: isEdit ? 'Pregnancy record updated.' : 'Pregnancy record created.',
       });
       if (onSuccess) onSuccess();
     } else {

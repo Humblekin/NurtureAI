@@ -23,7 +23,7 @@ export const AuthLayout = () => {
             Empowering Maternal and Child Healthcare in Ghana.
           </h1>
           <p className={styles.description}>
-            Connecting mothers, community health workers, and AI to provide timely, offline-first care and guidance.
+            Connecting mothers, community health workers, and AI through secure, database-backed care and guidance.
           </p>
         </div>
       </div>

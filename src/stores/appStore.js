@@ -36,12 +36,6 @@ const useAppStore = create(
       mobileMenuOpen: false,
       setMobileMenuOpen: (open) => set({ mobileMenuOpen: open }),
 
-      // Sync status
-      syncStatus: 'idle', // idle | syncing | synced | error
-      setSyncStatus: (status) => set({ syncStatus: status }),
-      pendingSyncCount: 0,
-      setPendingSyncCount: (count) => set({ pendingSyncCount: count }),
-
       // Currently selected patient (worker workflows). Used to scope
       // worker-facing Amina to the record that is open. Memory-only
       // (not persisted) and cleared on sign-out to prevent data leaking

@@ -18,7 +18,6 @@ export const ChildForm = () => {
   const { registerChild, updateChild, isLoading, children } = useChildStore();
   const { currentMother, fetchMotherByProfileId } = useMotherStore();
   const addToast = useAppStore((state) => state.addToast);
-  const isOnline = useAppStore((state) => state.isOnline);
   const rolePrefix = profile?.role || 'chw';
   const isMotherRole = profile?.role === 'mother';
   const submittingRef = useRef(false);
@@ -96,9 +95,7 @@ export const ChildForm = () => {
     if (success) {
       addToast({
         type: 'success',
-        message: isOnline
-          ? (isEdit ? 'Child record updated.' : 'Child registered successfully.')
-          : 'Child saved offline — will sync when back online.',
+        message: isEdit ? 'Child record updated.' : 'Child registered successfully.',
       });
       navigate(isEdit ? `/${rolePrefix}/children/${id}` : `/${rolePrefix}/children`);
     } else {

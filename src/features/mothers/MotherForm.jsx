@@ -18,7 +18,6 @@ export const MotherForm = () => {
   const { profile } = useAuthStore();
   const { registerMother, updateMother, isLoading, mothers } = useMotherStore();
   const addToast = useAppStore((state) => state.addToast);
-  const isOnline = useAppStore((state) => state.isOnline);
   const rolePrefix = profile?.role || 'chw';
   const submittingRef = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -153,9 +152,7 @@ export const MotherForm = () => {
     if (success) {
       addToast({
         type: 'success',
-        message: isOnline
-          ? (isEdit ? 'Mother profile updated.' : 'Mother registered successfully.')
-          : 'Mother saved offline — will sync when back online.',
+        message: isEdit ? 'Mother profile updated.' : 'Mother registered successfully.',
       });
       if (isEdit) {
         navigate(`/${rolePrefix}/mothers/${id}`);

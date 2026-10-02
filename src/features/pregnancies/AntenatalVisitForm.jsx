@@ -11,7 +11,6 @@ export const AntenatalVisitForm = ({ pregnancyId, initialData, onSuccess, onCanc
   const { logAntenatalVisit, updateAntenatalVisit, isLoading } = usePregnancyStore();
   const { profile } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
-  const isOnline = useAppStore((state) => state.isOnline);
   const isEdit = !!initialData;
   const submittingRef = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -85,9 +84,7 @@ export const AntenatalVisitForm = ({ pregnancyId, initialData, onSuccess, onCanc
     if (success) {
       addToast({
         type: 'success',
-        message: isOnline
-          ? (isEdit ? 'Antenatal visit updated.' : 'Antenatal visit logged successfully.')
-          : 'Antenatal visit saved offline — will sync when back online.',
+        message: isEdit ? 'Antenatal visit updated.' : 'Antenatal visit logged successfully.',
       });
       if (onSuccess) onSuccess();
     } else {

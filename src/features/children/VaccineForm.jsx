@@ -12,7 +12,6 @@ export const VaccineForm = ({ childId, initialData, onSuccess, onCancel }) => {
   const { recordVaccination, updateVaccination, isLoading } = useChildStore();
   const { profile } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
-  const isOnline = useAppStore((state) => state.isOnline);
   const isEdit = !!initialData;
   const submittingRef = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -76,9 +75,7 @@ export const VaccineForm = ({ childId, initialData, onSuccess, onCancel }) => {
       await useTimelineStore.getState().buildChildTimeline(childId);
       addToast({
         type: 'success',
-        message: isOnline
-          ? (isEdit ? 'Vaccination updated.' : 'Vaccination recorded.')
-          : 'Vaccination saved offline — will sync when back online.',
+        message: isEdit ? 'Vaccination updated.' : 'Vaccination recorded.',
       });
       if (onSuccess) onSuccess();
     } else {

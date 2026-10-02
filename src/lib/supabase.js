@@ -5,7 +5,7 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.warn(
-    'NurtureAI: Supabase credentials not configured. Running in offline-only mode. ' +
+    'NurtureAI: Supabase credentials not configured. Database features are unavailable. ' +
     'Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file.'
   );
 }

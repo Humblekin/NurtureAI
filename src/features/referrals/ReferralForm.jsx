@@ -17,7 +17,6 @@ export const ReferralForm = () => {
   const { createReferral, isLoading } = useReferralStore();
   const { profile } = useAuthStore();
   const addToast = useAppStore((state) => state.addToast);
-  const isOnline = useAppStore((state) => state.isOnline);
   const rolePrefix = profile?.role || 'chw';
   const submittingRef = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -94,7 +93,7 @@ export const ReferralForm = () => {
     if (success) {
       addToast({
         type: 'success',
-        message: isOnline ? 'Referral created successfully.' : 'Referral saved offline — will sync when back online.',
+        message: 'Referral created successfully.',
       });
       navigate(`/${rolePrefix}/referrals`);
     } else {
