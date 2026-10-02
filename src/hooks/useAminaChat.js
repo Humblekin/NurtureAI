@@ -278,14 +278,13 @@ export function useVoiceConversation() {
       }
       let stream;
       try {
-        // Deliberately NOT requesting noiseSuppression or autoGainControl: both
-        // attenuate and normalize away the quiet, distant speech the VAD needs
-        // to detect. Echo cancellation is unnecessary too, because the VAD is
-        // switched off while Amina is talking.
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: { ideal: 1 },
             sampleRate: { ideal: 16000 },
+            echoCancellation: { ideal: true },
+            noiseSuppression: { ideal: true },
+            autoGainControl: { ideal: true },
           }
         });
       } catch {
@@ -396,7 +395,7 @@ export function useVoiceConversation() {
     interimWatchdogRef.current = setTimeout(() => {
       interimWatchdogRef.current = null;
       sendStalledTranscript('[Voice] quiet period elapsed — sending transcript');
-    }, finalSeenRef.current ? 1800 : 6000);
+    }, finalSeenRef.current ? 1000 : 3000);
   }
 
   function sendStalledTranscript(reason) {

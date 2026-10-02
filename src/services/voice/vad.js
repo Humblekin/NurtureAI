@@ -17,13 +17,13 @@ export function createVAD(audioStream, options = {}) {
   const {
     onSpeechStart,
     onSpeechEnd,
-    silenceTimeoutMs = 800,
-    minSpeechMs = 100,
+    silenceTimeoutMs = 700,
+    minSpeechMs = 160,
     pollIntervalMs = 50,
     // Absolute RMS gate. Kept low because getUserMedia is opened without
     // aggressive noise suppression so quiet, distant voices still register.
-    minRms = 0.008,
-    snrMultiplier = 2.5,
+    minRms = 0.012,
+    snrMultiplier = 2.8,
     // Barge-in detection runs while Amina is talking, so here the floor SHOULD
     // climb toward loud audio: the goal is for the floor to settle on her
     // playback level, leaving only the user's own (louder, closer) voice able

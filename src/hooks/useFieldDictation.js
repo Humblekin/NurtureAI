@@ -30,6 +30,7 @@ const INTERIM_SETTLE_MS = 6000;
 export function useFieldDictation(languageKey = 'en') {
   const usesKhaya = shouldUseKhayaAsr(languageKey);
   const [isListening, setIsListening] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [interim, setInterim] = useState('');
   const [error, setError] = useState(null);
 
@@ -129,7 +130,10 @@ export function useFieldDictation(languageKey = 'en') {
           if (unmountedRef.current) return;
           setInterim(text);
           onInterimRef.current?.(text);
-          if (settleTimerRef.current) collect(text, INTERIM_SETTLE_MS);
+          if (settleTimerRef.current) {
+            clearSettle();
+            settleTimerRef.current = setTimeout(flushCollected, INTERIM_SETTLE_MS);
+          }
         },
         onFinal: (text) => {
           if (unmountedRef.current) return;
@@ -143,7 +147,7 @@ export function useFieldDictation(languageKey = 'en') {
       recognitionRef.current = recognition;
     }
     return recognitionRef.current;
-  }, [collect, hasBrowserStt, languageKey, usesKhaya]);
+  }, [clearSettle, collect, flushCollected, hasBrowserStt, languageKey, usesKhaya]);
 
   useEffect(() => {
     if (usesKhaya || !hasBrowserStt) return undefined;
@@ -190,6 +194,7 @@ export function useFieldDictation(languageKey = 'en') {
     if (blob.size < 1200) return; // too short to be a word
 
     busyRef.current = true;
+    setIsProcessing(true);
     try {
       const { khayaTranscribe } = await import('../services/voice/khayaSpeech.js');
       const text = await khayaTranscribe(blob, languageKey);
@@ -202,13 +207,14 @@ export function useFieldDictation(languageKey = 'en') {
       }
     } finally {
       busyRef.current = false;
+      setIsProcessing(false);
     }
   }, [languageKey, release, emitNow]);
 
   // ---- Public API ------------------------------------------------------
 
   const start = useCallback(async () => {
-    if (isListening || !isSupported) return;
+    if (isListening || busyRef.current || !isSupported) return;
     setError(null);
     setInterim('');
     collectedRef.current = '';
@@ -246,7 +252,7 @@ export function useFieldDictation(languageKey = 'en') {
   const onFinal = useCallback((cb) => { onFinalRef.current = cb; }, []);
   const onInterim = useCallback((cb) => { onInterimRef.current = cb; }, []);
 
-  return { isListening, interim, error, isSupported, start, stop, onFinal, onInterim };
+  return { isListening, isProcessing, interim, error, isSupported, start, stop, onFinal, onInterim };
 }
 
 export default useFieldDictation;

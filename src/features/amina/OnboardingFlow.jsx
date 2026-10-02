@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Mic, MicOff, Send, Check, Sparkles } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useOnboardingStore from '../../stores/onboardingStore';
-import { useSpeechRecognition, useSpeechSynthesis } from '../../hooks/useAminaChat';
+import { useSpeechSynthesis } from '../../hooks/useAminaChat';
+import { useFieldDictation } from '../../hooks/useFieldDictation';
 import styles from './OnboardingFlow.module.css';
 
 /**
@@ -52,7 +53,18 @@ const OnboardingFlow = () => {
   // These hooks take the app's language key ("en" / "dag") and map it to the right
 // provider and browser locale themselves. Passing raw BCP-47 tags here made
 // every lookup miss and silently fell back to English.
-const { isListening, transcript, startListening, stopListening, isSupported: sttSupported } = useSpeechRecognition(language);
+  const {
+    isListening,
+    isProcessing: isTranscribing,
+    interim,
+    error: dictationError,
+    isSupported: sttSupported,
+    start: startListening,
+    stop: stopListening,
+    onFinal,
+    onInterim,
+  } = useFieldDictation(language);
+  const [liveTranscript, setLiveTranscript] = useState('');
   const { speak, stop: stopSpeaking } = useSpeechSynthesis(language);
 
   // Start onboarding on mount
@@ -74,6 +86,22 @@ const { isListening, transcript, startListening, stopListening, isSupported: stt
     }
   }, [currentQuestion, isComplete, showConfirmation]);
 
+  const submitAnswer = useCallback(async (answer) => {
+    const text = answer.trim();
+    if (!text || isTyping) return;
+
+    setInputText('');
+    setIsTyping(true);
+    stopSpeaking();
+
+    try {
+      const result = await sendResponse(text);
+      if (result?.isComplete) setShowConfirmation(true);
+    } finally {
+      setIsTyping(false);
+    }
+  }, [isTyping, sendResponse, stopSpeaking]);
+
   // Speak Amina's messages
   useEffect(() => {
     if (conversationHistory.length > 0) {
@@ -84,34 +112,30 @@ const { isListening, transcript, startListening, stopListening, isSupported: stt
     }
   }, [conversationHistory, isComplete, speak]);
 
-  // Handle voice input
+  // Keep speech visible while recording, then leave the finalized answer in
+  // the input so the mother can review it before sending it to Amina.
   useEffect(() => {
-    if (transcript && !isListening) {
-      setInputText(transcript);
-    }
-  }, [transcript, isListening]);
+    onInterim((text) => setLiveTranscript(text || ''));
+  }, [onInterim]);
+
+  useEffect(() => {
+    onFinal((text) => {
+      if (!text?.trim()) return;
+      setLiveTranscript('');
+      stopListening();
+      void submitAnswer(text);
+    });
+  }, [onFinal, stopListening, submitAnswer]);
 
   const handleSend = async () => {
-    const text = inputText.trim();
-    if (!text || isTyping) return;
-
-    setInputText('');
-    setIsTyping(true);
-    stopSpeaking();
-
-    const result = await sendResponse(text);
-
-    setIsTyping(false);
-
-    if (result?.isComplete) {
-      setShowConfirmation(true);
-    }
+    await submitAnswer(inputText);
   };
 
   const handleVoiceToggle = () => {
     if (isListening) {
       stopListening();
     } else {
+      setLiveTranscript('');
       stopSpeaking();
       startListening();
     }
@@ -232,10 +256,8 @@ const { isListening, transcript, startListening, stopListening, isSupported: stt
       )}
 
       {/* Error Toast */}
-      {error && (
-        <div className={styles.errorToast}>
-          {error}
-        </div>
+      {(error || dictationError) && (
+        <div className={styles.errorToast}>{dictationError || error}</div>
       )}
 
       {/* Input Area */}
@@ -249,8 +271,8 @@ const { isListening, transcript, startListening, stopListening, isSupported: stt
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={isListening ? 'Listening...' : 'Type your answer...'}
-              disabled={isTyping || isListening}
+              placeholder={isListening ? 'Listening...' : isTranscribing ? 'Transcribing...' : 'Type your answer...'}
+              disabled={isTyping || isListening || isTranscribing}
             />
             {sttSupported && (
               <button
@@ -269,6 +291,15 @@ const { isListening, transcript, startListening, stopListening, isSupported: stt
               <Send size={20} />
             </button>
           </div>
+          {(isListening || isTranscribing) && (
+            <p className={styles.voiceStatus} aria-live="polite">
+              {isTranscribing
+                ? 'Transcribing your answer...'
+                : language === 'dag'
+                  ? 'Recording... tap the microphone when you are finished.'
+                  : liveTranscript || interim || 'Listening...'}
+            </p>
+          )}
         </div>
       )}
     </div>

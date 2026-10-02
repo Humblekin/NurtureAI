@@ -308,7 +308,7 @@ const ChatMode = ({ onSwitchToVoice }) => {
   const { isListening, transcript, isSupported: sttSupported, error: sttError, startListening, stopListening, setTranscript } = useSpeechRecognition(language);
   const { isSpeaking, isSupported: ttsSupported, speak } = useSpeechSynthesis(language);
   const [input, setInput] = useState('');
-  const [autoSpeak, setAutoSpeak] = useState(true);
+  const [autoSpeak, setAutoSpeak] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const lastSpokenIdxRef = useRef(-1);
@@ -599,8 +599,11 @@ function useAminaChatChatMode() {
         proactiveContext: proactiveContextRef.current,
       });
       setMessages(prev => [...prev, { role: 'assistant', content: response }]);
-    } catch {
-      setError('Failed to get response. Please try again.');
+    } catch (err) {
+      console.error('[Amina chat] Response request failed:', err);
+      setError(err?.message === 'Failed to fetch'
+        ? 'Could not connect to Amina. Check your internet connection and try again.'
+        : err?.message || 'Amina could not respond. Please try again.');
     } finally {
       setIsLoading(false);
     }

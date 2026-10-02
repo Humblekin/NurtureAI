@@ -161,7 +161,23 @@ Detect and respond in the user's language (English or Dagbani). If Dagbani: use 
       if (response.status === 401) throw new Error('Authentication failed. Please sign in again.')
       let parsed
       try { parsed = JSON.parse(errBody) } catch {}
-      throw new Error(parsed?.error || `API error ${response.status}. Please try again later.`)
+      let detailMessage = ''
+      if (typeof parsed?.detail === 'string') {
+        try {
+          const detail = JSON.parse(parsed.detail)
+          detailMessage = detail?.error?.message || detail?.message || ''
+        } catch {
+          detailMessage = parsed.detail
+        }
+      }
+      const errorMessage = typeof parsed?.error === 'string'
+        ? parsed.error
+        : parsed?.error?.message || parsed?.message || ''
+      const message = [errorMessage, detailMessage]
+        .filter((part, index, parts) => part && parts.indexOf(part) === index)
+        .join(': ')
+        .slice(0, 280)
+      throw new Error(message || `AI service error (${response.status}). Please try again later.`)
     }
 
     const data = JSON.parse(errBody)
