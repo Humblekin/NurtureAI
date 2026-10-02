@@ -7,7 +7,7 @@ import { khayaTranscribe, speakText as khayaSpeakText, stopSpeech as stopAllSpee
 import { shouldUseKhayaAsr, shouldUseKhayaTts, getSpeechConfig } from '../services/voice/khayaLanguages';
 import useAuthStore from '../stores/authStore';
 import useAppStore from '../stores/appStore';
-import { createConversationManager, CONVERSATION_STATES } from '../services/conversationManager';
+import { createConversationManager, ensureConversationManager, CONVERSATION_STATES } from '../services/conversationManager';
 import { buildHealthContext } from '../services/healthContext';
 
 // Barge-in recorder tuning. Chunks are 250ms, so 4 chunks of lookback recovers
@@ -797,9 +797,9 @@ export function useVoiceConversation() {
     return () => clearTimeout(t);
   }, [dataVersion, refreshContext]);
 
-  // ---- Create ConversationManager ----
-  useEffect(() => {
-    const manager = createConversationManager({
+  // ---- Create ConversationManager ---
+  const ensureManager = useCallback(() => {
+    return ensureConversationManager(managerRef, {
       sendToAI: async (apiMessages, opts) => chatCompletion(apiMessages, opts),
 
       speakText: async (text, signal) => {
@@ -817,11 +817,16 @@ export function useVoiceConversation() {
       onTranscriptChange: (t) => setTranscript(t),
       onError: (err) => setError(mapVoiceError(err)),
     });
+  }, [language]);
 
-    managerRef.current = manager;
-    return () => { manager.destroy(); managerRef.current = null; };
+  useEffect(() => {
+    const manager = ensureManager();
+    return () => {
+      manager.destroy();
+      if (managerRef.current === manager) managerRef.current = null;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [language, profile?.id]);
+  }, [language, profile?.id, ensureManager]);
 
   // ---- Auto-clear errors ----
   useEffect(() => {
@@ -872,7 +877,7 @@ export function useVoiceConversation() {
       setMicPermission((p) => (p === 'unknown' ? 'granted' : p));
     }
 
-    const mgr = managerRef.current;
+    const mgr = ensureManager();
     if (!mgr) {
       initStartedRef.current = false;
       return;
@@ -882,7 +887,7 @@ export function useVoiceConversation() {
     if (healthContextRef.current) mgr.setHealthContext(healthContextRef.current);
     await mgr.init({ language, userProfile: profile });
     initStartedRef.current = false;
-  }, [language, profile, requestMicPermission, refreshContext]);
+  }, [language, profile, requestMicPermission, refreshContext, ensureManager]);
 
   // ---- Public: Retry after permission error ----
   const retryMicPermission = useCallback(async () => {

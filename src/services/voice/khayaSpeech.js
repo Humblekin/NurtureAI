@@ -12,9 +12,9 @@
 // end, rejects with AbortError on abort, optional onSpeechStart/onSpeechEnd) so
 // the conversation manager and avatar state machine are untouched.
 
-import useAuthStore from '../../stores/authStore';
-import { speak as browserSpeak, stopSpeaking as browserStopSpeaking } from './speechSynthesis';
-import { getKhayaAsrCode, getKhayaTtsCode, shouldUseKhayaTts } from './khayaLanguages';
+import useAuthStore from '../../stores/authStore.js';
+import { speak as browserSpeak, stopSpeaking as browserStopSpeaking } from './speechSynthesis.js';
+import { getKhayaAsrCode, getKhayaTtsCode, shouldUseKhayaTts } from './khayaLanguages.js';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 

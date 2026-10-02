@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "test": "node --test src/lib/verification.test.js src/lib/db.test.js src/lib/pregnancy.test.js src/lib/onboardingFields.test.js",
+    "test": "node --test src/lib/verification.test.js src/lib/db.test.js src/lib/pregnancy.test.js src/lib/onboardingFields.test.js src/services/conversationManager.test.js src/hooks/useFieldDictation.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

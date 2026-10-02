@@ -1,7 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { createSpeechRecognition } from '../services/voice/speechRecognition';
-import { khayaTranscribe } from '../services/voice/khayaSpeech';
-import { shouldUseKhayaAsr } from '../services/voice/khayaLanguages';
+import { createSpeechRecognition } from '../services/voice/speechRecognition.js';
+import { shouldUseKhayaAsr } from '../services/voice/khayaLanguages.js';
 
 // Chrome finalizes speech phrase by phrase. Committing the first phrase would
 // clip a sentence in half ("my name is" / "amina" -> field saves "my name is"),
@@ -68,37 +67,6 @@ export function useFieldDictation(languageKey = 'en') {
     };
   }, []);
 
-  // ---- Browser path ----------------------------------------------------
-
-  useEffect(() => {
-    if (usesKhaya || !hasBrowserStt) return undefined;
-
-    const recognition = createSpeechRecognition({
-      language: languageKey,
-      onInterim: (text) => {
-        if (unmountedRef.current) return;
-        setInterim(text);
-        onInterimRef.current?.(text);
-        // Speech after a final means the sentence is still going.
-        if (settleTimerRef.current) collect(text, INTERIM_SETTLE_MS);
-      },
-      onFinal: (text) => {
-        if (unmountedRef.current) return;
-        setInterim('');
-        collect(text, FINAL_SETTLE_MS);
-      },
-      onError: (message) => {
-        if (!unmountedRef.current) setError(message);
-      },
-    });
-
-    recognitionRef.current = recognition;
-    return () => {
-      recognitionRef.current = null;
-      recognition.stop();
-    };
-  }, [languageKey, usesKhaya, hasBrowserStt, collect]);
-
   // ---- Shared cleanup --------------------------------------------------
 
   const clearSettle = useCallback(() => {
@@ -152,6 +120,41 @@ export function useFieldDictation(languageKey = 'en') {
     collectedRef.current = '';
   }, [clearSettle, flushCollected]);
 
+  const ensureRecognition = useCallback(() => {
+    if (usesKhaya || !hasBrowserStt) return null;
+    if (!recognitionRef.current) {
+      const recognition = createSpeechRecognition({
+        language: languageKey,
+        onInterim: (text) => {
+          if (unmountedRef.current) return;
+          setInterim(text);
+          onInterimRef.current?.(text);
+          if (settleTimerRef.current) collect(text, INTERIM_SETTLE_MS);
+        },
+        onFinal: (text) => {
+          if (unmountedRef.current) return;
+          setInterim('');
+          collect(text, FINAL_SETTLE_MS);
+        },
+        onError: (message) => {
+          if (!unmountedRef.current) setError(message);
+        },
+      });
+      recognitionRef.current = recognition;
+    }
+    return recognitionRef.current;
+  }, [collect, hasBrowserStt, languageKey, usesKhaya]);
+
+  useEffect(() => {
+    if (usesKhaya || !hasBrowserStt) return undefined;
+    const recognition = ensureRecognition();
+    if (!recognition) return undefined;
+    return () => {
+      recognitionRef.current = null;
+      recognition.stop();
+    };
+  }, [ensureRecognition, hasBrowserStt, usesKhaya]);
+
   // ---- Khaya path ------------------------------------------------------
 
   const startKhaya = useCallback(async () => {
@@ -188,6 +191,7 @@ export function useFieldDictation(languageKey = 'en') {
 
     busyRef.current = true;
     try {
+      const { khayaTranscribe } = await import('../services/voice/khayaSpeech.js');
       const text = await khayaTranscribe(blob, languageKey);
       if (unmountedRef.current) return;
       emitNow(text);
@@ -213,7 +217,8 @@ export function useFieldDictation(languageKey = 'en') {
       if (usesKhaya) {
         await startKhaya();
       } else {
-        recognitionRef.current?.start();
+        const recognition = ensureRecognition();
+        if (recognition) recognition.start();
       }
       setIsListening(true);
     } catch (err) {
@@ -224,7 +229,7 @@ export function useFieldDictation(languageKey = 'en') {
         setError('Could not start the microphone. Please try again.');
       }
     }
-  }, [isListening, isSupported, usesKhaya, startKhaya, clearSettle]);
+  }, [clearSettle, ensureRecognition, isListening, isSupported, usesKhaya, startKhaya]);
 
   const stop = useCallback(() => {
     if (usesKhaya) {

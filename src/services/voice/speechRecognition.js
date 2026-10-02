@@ -7,7 +7,7 @@
 // captured. This wrapper restarts the session with exponential backoff and
 // gives up (with a visible error) if the mic looks genuinely unavailable.
 
-import { browserLanguageFor } from './khayaLanguages';
+import { browserLanguageFor } from './khayaLanguages.js';
 
 const MIN_RESTART_DELAY_MS = 200;
 const MAX_RESTART_DELAY_MS = 4000;
@@ -22,6 +22,13 @@ export function createSpeechRecognition(options = {}) {
     onStart,
     onEnd,
   } = options;
+
+  function isAndroidChrome() {
+    const userAgent = navigator.userAgent || '';
+    const isAndroid = /android/i.test(userAgent);
+    const isChrome = /crios|chrome/i.test(userAgent) && !/edg|opr\//i.test(userAgent);
+    return isAndroid && isChrome;
+  }
 
   let recognition = null;
   let wantActive = false;
@@ -76,10 +83,17 @@ export function createSpeechRecognition(options = {}) {
     teardown();
 
     const session = new SpeechRecognition();
-    session.continuous = true;
+    const androidChrome = isAndroidChrome();
+    session.continuous = !androidChrome;
     session.interimResults = true;
     session.maxAlternatives = 1;
     session.lang = browserLanguageFor(language);
+
+    if (androidChrome) {
+      session.onaudiostart = () => {
+        restartDelay = MIN_RESTART_DELAY_MS;
+      };
+    }
 
     session.onstart = () => {
       restartDelay = MIN_RESTART_DELAY_MS;
@@ -118,9 +132,14 @@ export function createSpeechRecognition(options = {}) {
         onError?.('No microphone was found. Please check your device settings and try again.');
         return;
       }
+      if (event.error === 'network') {
+        if (wantActive) scheduleRestart();
+        return;
+      }
       // 'no-speech' and 'aborted' are routine (silence, or our own stop()).
       if (event.error !== 'aborted' && event.error !== 'no-speech') {
-        onError?.(`Speech recognition error: ${event.error}`);
+        if (wantActive) scheduleRestart();
+        else onError?.(`Speech recognition error: ${event.error}`);
       }
     };
 

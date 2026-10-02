@@ -75,6 +75,7 @@ const OnboardingForm = () => {
 
   // Which field the mic is dictating into: null | { name } | { childIndex, field }
   const [dictateTarget, setDictateTarget] = useState(null);
+  const dictateTargetRef = useRef(null);
   const [pendingOverwrite, setPendingOverwrite] = useState(null);
   const [interimText, setInterimText] = useState('');
 
@@ -144,19 +145,21 @@ const OnboardingForm = () => {
     writeFieldValue(target, value);
   }, [readFieldValue, writeFieldValue, step.fields]);
 
-  const stopDictationNow = useCallback(() => {
+  const stopDictationNow = useCallback(({ preserveTarget = false } = {}) => {
     stopDictation();
     setDictateTarget(null);
+    if (!preserveTarget) dictateTargetRef.current = null;
     setInterimText('');
   }, [stopDictation]);
 
   const toggleDictation = useCallback((target) => {
     setPendingOverwrite(null);
     if (isListening) {
-      stopDictationNow();
+      stopDictationNow({ preserveTarget: true });
       return;
     }
     setInterimText('');
+    dictateTargetRef.current = target;
     setDictateTarget(target);
     startDictation();
   }, [isListening, startDictation, stopDictationNow]);
@@ -167,12 +170,13 @@ const OnboardingForm = () => {
 
   useEffect(() => {
     onFinal((text) => {
-      const target = dictateTarget;
+      const target = dictateTargetRef.current;
       if (!target || !text?.trim()) return;
       commitDictation(target, text);
+      dictateTargetRef.current = null;
       stopDictationNow();
     });
-  }, [onFinal, dictateTarget, commitDictation, stopDictationNow]);
+  }, [onFinal, commitDictation, stopDictationNow]);
 
   // Leaving the step stops the mic so it can never listen to another field.
   useEffect(() => () => { stopDictation(); }, [stopDictation]);

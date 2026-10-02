@@ -1,6 +1,5 @@
-import { generateId } from '../lib/db';
-import { upsertRecord } from '../lib/sync';
-import { screenForEmergency, buildEmergencyReply } from './emergencyScreen';
+import { generateId } from '../lib/db.js';
+import { screenForEmergency, buildEmergencyReply } from './emergencyScreen.js';
 
 export const CONVERSATION_STATES = {
   IDLE: 'idle',
@@ -23,6 +22,16 @@ const VALID_TRANSITIONS = {
 };
 
 const RATE_LIMIT_MSG = "I'm a little busy right now. Please wait a few seconds.";
+
+export function ensureConversationManager(ref, deps) {
+  if (ref.current && typeof ref.current.getState === 'function') {
+    return ref.current;
+  }
+
+  const manager = createConversationManager(deps);
+  ref.current = manager;
+  return manager;
+}
 
 export function createConversationManager(deps) {
   const {
@@ -329,6 +338,7 @@ export function createConversationManager(deps) {
         summaryParts.push(`... and ${userMessages.length - 3} more questions`);
       }
 
+      const { upsertRecord } = await import('../lib/sync.js');
       await upsertRecord('ai_conversations', {
         id: generateId(),
         user_id: userProfile.id,
